@@ -11,3 +11,4 @@
 # pip install openai
 # pip install dotenv
 # 有模块不在直接pip 安装即可
+# Todo list 可以利用langchain React补充？？？已达到更好的推理的效果
