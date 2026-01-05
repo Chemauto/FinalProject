@@ -57,38 +57,16 @@ def render_messages(messages, **kwargs):
 # ---------- 模拟 ROS2 动作函数 ----------
 def mock_send_navigate_goal(parameters):
     """
-    模拟导航动作，支持位置、方向和距离
+    模拟导航动作
     """
     print("\n" + "="*50)
     print("🎯 模拟 ROS2 导航动作执行")
     print("="*50)
     print(f"动作类型: navigate")
-
-    location = parameters.get('location', '未知位置')
-    direction = parameters.get('direction', None)
-    distance = parameters.get('distance', None)
-
-    print(f"目标位置: {location}")
-
-    # 如果有方向和距离参数，计算相对位置
-    if direction and distance:
-        direction_cn = {
-            'front': '前方',
-            'back': '后方',
-            'left': '左侧',
-            'right': '右侧'
-        }.get(direction.lower(), direction)
-
-        print(f"相对方向: {direction_cn}")
-        print(f"相对距离: {distance}")
-        print(f"\n导航路径描述: 前往 {location}，然后向{direction_cn}移动 {distance}")
-        print("正在执行导航...")
-        print("✅ 导航完成!")
-    else:
-        print(f"\n导航路径描述: 直接前往 {location}")
-        print("正在前往目标位置...")
-        print("✅ 导航完成!")
-
+    print(f"目标位置: {parameters.get('location', '未知位置')}")
+    print(f"详细参数: {parameters}")
+    print("正在前往目标位置...")
+    print("✅ 导航完成!")
     print("="*50 + "\n")
 
 
@@ -127,12 +105,10 @@ if __name__ == "__main__":
 
     # 测试不同的用户输入
     test_inputs = [
-        "Navigate to the kitchen",  # 基础导航
-        "Navigate to the kitchen front 30cm",  # 带方向和距离
-        "Go to the table left 50cm",  # 左侧移动
-        "去床后面1米处",  # 后方移动，使用米
-        "Pick up the cup",  # 抓取物体
-        "Place the book on the shelf"  # 放置物体
+        "Go to the table",
+        "Pick up the cup",
+        "Place the book on the shelf",
+        "Navigate to the kitchen"
     ]
     
     for user_input in test_inputs:

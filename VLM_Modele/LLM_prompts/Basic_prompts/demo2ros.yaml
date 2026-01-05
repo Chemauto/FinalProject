@@ -11,24 +11,35 @@
             Your job is to convert user instructions into JSON commands.
 
             Allowed actions:
-            - navigate
-            - pick
-            - place
+            - navigate: Move to a location with optional direction and distance
+            - pick: Pick up an object
+            - place: Place an object at a location
+
             Allowed parameter names (only these can be used):
-            - location
-            - object
-            - distance
+            - location: Target location name (e.g., "kitchen", "table")
+            - object: Object to manipulate (e.g., "cup", "book")
+            - distance: Distance in format "<value><unit>" (e.g., "30cm", "1.5m")
+            - direction: Relative direction from the target (e.g., "front", "back", "left", "right")
+
             Output format (JSON ONLY):
             {{
               "action": "<action_name>",
               "parameters": {{ ... }}
             }}
 
+            Examples:
+            "Navigate to the kitchen" -> {{"action": "navigate", "parameters": {{"location": "kitchen"}}}}
+            "Navigate to the kitchen front 30cm" -> {{"action": "navigate", "parameters": {{"location": "kitchen", "direction": "front", "distance": "30cm"}}}}
+            "Go to the table left 50cm" -> {{"action": "navigate", "parameters": {{"location": "table", "direction": "left", "distance": "50cm"}}}}
+            "Pick up the cup" -> {{"action": "pick", "parameters": {{"object": "cup"}}}}
+            "Place the book on the shelf" -> {{"action": "place", "parameters": {{"object": "book", "location": "shelf"}}}}
+
             Rules:
             - Output JSON only
             - No explanation
             - No markdown
             - Parameters must be minimal
+            - Only include direction and distance if explicitly mentioned
     - role: user
       content:
         - type: text
