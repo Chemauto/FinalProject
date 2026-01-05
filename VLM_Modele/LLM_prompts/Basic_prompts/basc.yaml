@@ -1,0 +1,11 @@
+# Basic prompts for DemoStart.py usage
+# Each entry is a YAML list item with `id`, `description`, and `messages` matching DemoStart.py's
+# message shape: a list of messages where each message has `role` and `content` (a list of typed items).
+
+- id: ask-who
+  description: Ask model identity (simple text prompt)
+  messages:
+    - role: user
+      content:
+        - type: text
+          text: "who are u?"
