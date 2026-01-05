@@ -1,9 +1,25 @@
 import os
 from openai import OpenAI
+from dotenv import load_dotenv
+
+# # 加载 .env 文件
+# load_dotenv()
+
+# api_key = os.getenv("Test_API_KEY")
+# if not api_key:
+#     raise ValueError("请在 .env 文件中设置 Test_API_KEY")
 
 client = OpenAI(
     # 若没有配置环境变量，请用百炼API Key将下行替换为：api_key="sk-xxx"
-    api_key=os.getenv("Test_API_KEY"),
+    #1.
+    # api_key=os.getenv("Test_API_KEY"),#通过环境变量设置完成
+    #export Test_API_KEY=xxxxxxxxx
+    #2.
+    #直接导入下面的密钥
+    # api_key="xxxxxxxxxxxxxxxxxxx",
+    #3.
+    #通过.env文件设置
+    #api_key=api_key
     base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
 )
 completion = client.chat.completions.create(

@@ -1,9 +1,20 @@
 import os
 from openai import OpenAI
+from dotenv import load_dotenv
 
+
+# 加载 .env 文件
+load_dotenv()
+
+api_key = os.getenv("Test_API_KEY")
+if not api_key:
+    raise ValueError("请在 .env 文件中设置 Test_API_KEY")
+
+#配置密钥，也可以直接使用export导入
 client = OpenAI(
     # 若没有配置环境变量，请用百炼API Key将下行替换为：api_key="sk-xxx"
-    api_key=os.getenv("Test_API_KEY"),
+    # api_key=os.getenv("Test_API_KEY"),
+    api_key=api_key,
     base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
 )
 # Load prompt from YAML (if available) and send to model
