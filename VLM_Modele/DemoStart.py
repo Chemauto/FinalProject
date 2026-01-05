@@ -1,6 +1,7 @@
 import os
 from openai import OpenAI
 from dotenv import load_dotenv
+import json
 
 
 # 加载 .env 文件
@@ -26,31 +27,47 @@ except Exception:
 
 
 def load_prompt(prompt_id='ask-who'):
+    
+    #获取yaml文件路径
     prompts_path = os.path.join(os.path.dirname(__file__), "LLM_prompts", "Basic_prompts", "basc.yaml")
+    
+    #1.默认初始化，这个就只是为了测试
     # Fallback prompt if YAML not available or prompt not found
-    fallback = [{"role": "user", "content": [{"type": "text", "text": "who are u?"}]}]
-    if not yaml:
-        return fallback
+    # fallback = [{"role": "user", "content": [{"type": "text", "text": "who are u?"}]}]
+    # if not yaml:
+        # return fallback
+    #2.零值初始化
+    fallback=None
 
+    #读取yaml文件内容
     try:
         with open(prompts_path, 'r', encoding='utf-8') as f:
             data = yaml.safe_load(f) or []
     except FileNotFoundError:
         return fallback
 
+    #根据id得到相应的内容message
     for entry in data:
         if entry.get('id') == prompt_id:
             return entry.get('messages', fallback)
-
+        
     return fallback
-
+    #调用函数
 messages = load_prompt('ask-who')
 
 completion = client.chat.completions.create(
     model="qwen-vl-plus",  # 可按需更换模型名称
-    messages=messages
+    messages=messages,
+    #规范输出的格式
+    response_format={"type": "json_object"}
 )
+#输出json格式
+response_content = completion.choices[0].message.content
+try:
+    response_json = json.loads(response_content)
+    print("JSON输出:", response_json)
 
-messages = completion.choices[0].message.content
-print(messages)
+except json.JSONDecodeError as e:
+    print("解析JSON失败:", e)
+    print("原始输出:", response_content)
 # print(completion.model_dump_json())

@@ -3,9 +3,9 @@
 # message shape: a list of messages where each message has `role` and `content` (a list of typed items).
 
 - id: ask-who
-  description: Ask model identity (simple text prompt)
+  description: Ask model identity in JSON format
   messages:
     - role: user
       content:
         - type: text
-          text: "who are u?"
+          text: "请以JSON格式回答：who are u? 输出格式：{\"identity\": \"your answer here\"}"
