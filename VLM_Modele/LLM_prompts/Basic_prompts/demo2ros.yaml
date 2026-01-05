@@ -14,7 +14,10 @@
             - navigate
             - pick
             - place
-
+            Allowed parameter names (only these can be used):
+            - location
+            - object
+            - distance
             Output format (JSON ONLY):
             {{
               "action": "<action_name>",
