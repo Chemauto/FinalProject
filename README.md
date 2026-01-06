@@ -1,14 +1,28 @@
-# 目前的这几个文件
-# DemoSimple.py是最简单的LLM调用Openai接口的一个例子
-# DemotStart.py是加入了prompt的一个小例子，最终希望配置的是LLM_prompts里面的内容
-# Demo2Robot.py则是再加入了json输出格式的一个小例子
-# Demo2Ros.py则是一个和Ros接口融合的一个例子
-# WARNROS2.py是一个ROS的代码文件，所以我需要实际情况书写一个ROS代码
-# 2Demo2Ros.py是自娱自乐的一个代码貌似可以用测试
+# 项目文件概述
 
-# 环境设置 conda create -n qwen3 python=3.11 -y
-# conda activate qwen3
-# pip install openai
-# pip install dotenv
-# 有模块不在直接pip 安装即可
-# Todo list 可以利用langchain React补充？？？已达到更好的推理的效果
+## 核心文件功能介绍
+
+*   `DemoSimple.py`: 最简单的LLM调用OpenAI接口的示例。
+*   `DemoStart.py`: 加入了Prompt的示例，最终希望配置`LLM_prompts`目录下的内容。
+*   `Demo2Robot.py`: 增加了JSON输出格式的一个示例。
+*   `Demo2Ros.py`: 与ROS接口融合的示例。
+*   `WARNROS2.py`: 一个ROS代码文件示例，需要根据实际情况编写ROS代码。
+*   `2Demo2Ros.py`: 用于自娱自乐的代码，貌似可以用于测试。
+
+## 环境设置
+
+1.  创建并激活 Conda 环境:
+    ```bash
+    conda create -n qwen3 python=3.11 -y
+    conda activate qwen3
+    ```
+2.  安装依赖:
+    ```bash
+    pip install openai
+    pip install dotenv
+    ```
+    *   如果有其他缺失模块，直接`pip install`安装即可。
+
+## 未来展望
+
+*   Todo list: 可以考虑利用LangChain ReAct模式来增强推理效果。
