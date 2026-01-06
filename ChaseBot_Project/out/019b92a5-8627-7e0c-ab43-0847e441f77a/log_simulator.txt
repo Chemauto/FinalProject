@@ -1,0 +1,85 @@
+D:\MyAPP\Miniconda\Miniconda3py313\envs\qwen3\Lib\site-packages\pygame\pkgdata.py:25: UserWarning: pkg_resources is deprecated as an API. See https://setuptools.pypa.io/en/latest/pkg_resources.html. The pkg_resources package is slated for removal as early as 2025-11-30. Refrain from using this package or pin to Setuptools<81.
+  from pkg_resources import resource_stream, resource_exists
+pygame 2.6.1 (SDL 2.28.4, Python 3.11.14)
+Hello from the pygame community. https://www.pygame.org/contribute.html
+SIM: Simulator running. Waiting for Dora commands from LLM agent...
+SIM: Received command with params: {'angle': '0deg'}
+SIM: New Target Angle: 103.00
+SIM: Received command with params: {'angle': '0deg'}
+SIM: New Target Angle: 103.00
+SIM: Received command with params: {'angle': '0deg'}
+SIM: New Target Angle: 103.00
+SIM: Received command with params: {'angle': '0deg'}
+SIM: New Target Angle: 103.00
+SIM: Received command with params: {'angle': '0deg'}
+SIM: New Target Angle: 103.00
+SIM: Received command with params: {'angle': '0deg'}
+SIM: New Target Angle: 103.00
+SIM: Received command with params: {'angle': '0deg'}
+SIM: New Target Angle: 103.00
+SIM: Received command with params: {'angle': '-15deg'}
+SIM: New Target Angle: 118.00
+SIM: Received command with params: {'angle': '0deg'}
+SIM: New Target Angle: 118.00
+SIM: Received command with params: {'angle': '-30deg'}
+SIM: New Target Angle: 148.00
+SIM: Received command with params: {'angle': '0deg'}
+SIM: New Target Angle: 148.00
+SIM: Received command with params: {'angle': '-15deg'}
+SIM: New Target Angle: 163.00
+SIM: Received command with params: {'angle': '-15deg'}
+SIM: New Target Angle: 178.00
+SIM: Received command with params: {'angle': '-15deg'}
+SIM: New Target Angle: 193.00
+SIM: Received command with params: {'angle': '0deg'}
+SIM: New Target Angle: 193.00
+SIM: Received command with params: {'angle': '0deg'}
+SIM: New Target Angle: 193.00
+SIM: Received command with params: {'angle': '0deg'}
+SIM: New Target Angle: 193.00
+SIM: Received command with params: {'angle': '0deg'}
+SIM: New Target Angle: 193.00
+SIM: Received command with params: {'direction': 'front', 'distance': '50cm'}
+SIM: New Target Position: (351.28, 311.25)
+SIM: Received command with params: {'angle': '0deg'}
+SIM: New Target Angle: 193.00
+SIM: Received command with params: {'angle': '0deg'}
+SIM: New Target Angle: 193.00
+SIM: Received command with params: {'direction': 'front', 'distance': '50cm'}
+SIM: New Target Position: (302.56, 322.50)
+SIM: Received command with params: {'angle': '0deg'}
+SIM: New Target Angle: 193.00
+SIM: Received command with params: {'angle': '0deg'}
+SIM: New Target Angle: 193.00
+SIM: Received command with params: {'angle': '0deg'}
+SIM: New Target Angle: 193.00
+SIM: Received command with params: {'angle': '-10deg'}
+SIM: New Target Angle: 203.00
+SIM: Received command with params: {'angle': '0deg'}
+SIM: New Target Angle: 203.00
+SIM: Received command with params: {'angle': '0deg'}
+SIM: New Target Angle: 203.00
+SIM: Received command with params: {'angle': '0deg'}
+SIM: New Target Angle: 203.00
+SIM: Received command with params: {'angle': '0deg'}
+SIM: New Target Angle: 203.00
+SIM: Received command with params: {'angle': '0deg'}
+SIM: New Target Angle: 203.00
+SIM: Received command with params: {'angle': '0deg'}
+SIM: New Target Angle: 203.00
+SIM: Received command with params: {'direction': 'front', 'distance': '50cm'}
+SIM: New Target Position: (256.54, 342.03)
+SIM: Received command with params: {'angle': '0deg'}
+SIM: New Target Angle: 203.00
+SIM: Received command with params: {'direction': 'front', 'distance': '50cm'}
+SIM: New Target Position: (210.51, 361.57)
+SIM: Received command with params: {'direction': 'front', 'distance': '50cm'}
+SIM: New Target Position: (164.49, 381.10)
+SIM: Received command with params: {'angle': '0deg'}
+SIM: New Target Angle: 203.00
+SIM: Received command with params: {'angle': '0deg'}
+SIM: New Target Angle: 203.00
+SIM: Received command with params: {'direction': 'front', 'distance': '50cm'}
+SIM: New Target Position: (118.46, 400.64)
+SIM: Received command with params: {'angle': '0deg'}
+SIM: New Target Angle: 203.00

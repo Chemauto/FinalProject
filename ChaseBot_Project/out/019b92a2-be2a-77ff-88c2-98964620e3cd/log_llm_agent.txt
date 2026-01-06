@@ -1,0 +1,36 @@
+AGENT: LLM Agent is running. Waiting for game state...
+
+==================== AGENT: Asking LLM ====================
+AGENT: Current State:
+**Current State:**
+- PlayerBot: 
+  - Position: ({{ player_x | round(1) }}, {{ player_y | round(1) }})
+  - Angle: {{ player_angle | round(1) }} degrees
+- TargetBot: 
+  - Position: ({{ target_x | round(1) }}, {{ target_y | round(1) }})
+
+**Your Task:**
+1.  **Analyze**: Calculate the vector (difference in x, y) from the player to the target.
+2.  **Think**: Based on the vector and your current angle, decide the best action. Should you turn first, or move forward? Is the target already aligned?
+3.  **Act**: Issue ONE command to get closer to the target.
+
+**Available Actions & JSON Format:**
+- To **turn**, use the "navigate" action with an "angle". A positive angle means turning right, a negative angle means turning left.
+  Example: `{"action": "navigate", "parameters": {"angle": "45deg"}}`
+- To **move**, use the "navigate" action with a "direction" and "distance".
+  Example: `{"action": "navigate", "parameters": {"direction": "front", "distance": "50cm"}}`
+
+**IMPORTANT RULES:**
+- Issue only ONE command at a time.
+- Prioritize turning to face the target before moving. If you are not facing the target, TURN first.
+- If you are already very close to the target (distance < 20), you have succeeded. Respond with: `{"action": "succeeded", "parameters": {}}`
+- Provide your response as a single JSON object. Do not add any text before or after the JSON.
+
+**Example Thought Process:**
+*Thought: The target is at (600, 200) and I am at (100, 100) facing 0 degrees (East). The target is to my North-East. I need to turn left towards it first. The angle to the target is roughly 45 degrees. I will turn left by -45 degrees (which is the same as turning towards 45 degrees).*
+*JSON Output:*
+`{"action": "navigate", "parameters": {"angle": "-45deg"}}`
+
+AGENT: LLM Response (raw): {"action": "succeeded", "parameters": {}}
+AGENT: LLM Decision (parsed): {'action': 'succeeded', 'parameters': {}}
+AGENT: Goal reached! Stopping.

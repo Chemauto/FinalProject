@@ -1,0 +1,23 @@
+/dora-interactive-v2.dora-session.yaml
+.env
+
+# Python
+__pycache__/
+*.pyc
+*.o
+*.so
+*.egg
+*.egg-info
+.Python
+build/
+dist/
+venv/
+env/
+
+# Dora Module outputs
+Dora_Module/out/
+
+# ROS2 build artifacts
+ROS_Module/build/
+ROS_Module/install/
+ROS_Module/log/

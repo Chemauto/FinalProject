@@ -18,6 +18,7 @@
 
 ```
 .
+├── .gitignore                # Git忽略文件，配置了需要忽略的文件和目录
 ├── VLM_Modele/
 │   ├── .env                  # 环境变量配置，用于存放API Key等
 │   ├── DemoSimple.py         # 最简单的LLM接口调用示例
@@ -33,11 +34,7 @@
 
 ### 关键文件说明
 
-- **`VLM_Modele/Demo2Ros.py`**: 项目的核心逻辑所在。它接收用户输入（如“去桌子那里”），加载`demo2ros.yaml`中的Prompt模板，调用LLM，解析返回的JSON结果，并根据解析出的动作（如`navigate`）调用相应的ROS2功能。
-
-- **`VLM_Modele/LLM_prompts/Basic_prompts/demo2ros.yaml`**: 定义了用于将自然语言任务转换为ROS2动作指令的Prompt。LLM根据此模板的指示，将用户的模糊指令转化为精确的JSON格式命令。
-
-- **`VLM_Modele/.env`**: 存储`Test_API_KEY`，即访问大模型服务所需的API密钥。
+- **`.gitignore`**: 配置了Git版本控制系统需要忽略的文件和目录，如Python编译缓存(`__pycache__`)、虚拟环境(`venv`/`env`)、Dora模块的输出目录(`Dora_Module/out/`)以及ROS2的构建产物(`ROS_Module/build/`, `ROS_Module/install/`, `ROS_Module/log/`)等，确保代码仓库的整洁。
 
 ## 4. 环境设置与使用
 

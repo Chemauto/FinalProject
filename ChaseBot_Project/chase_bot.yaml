@@ -1,0 +1,18 @@
+# chase_bot.yaml: Dora dataflow for the ChaseBot project
+
+nodes:
+  - id: simulator
+    path: simulator.py
+    # The simulator receives commands from the llm_agent
+    inputs:
+      command: llm_agent/command
+    # The simulator outputs the state of the game world
+    outputs: [game_state]
+
+  - id: llm_agent
+    path: llm_agent.py
+    # The agent receives the game state from the simulator
+    inputs:
+      game_state: simulator/game_state
+    # The agent outputs commands to the simulator
+    outputs: [command]

@@ -2,11 +2,4 @@ D:\MyAPP\Miniconda\Miniconda3py313\envs\qwen3\Lib\site-packages\pygame\pkgdata.p
   from pkg_resources import resource_stream, resource_exists
 pygame 2.6.1 (SDL 2.28.4, Python 3.11.14)
 Hello from the pygame community. https://www.pygame.org/contribute.html
-SIM: Simulator running. Waiting for Dora commands...
-SIM: Received navigation command with params: {'distance': '1m'}
-SIM: New Target: (500.00, 300.00) at angle 0.00
-SIM: Received navigation command with params: {'direction': 'back', 'distance': '2m'}
-SIM: New Target: (300.00, 300.00) at angle 180.00
-SIM: Received navigation command with params: {'angle': '-90deg'}
-SIM: New Target: (300.00, 300.00) at angle 90.00
-SIM: Simulator stopped.
+SIM: Simulator running. Waiting for Dora commands from LLM agent...

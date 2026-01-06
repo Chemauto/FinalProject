@@ -1,0 +1,16 @@
+D:\MyAPP\Miniconda\Miniconda3py313\envs\qwen3\Lib\site-packages\pygame\pkgdata.py:25: UserWarning: pkg_resources is deprecated as an API. See https://setuptools.pypa.io/en/latest/pkg_resources.html. The pkg_resources package is slated for removal as early as 2025-11-30. Refrain from using this package or pin to Setuptools<81.
+  from pkg_resources import resource_stream, resource_exists
+pygame 2.6.1 (SDL 2.28.4, Python 3.11.14)
+Hello from the pygame community. https://www.pygame.org/contribute.html
+Traceback (most recent call last):
+  File "\\?\D:\MyFiles\Documents\������ز���\Project\ChaseBot_Project\simulator.py", line 204, in <module>
+    node = Node("simulator")
+           ^^^^^^^^^^^^^^^^^
+RuntimeError: Could not setup node from node id. Make sure to have a running dataflow with this dynamic node
+
+Caused by:
+   0: failed to init event stream
+   1: subscribe failed: Node llm_agent exited before initializing dora. For more information, run `dora logs 019b92a5-33b7-74bf-b681-e4e073f53ca1 llm_agent`.
+
+Location:
+    apis\rust\node\src\event_stream\mod.rs:161:17

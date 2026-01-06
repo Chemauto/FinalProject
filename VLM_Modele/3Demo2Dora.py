@@ -31,6 +31,16 @@ BASE_DIR = os.path.dirname(__file__)
 
 # ---------- Prompt Loader ----------
 def load_prompt(prompt_id, file):
+    """
+    Loads a prompt from a YAML file.
+
+    Args:
+        prompt_id (str): The ID of the prompt to load.
+        file (str): The name of the YAML file.
+
+    Returns:
+        list: The loaded prompt messages.
+    """
     path = os.path.join(BASE_DIR, "LLM_prompts", "Basic_prompts", file)
     with open(path, "r", encoding="utf-8") as f:
         data = yaml.safe_load(f) or []
@@ -43,6 +53,16 @@ def load_prompt(prompt_id, file):
 
 
 def render_messages(messages, **kwargs):
+    """
+    Renders the messages with the given keyword arguments.
+
+    Args:
+        messages (list): The messages to render.
+        **kwargs: The keyword arguments to use for rendering.
+
+    Returns:
+        list: The rendered messages.
+    """
     rendered = []
     for msg in messages:
         new_msg = {"role": msg["role"], "content": []}
