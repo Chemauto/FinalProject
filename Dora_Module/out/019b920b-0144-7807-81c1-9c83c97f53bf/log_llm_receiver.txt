@@ -1,0 +1,19 @@
+LLM_RECEIVER: Node initialized. Waiting for user commands...
+
+============================================================
+LLM_RECEIVER: Received command: '��ǰ��1��'
+LLM_RECEIVER: Calling LLM...
+LLM_RECEIVER: Parsed Command: {'action': 'navigate', 'parameters': {'distance': '1m'}}
+LLM_RECEIVER: Sent 'navigate' command to simulator.
+
+============================================================
+LLM_RECEIVER: Received command: '��ת90��'
+LLM_RECEIVER: Calling LLM...
+LLM_RECEIVER: Parsed Command: {'action': 'navigate', 'parameters': {'angle': '-90deg'}}
+LLM_RECEIVER: Sent 'navigate' command to simulator.
+
+============================================================
+LLM_RECEIVER: Received command: '������1��'
+LLM_RECEIVER: Calling LLM...
+LLM_RECEIVER: Parsed Command: {'action': 'navigate', 'parameters': {'direction': 'back', 'distance': '1m'}}
+LLM_RECEIVER: Sent 'navigate' command to simulator.

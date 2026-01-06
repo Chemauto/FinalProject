@@ -1,0 +1,6 @@
+UI Input Node is running.
+UI sending command: ��ǰ��1��
+UI sending command: ��ת90��
+UI sending command: ������1��
+UI window closed. Stopping node.
+UI Input Node finished.

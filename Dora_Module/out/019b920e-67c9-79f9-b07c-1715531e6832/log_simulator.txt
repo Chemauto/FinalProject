@@ -1,0 +1,12 @@
+D:\MyAPP\Miniconda\Miniconda3py313\envs\qwen3\Lib\site-packages\pygame\pkgdata.py:25: UserWarning: pkg_resources is deprecated as an API. See https://setuptools.pypa.io/en/latest/pkg_resources.html. The pkg_resources package is slated for removal as early as 2025-11-30. Refrain from using this package or pin to Setuptools<81.
+  from pkg_resources import resource_stream, resource_exists
+pygame 2.6.1 (SDL 2.28.4, Python 3.11.14)
+Hello from the pygame community. https://www.pygame.org/contribute.html
+SIM: Simulator running. Waiting for Dora commands...
+SIM: Received navigation command with params: {'distance': '1m'}
+SIM: New Target: (500.00, 300.00) at angle 0.00
+SIM: Received navigation command with params: {'direction': 'back', 'distance': '2m'}
+SIM: New Target: (300.00, 300.00) at angle 180.00
+SIM: Received navigation command with params: {'angle': '-90deg'}
+SIM: New Target: (300.00, 300.00) at angle 90.00
+SIM: Simulator stopped.

@@ -1,0 +1,108 @@
+# VLM_Modele/5Demo2Dora_Receiver.py
+import os
+import json
+from dotenv import load_dotenv
+from openai import OpenAI
+import pyarrow as pa
+
+try:
+    import yaml
+except ImportError:
+    raise ImportError("pip install pyyaml")
+
+from dora import Node
+
+# ---------- Env ----------
+load_dotenv()
+API_KEY = os.getenv("Test_API_KEY")
+if not API_KEY:
+    raise ValueError("Missing Test_API_KEY")
+
+
+# ---------- OpenAI Client ----------
+client = OpenAI(
+    api_key=API_KEY,
+    base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+)
+
+
+BASE_DIR = os.path.dirname(__file__)
+
+
+# ---------- Prompt Loader ----------
+def load_prompt(prompt_id, file):
+    path = os.path.join(BASE_DIR, "LLM_prompts", "Basic_prompts", file)
+    with open(path, "r", encoding="utf-8") as f:
+        data = yaml.safe_load(f) or []
+    for entry in data:
+        if entry.get("id") == prompt_id:
+            return entry["messages"]
+    raise ValueError(f"Prompt id not found: {prompt_id}")
+
+
+def render_messages(messages, **kwargs):
+    rendered = []
+    for msg in messages:
+        new_msg = {"role": msg["role"], "content": []}
+        for item in msg["content"]:
+            text = item["text"].replace("{user_input}", kwargs.get("user_input", ""))
+            new_msg["content"].append({"type": "text", "text": text})
+        rendered.append(new_msg)
+    return rendered
+
+
+# ---------- Main Dora Node Loop ----------
+if __name__ == "__main__":
+    node = Node()
+    print("LLM_RECEIVER: Node initialized. Waiting for user commands...")
+
+    for event in node:
+        if event["type"] != "INPUT":
+            continue
+        
+        # We expect the input to be a PyArrow array with one string element.
+        user_input = event["value"][0].as_py()
+        print("\n" + "="*60)
+        print(f"LLM_RECEIVER: Received command: '{user_input}'")
+
+        try:
+            # 1. Load + render prompt
+            messages = load_prompt("task-to-dora-action", "demo2dora.yaml")
+            messages = render_messages(messages, user_input=user_input)
+
+            # 2. Call LLM
+            print("LLM_RECEIVER: Calling LLM...")
+            completion = client.chat.completions.create(
+                model="qwen-plus", messages=messages
+            )
+            raw_output = completion.choices[0].message.content
+
+            # 3. Parse JSON
+            command = {}
+            try:
+                command = json.loads(raw_output.strip())
+            except json.JSONDecodeError:
+                import re
+                json_match = re.search(r'\{.*\}', raw_output, re.DOTALL)
+                if json_match:
+                    command = json.loads(json_match.group())
+                else:
+                    print("LLM_RECEIVER: WARNING: LLM output was not valid JSON.")
+                    print(f"   Raw Output: {raw_output}")
+                    continue
+
+            # 4. Dispatch command to Simulator via Dora
+            action_name = command.get("action")
+            if not action_name:
+                print("LLM_RECEIVER: WARNING: Parsed command is missing 'action' field.")
+                continue
+
+            print(f"LLM_RECEIVER: Parsed Command: {command}")
+            arrow_data = pa.array([command])
+            node.send_output("command", arrow_data)
+            print(f"LLM_RECEIVER: Sent '{action_name}' command to simulator.")
+
+        except Exception as e:
+            print(f"\nLLM_RECEIVER: ERROR: An error occurred: {type(e).__name__}: {e}")
+            import traceback
+            traceback.print_exc()
