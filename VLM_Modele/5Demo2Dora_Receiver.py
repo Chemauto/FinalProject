@@ -34,6 +34,7 @@ client = OpenAI(
     api_key=API_KEY,
     base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
 )
+# 配置客户端
 
 
 BASE_DIR = os.path.dirname(__file__)
@@ -104,6 +105,7 @@ if __name__ == "__main__":
             print("LLM_RECEIVER: Calling LLM...")
             completion = client.chat.completions.create(
                 model="qwen-plus", messages=messages
+                # model="robobrain", messages=messages
             )
             raw_output = completion.choices[0].message.content
 

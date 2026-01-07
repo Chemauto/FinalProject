@@ -16,7 +16,7 @@ client = OpenAI(
     # 若没有配置环境变量，请用百炼API Key将下行替换为：api_key="sk-xxx"
     # api_key=os.getenv("Test_API_KEY"),
     api_key=api_key,
-    base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+    base_url="https://192.168.0.233:8000/v1",
 )
 # Load prompt from YAML (if available) and send to model
 # Requires PyYAML to read prompts: `pip install pyyaml`
@@ -56,7 +56,7 @@ def load_prompt(prompt_id='ask-who'):
 messages = load_prompt('ask-who')
 
 completion = client.chat.completions.create(
-    model="qwen-vl-plus",  # 可按需更换模型名称
+    model="robobrain",  # 可按需更换模型名称
     messages=messages,
     #规范输出的格式
     response_format={"type": "json_object"}

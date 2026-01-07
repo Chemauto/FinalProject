@@ -19,11 +19,11 @@ client = OpenAI(
     # api_key="xxxxxxxxxxxxxxxxxxx",
     #3.
     #通过.env文件设置
-    #api_key=api_key
-    base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+    api_key="not-needed"
+    base_url="https://192.168.0.233:8000/v1",
 )
 completion = client.chat.completions.create(
-    model="qwen-vl-plus",  # 此处以qwen-vl-plus为例，可按需更换模型名称。模型列表：https://help.aliyun.com/zh/model-studio/getting-started/models
+    model="robobrain",  # 此处以qwen-vl-plus为例，可按需更换模型名称。模型列表：https://help.aliyun.com/zh/model-studio/getting-started/models
     messages=[{"role": "user","content": [
             {"type": "image_url",
              "image_url": {"url": "https://dashscope.oss-cn-beijing.aliyuncs.com/images/dog_and_girl.jpeg"}},
