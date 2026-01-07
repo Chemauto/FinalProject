@@ -19,8 +19,8 @@
 ```
 .
 ├── .gitignore                # Git忽略文件，配置了需要忽略的文件和目录
+├── .env                      # 环境变量配置，用于存放API Key等
 ├── VLM_Modele/
-│   ├── .env                  # 环境变量配置，用于存放API Key等
 │   ├── DemoSimple.py         # 最简单的LLM接口调用示例
 │   ├── DemoStart.py          # 结合了Prompt加载的示例
 │   ├── Demo2Ros.py           # 核心文件：集成LLM与ROS2接口的示例
@@ -55,7 +55,7 @@
    *注：`openai`库用于访问LLM，`python-dotenv`用于加载`.env`文件，`pyyaml`用于解析yaml格式的prompt文件。*
 
 3. **配置API Key**:
-   在`VLM_Modele/`目录下创建一个名为`.env`的文件，并在其中添加如下内容：
+   在项目根目录下创建一个名为`.env`的文件，并在其中添加如下内容：
    ```
    Test_API_KEY="sk-your_api_key_here"
    ```

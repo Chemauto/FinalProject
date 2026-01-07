@@ -19,7 +19,11 @@ except ImportError:
 from dora import Node
 
 # ---------- Env ----------
-load_dotenv()
+# Dora runs scripts from the 'Dora_Module' directory. To find the .env file in the project root,
+# we get the current working directory, go one level up, and then join with '.env'.
+project_root = os.path.abspath(os.path.join(os.getcwd(), '..'))
+dotenv_path = os.path.join(project_root, '.env')
+load_dotenv(dotenv_path=dotenv_path)
 API_KEY = os.getenv("Test_API_KEY")
 if not API_KEY:
     raise ValueError("Missing Test_API_KEY")

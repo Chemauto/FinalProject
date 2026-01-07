@@ -1,5 +1,5 @@
 /dora-interactive-v2.dora-session.yaml
-VLM_Modele/.env
+/.env
 
 # Python
 __pycache__/
@@ -13,7 +13,7 @@ build/
 dist/
 venv/
 env/
-out
+out/
 # Dora Module outputs
 Dora_Module/out/
 
