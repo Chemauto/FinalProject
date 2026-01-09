@@ -1,0 +1,57 @@
+# MCP Robot Server Configuration
+
+# 服务器配置
+server:
+  name: "robot-control-server"
+  version: "1.0.0"
+
+# 适配器配置
+adapter:
+  # 适配器类型: dora 或 ros1
+  type: "dora"
+
+  # Dora特定配置
+  dora:
+    # 输出ID（对应Dora数据流中的输出）
+    output_id: "command"
+
+  # ROS1特定配置
+  ros1:
+    # ROS节点名称
+    node_name: "mcp_robot_control"
+    # 发布话题名称
+    topic_name: "/robot_command"
+    # 发布队列大小
+    queue_size: 10
+
+# 日志配置
+logging:
+  level: "INFO"  # DEBUG, INFO, WARNING, ERROR
+  file: null  # 可选：日志文件路径
+
+# 技能配置
+skills:
+  # 启用的skills（null表示全部启用）
+  enabled:
+    - "turn_left"
+    - "turn_right"
+    - "move_forward"
+    - "move_backward"
+    - "move_left"
+    - "move_right"
+    - "navigate_to"
+    - "pick_up"
+    - "place"
+    - "turn_then_move"
+    - "move_square"
+    - "stop"
+    - "get_status"
+    - "wait"
+
+  # 默认参数
+  defaults:
+    turn:
+      angle: 90  # 默认转向角度
+    move:
+      distance: 1.0  # 默认移动距离
+      unit: "m"  # 默认单位

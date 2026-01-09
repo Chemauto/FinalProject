@@ -123,16 +123,33 @@ if __name__ == "__main__":
                     print(f"   Raw Output: {raw_output}")
                     continue
 
-            # 4. Dispatch command to Simulator via Dora
-            action_name = command.get("action")
-            if not action_name:
-                print("LLM_RECEIVER: WARNING: Parsed command is missing 'action' field.")
+            # 4. Handle both old format (single action) and new format (actions array)
+            actions_to_send = []
+
+            # Check if new format with "actions" array
+            if "actions" in command and isinstance(command["actions"], list):
+                actions_to_send = command["actions"]
+                print(f"LLM_RECEIVER: Parsed {len(actions_to_send)} actions")
+            # Check if old format with single "action"
+            elif "action" in command:
+                actions_to_send = [command]
+                print("LLM_RECEIVER: Parsed single action (legacy format)")
+            else:
+                print("LLM_RECEIVER: WARNING: Parsed command is missing 'action' or 'actions' field.")
+                print(f"   Command: {command}")
                 continue
 
-            print(f"LLM_RECEIVER: Parsed Command: {command}")
-            arrow_data = pa.array([command])
-            node.send_output("command", arrow_data)
-            print(f"LLM_RECEIVER: Sent '{action_name}' command to simulator.")
+            # 5. Dispatch each action to Simulator via Dora in sequence
+            for idx, action in enumerate(actions_to_send, 1):
+                action_name = action.get("action")
+                if not action_name:
+                    print(f"LLM_RECEIVER: WARNING: Action {idx} is missing 'action' field.")
+                    continue
+
+                print(f"LLM_RECEIVER: [{idx}/{len(actions_to_send)}] Sending {action}: {action.get('parameters', {})}")
+                arrow_data = pa.array([action])
+                node.send_output("command", arrow_data)
+                print(f"LLM_RECEIVER: Sent '{action_name}' command to simulator.")
 
         except Exception as e:
             print(f"\nLLM_RECEIVER: ERROR: An error occurred: {type(e).__name__}: {e}")

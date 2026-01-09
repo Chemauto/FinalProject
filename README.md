@@ -26,7 +26,96 @@
     请将`sk-your_api_key_here`替换为您从阿里云DashScope获取的真实API Key。
 ## 未来展望
 
-*   Todo list: 可以考虑利用LangChain ReAct模式来增强推理效果。
+*   ✅ **已完成**: 使用MCP (Model Context Protocol) 实现更智能的机器人控制
+*   可以考虑利用LangChain ReAct模式来增强推理效果。
+
+---
+
+# MCP Robot Control Server
+
+## 1. 项目概述
+
+MCP (Model Context Protocol) Robot Control Server 是一个基于MCP协议的机器人控制服务器，提供标准化的机器人操作接口。LLM可以直接调用robot skills函数，而不是生成JSON字符串。
+
+**核心优势**:
+- ✅ **自动函数调用**: LLM自动选择和调用合适的skill
+- ✅ **原生多步骤支持**: 自动执行复杂的指令序列
+- ✅ **类型安全**: 通过schema定义参数类型
+- ✅ **框架无关**: 支持Dora、ROS1等多种框架
+- ✅ **易于扩展**: 添加新skill无需修改prompt
+- ✅ **真实机器人支持**: 通过ROS1适配器控制实际机器人
+
+## 2. 可用的Robot Skills
+
+### 导航类
+- `turn_left(angle)` - 向左转指定角度
+- `turn_right(angle)` - 向右转指定角度
+- `move_forward(distance, unit)` - 向前移动
+- `move_backward(distance, unit)` - 向后移动
+- `move_left(distance, unit)` - 向左移动
+- `move_right(distance, unit)` - 向右移动
+- `navigate_to(location, direction, distance)` - 导航到指定位置
+
+### 操作类
+- `pick_up(object_name)` - 抓取物体
+- `place(object_name, location)` - 放置物体
+
+### 复合动作
+- `turn_then_move(turn_angle, move_distance, ...)` - 转向后移动
+- `move_square(side_length, unit)` - 正方形路径移动
+
+### 工具类
+- `stop()` - 停止机器人
+- `get_status()` - 获取机器人状态
+- `wait(seconds)` - 等待指定时间
+
+## 3. 使用MCP版本 (推荐)
+
+### 环境设置
+
+在 `qwen3` Conda 环境中安装MCP相关依赖：
+```bash
+pip install mcp dora-rs pyarrow pyyaml python-dotenv
+```
+
+### 运行交互式Dora仿真 (MCP版本)
+
+1. **进入 `Dora_Module` 目录**:
+   ```powershell
+   cd D:\MyFiles\Documents\毕设相关材料\Project\Dora_Module
+   ```
+
+2. **启动Dora后台服务** (如果尚未运行):
+   ```powershell
+   dora up
+   ```
+
+3. **启动MCP版本的交互式数据流**:
+   ```powershell
+   dora start dora-interactive-mcp.yaml --attach
+   ```
+
+### 使用示例
+
+在UI窗口中输入指令：
+
+- 单步指令: `前进1米` / `Turn 90 degrees left`
+- 多步指令: `先左转90度，再往前走1米` / `Turn left, go forward 1m`
+- 复杂指令: `向右转45度然后后退50厘米` / `Turn right 45 degrees, then move back 50cm`
+
+## 4. 架构对比
+
+| 特性 | 旧版本 (JSON生成) | MCP版本 (工具调用) |
+|------|------------------|-------------------|
+| 复杂度 | 需要解析JSON | 自动函数调用 |
+| 多步骤 | 需要特殊处理 | 原生支持 |
+| 扩展性 | 修改prompt | 添加函数 |
+| 类型安全 | 无 | 有（schema） |
+| 仿真支持 | ✅ Dora | ✅ Dora |
+| 真实机器人 | ❌ 无 | ✅ ROS1 |
+| 推荐使用 | ❌ | ✅ |
+
+详细文档请查看: [MCP_Server/README.md](MCP_Server/README.md)
 
 ---
 
