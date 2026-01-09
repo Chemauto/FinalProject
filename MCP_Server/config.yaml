@@ -3,11 +3,11 @@
 # 服务器配置
 server:
   name: "robot-control-server"
-  version: "1.0.0"
+  version: "2.0.0"
 
 # 适配器配置
 adapter:
-  # 适配器类型: dora 或 ros1
+  # 适配器类型: dora, ros1 或 ros2
   type: "dora"
 
   # Dora特定配置
@@ -18,6 +18,15 @@ adapter:
   # ROS1特定配置
   ros1:
     # ROS节点名称
+    node_name: "mcp_robot_control"
+    # 发布话题名称
+    topic_name: "/robot_command"
+    # 发布队列大小
+    queue_size: 10
+
+  # ROS2特定配置
+  ros2:
+    # ROS2节点名称
     node_name: "mcp_robot_control"
     # 发布话题名称
     topic_name: "/robot_command"

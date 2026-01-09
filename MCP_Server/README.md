@@ -11,6 +11,7 @@
 - [快速开始](#快速开始)
 - [详细使用说明](#详细使用说明)
 - [扩展指南](#扩展指南)
+  - 🔧 **[扩展开发指南 (EXTENSION.md)](EXTENSION.md)** ⭐ 必读
 - [故障排除](#故障排除)
 
 ---
@@ -24,8 +25,9 @@
 
 ### 2. **多框架支持**
 - ✅ **Dora**: 完整支持，用于仿真和快速原型
-- ✅ **ROS1**: 完整支持，用于实际机器人控制
-- 🔧 **扩展性**: 通过适配器模式轻松添加新框架（如ROS2）
+- ✅ **ROS1**: 完整支持，用于传统机器人系统
+- ✅ **ROS2**: 完整支持，用于现代机器人系统
+- 🔧 **扩展性**: 通过适配器模式轻松添加新框架
 
 ### 3. **智能任务处理**
 - 自动识别复杂指令（如"先左转90度，再往前走1米"）
@@ -410,7 +412,12 @@ MCP_Server/
 │   ├── __init__.py
 │   ├── base_adapter.py        #   基础适配器接口
 │   ├── dora_adapter.py        #   Dora框架适配器
-│   └── ros1_adapter.py        #   ROS1框架适配器
+│   ├── ros1_adapter.py        #   ROS1框架适配器
+│   └── ros2_adapter.py        #   ROS2框架适配器
+│
+├── examples/                  # 示例代码
+│   ├── ros2_robot_controller.py  # ROS2机器人控制器示例
+│   └── (更多示例...)
 │
 ├── mcp_robot_server.py        # 独立MCP服务器（可选）
 ├── config.yaml               # 配置文件
@@ -446,6 +453,10 @@ pip install dora-rs
 # 如果使用ROS1框架
 # 请先安装ROS1: http://wiki.ros.org/ROS/Installation
 # 然后安装rospy（通常随ROS1一起安装）
+
+# 如果使用ROS2框架
+# 请先安装ROS2: https://docs.ros.org/en/humble/Installation.html
+# rclpy通常随ROS2一起安装
 ```
 
 ### 2. 配置
@@ -454,12 +465,17 @@ pip install dora-rs
 
 ```yaml
 adapter:
-  type: "dora"  # 选择 "dora" 或 "ros1"
+  type: "dora"  # 选择 "dora"、"ros1" 或 "ros2"
 
   dora:
     output_id: "command"
 
   ros1:
+    node_name: "mcp_robot_control"
+    topic_name: "/robot_command"
+    queue_size: 10
+
+  ros2:
     node_name: "mcp_robot_control"
     topic_name: "/robot_command"
     queue_size: 10
@@ -482,6 +498,9 @@ python mcp_robot_server.py --adapter dora
 
 # 使用ROS1适配器
 python mcp_robot_server.py --adapter ros1
+
+# 使用ROS2适配器
+python mcp_robot_server.py --adapter ros2
 ```
 
 ---
@@ -558,7 +577,67 @@ python mcp_robot_server.py --adapter ros1
 
 ## 🔧 扩展指南
 
-### 添加新的Robot Skill
+> 💡 **提示**: 如果你要添加新技能、修改现有功能或添加新适配器，请务必阅读 [**扩展开发指南 (EXTENSION.md)**](EXTENSION.md)，其中包含：
+>
+> - 📝 详细的步骤说明
+> - 💻 完整的代码示例
+> - 📁 需要修改的所有文件清单
+> - ✅ 扩展检查清单
+> - 🐛 常见问题解答
+
+### 快速链接
+
+#### 添加新功能
+- [添加新Robot Skill](EXTENSION.md#场景1-添加新的robot-skill)
+- [修改现有Skill](EXTENSION.md#场景2-修改现有skill)
+- [添加新适配器](EXTENSION.md#场景3-添加新适配器)
+
+#### 高级定制
+- [自定义任务规划](EXTENSION.md#场景5-自定义任务规划逻辑)
+- [调整执行参数](EXTENSION.md#场景6-调整执行参数)
+
+### 示例：快速添加新Skill
+
+#### 1. 定义MCP工具 (在 `llm_agent_with_mcp.py`)
+
+```python
+{
+    "type": "function",
+    "function": {
+        "name": "your_new_skill",
+        "description": "技能描述",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "param1": {"type": "number", "description": "参数说明"}
+            },
+            "required": ["param1"]
+        }
+    }
+}
+```
+
+#### 2. 实现命令转换 (在 `build_command_from_tool()`)
+
+```python
+elif function_name == "your_new_skill":
+    param1 = function_args["param1"]
+    command = {
+        "action": "your_action",
+        "parameters": {"param1": param1}
+    }
+```
+
+#### 3. 更新延迟计算 (在 `get_action_delay_from_command()`)
+
+```python
+elif action == "your_action":
+    return 2.0  # 估算执行时间
+```
+
+完成！详细说明请查看 [EXTENSION.md](EXTENSION.md)。
+
+---
 
 #### 1. 定义MCP工具
 
@@ -633,7 +712,7 @@ class YourAdapter(BaseAdapter):
 
 ```python
 from .your_adapter import YourAdapter
-__all__ = ["BaseAdapter", "DoraAdapter", "ROS1Adapter", "YourAdapter"]
+__all__ = ["BaseAdapter", "DoraAdapter", "ROS1Adapter", "ROS2Adapter", "YourAdapter"]
 ```
 
 ### 调整任务规划逻辑
@@ -791,6 +870,192 @@ python ros1_robot_controller.py
 
 ---
 
+## 🤖 ROS2 完整示例
+
+### 场景：使用ROS2控制真实机器人
+
+ROS2是ROS的现代版本，具有更好的实时性、安全性和跨平台支持。
+
+### 1. 安装ROS2
+
+根据你的操作系统选择合适的版本：
+
+**Ubuntu Linux (推荐)**:
+```bash
+# 参考: https://docs.ros.org/en/humble/Installation.html
+sudo apt update && sudo apt install locales
+sudo locale-gen en_US en_US.UTF-8
+sudo update-locale LC_ALL=en_US.UTF-8 LANG=en_US.UTF-8
+export LANG=en_US.UTF-8
+
+# 添加ROS2软件源
+sudo apt install software-properties-common
+sudo add-apt-repository universe
+sudo apt update && sudo apt install curl -y
+sudo curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key -o /usr/share/keyrings/ros-archive-keyring.gpg
+
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] http://packages.ros.org/ros2/ubuntu $(. /etc/os-release && echo $UBUNTU_CODENAME) main" | sudo tee /etc/apt/sources.list.d/ros2.list > /dev/null
+
+sudo apt update
+sudo apt install ros-humble-desktop -y
+sudo apt install python3-colcon-common-extensions -y
+```
+
+**Windows**:
+```bash
+# 使用WSL2安装Ubuntu，然后按照Linux步骤操作
+# 或参考: https://docs.ros.org/en/humble/Installation/Windows-Install-Binary.html
+```
+
+**macOS**:
+```bash
+# 参考: https://docs.ros.org/en/humble/Installation/macOS-Install-Binary.html
+brew install ros-humble/desktop
+```
+
+### 2. 配置ROS2环境
+
+```bash
+# 加载ROS2环境
+source /opt/ros/humble/setup.bash
+
+# 添加到~/.bashrc以便每次自动加载
+echo "source /opt/ros/humble/setup.bash" >> ~/.bashrc
+```
+
+### 3. 创建工作空间（可选）
+
+```bash
+mkdir -p ~/robot_ws/src
+cd ~/robot_ws
+
+# 复制ROS2控制器示例到工作空间
+cp <Project_Path>/MCP_Server/examples/ros2_robot_controller.py ~/robot_ws/src/
+```
+
+### 4. 启动ROS2控制器
+
+```bash
+# 方式1: 直接运行示例代码
+python3 MCP_Server/examples/ros2_robot_controller.py
+
+# 方式2: 如果在ROS2工作空间中
+cd ~/robot_ws
+source /opt/ros/humble/setup.bash
+python3 src/ros2_robot_controller.py
+```
+
+### 5. 发送测试命令
+
+在另一个终端，使用MCP服务器发送命令：
+
+```bash
+# 启动MCP服务器（ROS2模式）
+cd MCP_Server
+python mcp_robot_server.py --adapter ros2
+```
+
+或者通过代码直接调用：
+
+```python
+from robot_skills import RobotSkills
+from adapters import ROS2Adapter
+
+# 创建ROS2适配器
+adapter = ROS2Adapter()
+robot = RobotSkills(adapter)
+
+# 控制机器人
+robot.move_forward(1.0, "m")  # 前进1米
+robot.turn_left(90)           # 左转90度
+robot.stop()                  # 停止
+```
+
+### 6. ROS2话题可视化
+
+使用ROS2工具查看话题：
+
+```bash
+# 查看所有话题
+ros2 topic list
+
+# 查看命令话题
+ros2 topic echo /robot_command
+
+# 查看速度命令话题
+ros2 topic echo /cmd_vel
+
+# 查看节点图
+ros2 node list
+rqt_graph
+```
+
+### ROS2 vs ROS1 主要区别
+
+| 特性 | ROS1 | ROS2 |
+|------|------|------|
+| **通信中间件** | TCP/UDP | DDS（实时发布订阅） |
+| **节点管理** | 需要roscore | 无需master，去中心化 |
+| **Python接口** | rospy | rclpy |
+| **安全性** | 无 | 内置认证和加密 |
+| **实时性** | 较差 | 更好（DDS） |
+| **跨平台** | 主要Linux | Windows、Linux、macOS |
+| **语言支持** | Python、C++等 | Python、C++、Java等 |
+
+### ROS2控制器代码说明
+
+示例代码位于 `MCP_Server/examples/ros2_robot_controller.py`，主要功能：
+
+```python
+class RobotController(Node):  # 继承自rclpy.Node
+    def __init__(self):
+        super().__init__('ros2_robot_controller')
+
+        # 订阅MCP命令
+        self.subscription = self.create_subscription(
+            String,
+            '/robot_command',      # 话题名
+            self.command_callback,  # 回调函数
+            10                      # 队列大小
+        )
+
+        # 发布速度命令
+        self.cmd_vel_pub = self.create_publisher(Twist, '/cmd_vel', 10)
+```
+
+**关键点**:
+- 使用 `rclpy` 而不是 `rospy`
+- 继承自 `Node` 类
+- 不需要 `roscore`
+- 使用DDS进行通信
+
+### 常见问题
+
+#### Q: ROS2节点无法发现其他节点？
+```bash
+# 设置ROS_DOMAIN_ID
+export ROS_DOMAIN_ID=0
+
+# 或使用不同的域ID避免冲突
+export ROS_DOMAIN_ID=42
+```
+
+#### Q: 权限错误？
+```bash
+# Linux上需要添加用户到dialout组
+sudo usermod -a -G dialout $USER
+
+# 重新登录生效
+```
+
+#### Q: Windows WSL2问题？
+```bash
+# WSL2中可能需要额外的网络配置
+# 参考: https://docs.ros.org/en/humble/Installation/Ubuntu-Install-Debians.html
+```
+
+---
+
 ## 🐛 故障排除
 
 ### 问题1: "Dora adapter not available"
@@ -836,7 +1101,30 @@ ros1:
   node_name: "my_robot_control"  # 改成独特的名字
 ```
 
-### 问题5: 多步骤指令只执行第一步
+### 问题5: ROS2连接失败
+
+**原因**: ROS2环境未加载或DDS配置问题
+
+**解决方案**:
+```bash
+# 确保ROS2环境已加载
+source /opt/ros/humble/setup.bash
+
+# 检查ROS2节点
+ros2 node list
+
+# 检查话题
+ros2 topic list
+
+# 设置域ID（如果需要）
+export ROS_DOMAIN_ID=0
+
+# 修改节点名（在config.yaml中）
+ros2:
+  node_name: "my_robot_control"  # 改成独特的名字
+```
+
+### 问题6: 多步骤指令只执行第一步
 
 **原因**: 使用的是旧版本（非MCP版本）
 
@@ -858,7 +1146,8 @@ dora start dora-interactive-mcp.yaml --attach
 | 类型安全 | ❌ 无 | ✅ 有 | ✅ 有 |
 | 调试难度 | 高 | 中 | 低（分层清晰） |
 | 仿真支持 | ✅ Dora | ✅ Dora | ✅ Dora |
-| 真实机器人 | ❌ 无 | ✅ ROS1 | ✅ ROS1 |
+| 真实机器人 | ❌ 无 | ✅ ROS1 | ✅ ROS1 + ROS2 |
+| 跨平台 | ⚠️ 仅Linux | ⚠️ Linux为主 | ✅ 全平台（ROS2） |
 | 推荐使用 | ❌ | ⚠️ 可用 | ✅ 强烈推荐 |
 
 ---
@@ -870,6 +1159,7 @@ dora start dora-interactive-mcp.yaml --attach
 - [MCP协议规范](https://modelcontextprotocol.io/)
 - [Qwen API文档](https://help.aliyun.com/zh/dashscope/developer-reference/api-details)
 - [ROS1教程](http://wiki.ros.org/ROS/Tutorials)
+- [ROS2教程](https://docs.ros.org/en/humble/Tutorials.html)
 
 ---
 
@@ -924,6 +1214,7 @@ MIT License
 - [Model Context Protocol](https://modelcontextprotocol.io/) - 标准化的AI工具调用协议
 - [Qwen](https://tongyi.aliyun.com/) - 强大的大语言模型
 - [ROS](https://www.ros.org/) - 机器人操作系统标准
+- [ROS2](https://docs.ros.org/en/humble/) - 下一代机器人操作系统
 
 ---
 

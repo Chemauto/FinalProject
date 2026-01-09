@@ -31,7 +31,7 @@ except ImportError:
     sys.exit(1)
 
 from robot_skills import RobotSkills
-from adapters import DoraAdapter, ROS1Adapter
+from adapters import DoraAdapter, ROS1Adapter, ROS2Adapter
 
 # 加载环境变量
 from dotenv import load_dotenv
@@ -50,7 +50,7 @@ class RobotControlServer:
         初始化MCP服务器
 
         Args:
-            adapter_type: 适配器类型（dora/ros1）
+            adapter_type: 适配器类型（dora/ros1/ros2）
         """
         self.adapter_type = adapter_type
         self.server = Server("robot-control-server")
@@ -73,6 +73,10 @@ class RobotControlServer:
             self.adapter = ROS1Adapter()
             if not self.adapter.is_available():
                 print("[MCP Server] WARNING: ROS1 adapter not available, running in standalone mode")
+        elif self.adapter_type == "ros2":
+            self.adapter = ROS2Adapter()
+            if not self.adapter.is_available():
+                print("[MCP Server] WARNING: ROS2 adapter not available, running in standalone mode")
         else:
             print(f"[MCP Server] Unknown adapter type: {self.adapter_type}")
             return
@@ -423,7 +427,7 @@ async def main():
         "--adapter",
         type=str,
         default="dora",
-        choices=["dora", "ros1"],
+        choices=["dora", "ros1", "ros2"],
         help="Communication adapter (default: dora)"
     )
 
