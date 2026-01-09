@@ -24,7 +24,8 @@ FinalProject/
 ### 方式 1: ROS2（推荐用于真实机器人）
 
 ```bash
-# 1. 创建 Python 3.10 环境
+# 1. 创建 Python 3.10 环境包括后面的dora环境也是建议使用py310版本，ros2版本的要求
+# 其实所有的环境先装着，然后按照这个文件
 conda create -n ros2_env python=3.10 -y
 conda activate ros2_env
 

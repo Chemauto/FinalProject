@@ -8,7 +8,7 @@ nodes:
     outputs: [user_command]
 
   - id: llm-agent-mcp
-    path: ../MCP_Server/llm_agent_with_mcp.py
+    path: llm_agent_with_mcp.py
     inputs:
       user_command: ui-input-node/user_command
     outputs: [command]
