@@ -5,18 +5,20 @@ import json
 
 
 # 加载 .env 文件
-load_dotenv()
 
-api_key = os.getenv("Test_API_KEY")
-if not api_key:
+project_root = os.path.abspath(os.path.join(os.getcwd(), '..'))
+dotenv_path = os.path.join(project_root, '.env')
+load_dotenv(dotenv_path=dotenv_path)
+API_KEY = os.getenv("Test_API_KEY")
+if not API_KEY:
     raise ValueError("请在 .env 文件中设置 Test_API_KEY")
 
 #配置密钥，也可以直接使用export导入
 client = OpenAI(
     # 若没有配置环境变量，请用百炼API Key将下行替换为：api_key="sk-xxx"
     # api_key=os.getenv("Test_API_KEY"),
-    api_key=api_key,
-    base_url="https://192.168.0.233:8000/v1",
+    api_key=API_KEY,
+    base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
 )
 # Load prompt from YAML (if available) and send to model
 # Requires PyYAML to read prompts: `pip install pyyaml`
@@ -29,7 +31,7 @@ except Exception:
 def load_prompt(prompt_id='ask-who'):
     
     #获取yaml文件路径
-    prompts_path = os.path.join(os.path.dirname(__file__), "LLM_prompts", "Basic_prompts", "basc.yaml")
+    prompts_path = os.path.join(os.path.dirname(__file__), "LLM_prompts", "Basic_prompts", "demoStart.yaml")
     
     #1.默认初始化，这个就只是为了测试
     # Fallback prompt if YAML not available or prompt not found
@@ -56,7 +58,7 @@ def load_prompt(prompt_id='ask-who'):
 messages = load_prompt('ask-who')
 
 completion = client.chat.completions.create(
-    model="robobrain",  # 可按需更换模型名称
+    model="qwen-vl-plus",  # 可按需更换模型名称
     messages=messages,
     #规范输出的格式
     response_format={"type": "json_object"}

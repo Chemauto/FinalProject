@@ -36,6 +36,11 @@
             "Turn right 45 degrees" -> {{"action": "navigate", "parameters": {{"angle": "45deg"}}}}
             "Pick up the cup" -> {{"action": "pick", "parameters": {{"object": "cup"}}}}
             "Place the book on the shelf" -> {{"action": "place", "parameters": {{"object": "book", "location": "shelf"}}}}
+            "前进1米" -> {{"action": "navigate", "parameters": {{"direction": "front", "distance": "1m"}}}}
+            "后退半米" -> {{"action": "navigate", "parameters": {{"direction": "back", "distance": "0.5m"}}}}
+            "向左转90度" -> {{"action": "navigate", "parameters": {{"angle": "-90deg"}}}}
+            "向右转90度" -> {{"action": "navigate", "parameters": {{"angle": "90deg"}}}}
+            "向右走20厘米"-> {{"action": "navigate", "parameters": {{"direction": "right", "distance": "20cm"}}}}
 
             Rules:
             - Output JSON only

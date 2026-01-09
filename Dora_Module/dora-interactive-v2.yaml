@@ -4,7 +4,7 @@ nodes:
     outputs: [user_command]
 
   - id: llm_receiver
-    path: ../VLM_Modele/5Demo2Dora_Receiver.py
+    path: ../VLM_Modele/Demo2Dora_Receiver.py
     inputs:
       user_command: ui-input-node/user_command
     outputs: [command]
