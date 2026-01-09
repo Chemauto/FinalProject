@@ -1,203 +1,127 @@
-# 项目文件概述
+# 🤖 Robot Control with MCP + LLM
 
-## 核心文件功能介绍
+基于 Model Context Protocol (MCP) 的机器人控制系统，支持双层 LLM 架构（任务规划 + 执行）。
 
-*   `DemoStart.py`: 加入了Prompt的示例，最终希望配置`LLM_prompts`目录下的内容。
-*   `Demo2Ros.py`: 与ROS接口融合的示例。
-*   `Demo2Dora_Receiver.py`: 和Dora接口融合，做的一个小项目
+## 🎯 项目特点
 
-## 环境设置
+- **双层 LLM 架构** - 上层任务规划，下层任务执行
+- **多模态支持** - 支持 ROS2、Dora 等多种通信方式
+- **自然语言交互** - 支持中英文复杂指令
+- **易于扩展** - 模块化设计，可轻松添加新技能
 
-1.  创建并激活 Conda 环境:
-    ```bash
-    conda create -n qwen3 python=3.11 -y
-    conda activate qwen3
-    ```
-2.  安装依赖:
-    ```bash
-    pip install openai python-dotenv pyyaml
-    ```
-    *   如果有其他缺失模块，直接`pip install`安装即可。
-3.  **配置API Key**:
-    在项目根目录下创建一个名为`.env`的文件，并在其中添加如下内容：
-    ```
-    Test_API_KEY="sk-your_api_key_here"
-    ```
-    请将`sk-your_api_key_here`替换为您从阿里云DashScope获取的真实API Key。
-## 未来展望
+## 📁 项目结构
 
-*   ✅ **已完成**: 使用MCP (Model Context Protocol) 实现更智能的机器人控制
-*   可以考虑利用LangChain ReAct模式来增强推理效果。
-
----
-
-# MCP Robot Control Server
-
-## 1. 项目概述
-
-MCP (Model Context Protocol) Robot Control Server 是一个基于MCP协议的机器人控制服务器，提供标准化的机器人操作接口。LLM可以直接调用robot skills函数，而不是生成JSON字符串。
-
-**核心优势**:
-- ✅ **自动函数调用**: LLM自动选择和调用合适的skill
-- ✅ **原生多步骤支持**: 自动执行复杂的指令序列
-- ✅ **类型安全**: 通过schema定义参数类型
-- ✅ **框架无关**: 支持Dora、ROS1等多种框架
-- ✅ **易于扩展**: 添加新skill无需修改prompt
-- ✅ **真实机器人支持**: 通过ROS1适配器控制实际机器人
-
-## 2. 可用的Robot Skills
-
-### 导航类
-- `turn_left(angle)` - 向左转指定角度
-- `turn_right(angle)` - 向右转指定角度
-- `move_forward(distance, unit)` - 向前移动
-- `move_backward(distance, unit)` - 向后移动
-- `move_left(distance, unit)` - 向左移动
-- `move_right(distance, unit)` - 向右移动
-- `navigate_to(location, direction, distance)` - 导航到指定位置
-
-### 操作类
-- `pick_up(object_name)` - 抓取物体
-- `place(object_name, location)` - 放置物体
-
-### 复合动作
-- `turn_then_move(turn_angle, move_distance, ...)` - 转向后移动
-- `move_square(side_length, unit)` - 正方形路径移动
-
-### 工具类
-- `stop()` - 停止机器人
-- `get_status()` - 获取机器人状态
-- `wait(seconds)` - 等待指定时间
-
-## 3. 使用MCP版本 (推荐)
-
-### 环境设置
-
-在 `qwen3` Conda 环境中安装MCP相关依赖：
-```bash
-pip install mcp dora-rs pyarrow pyyaml python-dotenv
+```
+FinalProject/
+├── MCP_Server/      # 核心：MCP 服务器 + 技能库
+├── ROS_Module/      # ROS2 通信模块（真实机器人）
+├── Dora_Module/     # Dora 仿真模块（仿真测试）
+└── VLM_Modele/      # VLM Demo 程序
 ```
 
-### 运行交互式Dora仿真 (MCP版本)
+## 🚀 快速开始
 
-1. **进入 `Dora_Module` 目录**:
-   ```powershell
-   cd D:\MyFiles\Documents\毕设相关材料\Project\Dora_Module
-   ```
+### 方式 1: ROS2（推荐用于真实机器人）
 
-2. **启动Dora后台服务** (如果尚未运行):
-   ```powershell
-   dora up
-   ```
-
-3. **启动MCP版本的交互式数据流**:
-   ```powershell
-   dora start dora-interactive-mcp.yaml --attach
-   ```
-
-### 使用示例
-
-在UI窗口中输入指令：
-
-- 单步指令: `前进1米` / `Turn 90 degrees left`
-- 多步指令: `先左转90度，再往前走1米` / `Turn left, go forward 1m`
-- 复杂指令: `向右转45度然后后退50厘米` / `Turn right 45 degrees, then move back 50cm`
-
-## 4. 架构对比
-
-| 特性 | 旧版本 (JSON生成) | MCP版本 (工具调用) |
-|------|------------------|-------------------|
-| 复杂度 | 需要解析JSON | 自动函数调用 |
-| 多步骤 | 需要特殊处理 | 原生支持 |
-| 扩展性 | 修改prompt | 添加函数 |
-| 类型安全 | 无 | 有（schema） |
-| 仿真支持 | ✅ Dora | ✅ Dora |
-| 真实机器人 | ❌ 无 | ✅ ROS1 |
-| 推荐使用 | ❌ | ✅ |
-
-详细文档请查看: [MCP_Server/README.md](MCP_Server/README.md)
-
----
-
-# Dora 仿真项目
-
-## 1. 项目概述
-
-本项目旨在利用大型语言模型（LLM）将自然语言指令转换为机器人可执行的动作，并结合Dora框架实现对机器人模拟器的控制。通过引入图形化用户界面（UI），极大地提升了用户交互体验。
-
-## 2. 核心功能
-
--   **自然语言理解**: 利用LLM将人类指令解析为结构化机器人命令。
--   **Dora集成**: 使用Dora作为通信中间件，解耦语言处理、模拟器和UI输入等模块。
--   **图形化输入界面**: 提供一个独立的UI窗口用于输入机器人指令，无需在终端中与日志混合输入。
--   **精确角度控制**: 扩展了导航指令，支持通过 `angle` 参数进行精确的角度旋转控制。
-
-## 3. 环境设置 (Dora仿真)
-
-在已激活的 `qwen3` Conda 环境中，安装Dora仿真所需的额外依赖：
 ```bash
-pip install pyyaml dora-rs pyarrow pygame
+# 1. 创建 Python 3.10 环境
+conda create -n ros2_env python=3.10 -y
+conda activate ros2_env
+
+# 2. 一键启动
+cd ROS_Module/ros2
+./start_ros2_mcp.sh
 ```
 
-## 4. 运行交互式Dora仿真 (UI版本)
+**测试指令：**
+```
+先左转90度，再往前走1米
+前进50厘米然后向右转45度
+抓取杯子
+```
 
-所有节点都由Dora统一管理和启动，只需要一个终端即可完成所有操作。
+### 方式 2: Dora（推荐用于仿真测试）
 
-1.  **进入 `Dora_Module` 目录**:
-    ```powershell
-    cd D:\MyFiles\Documents\毕设相关材料\Project\Dora_Module
-    ```
-2.  **启动Dora后台服务** (如果尚未运行):
-    ```powershell
-    dora up
-    ```
-3.  **启动完整的交互式数据流**:
-    ```powershell
-    dora start dora-interactive-v2.yaml --attach
-    ```
-    执行此命令后，将会发生：
-    -   **两个窗口会自动弹出**:
-        1.  一个 **Pygame 仿真窗口**，显示机器人。
-        2.  一个名为 **"Robot Command Input"** 的UI窗口，用于输入指令。
-    -   您的终端会显示所有节点的日志。
-    -   请在 **"Robot Command Input"** 窗口的文本框中输入指令 (例如 "go forward 50cm" 或 "Turn 90 degrees left")，然后按 `Enter` 键或点击 "Send Command" 按钮。
-    -   关闭任一窗口都将结束整个程序。
+```bash
+# 1. 安装依赖
+pip install dora-rs pyarrow pyyaml python-dotenv
+
+# 2. 启动 Dora
+cd Dora_Module
+dora up
+
+# 3. 运行
+dora start dora-interactive-mcp.yaml --attach
+```
+
+## 📊 功能对比
+
+| 特性 | ROS2 | Dora |
+|------|------|------|
+| 真实机器人 | ✅ | ❌ |
+| 仿真环境 | ✅ | ✅ |
+| 双层LLM | ✅ | ✅ |
+| 可视化 | rqt_graph | Rerun |
+| 难度 | 中等 | 简单 |
+
+## 📚 模块文档
+
+- **[MCP_Server](MCP_Server/README.md)** - MCP 服务器和技能库
+- **[ROS_Module](ROS_Module/README.md)** - ROS2 通信和控制
+- **[Dora_Module](Dora_Module/README.md)** - Dora 仿真和配置
+
+## 🔧 环境要求
+
+- Python 3.10（ROS2 Humble 要求）
+- ROS2 Humble（可选，用于真实机器人）
+- Dora（可选，用于仿真）
+- 阿里云通义千问 API Key
+
+## 💡 核心概念
+
+```
+用户输入: "先左转90度，再往前走1米"
+  ↓
+🧠 上层 LLM (任务规划)
+  ↓
+分解: [左转90度] → [前进1米]
+  ↓
+⚙️  下层 LLM (执行)
+  ↓
+调用工具: turn_left(90) → move_forward(1.0m)
+  ↓
+📤 通信层 (ROS2/Dora)
+  ↓
+🤖 机器人执行
+```
+
+## 📝 配置
+
+在项目根目录创建 `.env` 文件：
+
+```bash
+Test_API_KEY=sk-your-api-key-here
+```
+
+获取 API Key: https://dashscope.aliyun.com
+
+## 🆚 与传统方案对比
+
+| 指令 | 单层 LLM | 双层 LLM (本系统) |
+|------|---------|-------------------|
+| 先左转90度，再往前走1米 | ❌ 只执行左转 | ✅ 左转 → 前进 |
+| 前进50cm然后向右转 | ❌ 只执行前进 | ✅ 前进 → 右转 |
+
+## 📞 获取帮助
+
+- ROS2 问题: 查看 [ROS_Module/README.md](ROS_Module/README.md)
+- Dora 问题: 查看 [Dora_Module/README.md](Dora_Module/README.md)
+- MCP 配置: 查看 [MCP_Server/README.md](MCP_Server/README.md)
+
+## 📄 许可证
+
+GPLv3+
 
 ---
 
-# ChaseBot 仿真项目
-
-## 1. 项目概述
-
-本项目是一个基于Dora框架的追逐机器人仿真项目。项目中包含两个主要角色：一个是作为“目标”的机器人（Target Bot），另一个是作为“追逐者”的机器人（Chase Bot）。Chase Bot 利用大型语言模型（LLM）来理解其周围环境（包括Target Bot的位置），并自主生成追逐策略。
-
-## 2. 核心功能
-
--   **多机器人仿真**: 使用Dora同时管理和运行Target Bot和Chase Bot两个节点。
--   **LLM驱动的决策**: Chase Bot通过LLM分析环境状态，并决定下一步的行动（例如，前进、左转、右转）。
--   **动态追逐**: Target Bot按照预设路径移动，Chase Bot则根据实时情况动态调整自己的行为以追逐目标。
--   **模块化**: 项目结构清晰，将模拟器、LLM Agent等功能分离，通过Dora进行通信。
-
-## 3. 运行ChaseBot仿真
-
-1.  **环境准备**:
-    请确保已完成本文档开头的“环境设置”和“环境设置 (Dora仿真)”中的所有步骤。
-
-2.  **运行仿真**:
-    所有节点都由Dora统一管理，只需一个命令即可启动。
-
-    a. **进入 `ChaseBot_Project` 目录**:
-       ```powershell
-       cd D:\MyFiles\Documents\毕设相关材料\Project\ChaseBot_Project
-       ```
-
-    b. **启动Dora后台服务** (如果尚未运行):
-       ```powershell
-       dora up
-       ```
-
-    c. **启动ChaseBot数据流**:
-       ```powershell
-       dora start chase_bot.yaml --attach
-       ```
-       执行此命令后，仿真将在后台开始运行。您可以在终端中看到来自 `simulator` 和 `llm_agent` 节点的日志输出，展示了Chase Bot的决策过程和机器人的位置信息。
+**开始使用:** 选择 ROS2 或 Dora，查看对应模块的 README.md

@@ -17,6 +17,7 @@ if sys.platform == 'win32':
 try:
     from mcp.server.models import InitializationOptions
     from mcp.server import NotificationOptions, Server
+    from mcp.server.stdio import stdio_server
     from mcp.types import (
         Resource,
         Tool,
@@ -411,9 +412,13 @@ class RobotControlServer:
         print("[MCP Server] Starting robot control MCP server...")
         print(f"[MCP Server] Using adapter: {self.adapter_type}")
 
-        # 运行服务器
-        async with self.server.run() as server:
-            await server.communicate()
+        # 使用 stdio_server 运行服务器
+        async with stdio_server() as (read_stream, write_stream):
+            await self.server.run(
+                read_stream,
+                write_stream,
+                self.server.create_initialization_options()
+            )
 
 
 # ==================== Main Entry ====================
