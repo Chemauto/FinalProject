@@ -112,8 +112,8 @@ cd Middle_Module/ROS
 ### 方式 2: ROS2 (Gazebo 3D 仿真)
 
 ```bash
-cd Sim_Module/gazebo
-./start_gazebo_simple.sh
+cd Middle_Module/ROS
+./start_ros2_mcp.sh --sim gazebo  
 ```
 
 ### 方式 3: Dora (仿真测试)
