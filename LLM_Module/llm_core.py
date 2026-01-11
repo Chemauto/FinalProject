@@ -82,7 +82,7 @@ class LLMAgent:
             completion = self.client.chat.completions.create(
                 model=self.model,
                 messages=[
-                    {"role": "system", "content": "你是一个机器人控制助手。根据子任务描述，调用相应的工具函数。"},
+                    {"role": "system", "content": "你是一个机器人控制助手。根据子任务描述，调用相应的工具函数。如果无法识别任务或不属于机器人操作，返回空结果。"},
                     {"role": "user", "content": f"执行任务：{task_description}"}
                 ],
                 tools=tools,
@@ -91,15 +91,15 @@ class LLMAgent:
             response_message = completion.choices[0].message
             tool_calls = response_message.tool_calls
             if not tool_calls:
-                print("[跳过] 没有需要执行的动作")
-                return {"success": True, "action": "none"}
-            
+                print("[跳过] 无效指令或无法识别的操作")
+                return {"success": False, "action": "none", "error": "No tool called"}
+
             tool_call = tool_calls[0]
             function_name = tool_call.function.name
             function_args = json.loads(tool_call.function.arguments)
             print(f"🔧 [工具调用] {function_name}({function_args})")
             result = execute_tool_fn(function_name, function_args)
-            
+
             if result and result.get("delay"):
                 delay = result["delay"]
                 print(f"⏳ [等待] 执行时间: {delay:.1f}秒", end="", flush=True)
@@ -120,6 +120,11 @@ class LLMAgent:
         print("\n" + "█"*60 + f"\n📥 [用户输入] {user_input}\n" + "█"*60)
         try:
             tasks = self.plan_tasks(user_input, tools)
+
+            # 如果没有任务，直接返回
+            if not tasks:
+                return []
+
             print("\n" + "█"*60 + "\n🚀 [开始执行] 按顺序执行子任务\n" + "█"*60)
             results = []
             for idx, task in enumerate(tasks, 1):
@@ -128,7 +133,7 @@ class LLMAgent:
                 results.append(result)
                 if not result.get("success"):
                     print(f"\n⚠️  [警告] 步骤 {idx} 失败，但继续执行后续任务")
-            
+
             print("\n" + "█"*60 + "\n✅ [执行完成] 任务总结\n" + "█"*60)
             for idx, (task, result) in enumerate(zip(tasks, results), 1):
                 status = "✅ 成功" if result.get("success") else "❌ 失败"

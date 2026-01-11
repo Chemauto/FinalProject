@@ -73,20 +73,13 @@ def skill_turn(angle: float, angular_speed: float = 0.5) -> Dict[str, Any]:
     if isinstance(angle, str):
         angle = float(angle)
 
-    if angle >= 0:
-        return {
-            'action': 'turn_left',
-            'parameters': {
-                'angle': f'{angle}deg'
-            }
+    # 直接传递角度（保留符号），让仿真器处理转向方向
+    return {
+        'action': 'turn',
+        'parameters': {
+            'angle': f'{angle}deg'
         }
-    else:
-        return {
-            'action': 'turn_right',
-            'parameters': {
-                'angle': f'{abs(angle)}deg'
-            }
-        }
+    }
 
 
 def skill_stop() -> Dict[str, Any]:

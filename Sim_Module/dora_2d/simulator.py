@@ -60,11 +60,10 @@ class Robot:
         if angle_str:
             try:
                 angle_value = float(angle_str.replace('deg', ''))
-                # Turning is relative to the current angle. 
-                # We add a minus sign to invert the angle, because LLM's "right is positive"
-                # is the opposite of Pygame's "counter-clockwise (left) is positive".
-                self.target_angle = (self.angle - angle_value) % 360
-                print(f"SIM: New Target Angle: {self.target_angle:.2f}")
+                # 正角度 = 左转（逆时针），负角度 = 右转（顺时针）
+                # Pygame: Y轴向下，所以加角度是逆时针（左转）
+                self.target_angle = (self.angle + angle_value) % 360
+                print(f"SIM: Turning {angle_value}°, New Target Angle: {self.target_angle:.2f}")
                 return # If it's a turn command, we don't move
             except ValueError:
                 print(f"SIM: Invalid angle format: {angle_str}")
@@ -197,15 +196,26 @@ if __name__ == "__main__":
         # Check for Dora input
         try:
             dora_event = node.next(timeout=0.01) # Non-blocking read
-            if dora_event and dora_event["type"] == "INPUT":
-                if dora_event["id"] == "teleop":
-                    command_data = dora_event["value"][0].as_py()
-                    action = command_data.get("action")
-                    parameters = command_data.get("parameters", {})
-                    if action == "navigate":
-                        robot.set_navigation_goal(parameters)
-                    else:
-                        print(f"SIM: Received unhandled action: {action}")
+            if dora_event:
+                if dora_event["type"] == "INPUT":
+                    if dora_event["id"] == "teleop":
+                        command_data = dora_event["value"][0].as_py()
+                        action = command_data.get("action")
+                        parameters = command_data.get("parameters", {})
+
+                        # 处理所有导航相关的 action
+                        if action in ["navigate", "turn", "turn_left", "turn_right"]:
+                            robot.set_navigation_goal(parameters)
+                        elif action == "stop":
+                            # 停止机器人
+                            robot.target_x = robot.x
+                            robot.target_y = robot.y
+                            print(f"SIM: Robot stopped")
+                        else:
+                            print(f"SIM: Received unhandled action: {action}")
+                elif dora_event["type"] == "STOP":
+                    print("SIM: Received STOP event, exiting...")
+                    running = False
 
         except Exception as e:
             # This can happen on timeout, which is expected

@@ -177,7 +177,7 @@ class ROS2SimulatorNode(Node):
             action = command['action']
             params = command.get('parameters', {})
 
-            if action in ['navigate', 'turn_left', 'turn_right']:
+            if action in ['navigate', 'turn_left', 'turn_right', 'turn']:
                 self.robot.set_navigation_goal(params)
             elif action == 'stop':
                 self.robot.target_x = self.robot.x

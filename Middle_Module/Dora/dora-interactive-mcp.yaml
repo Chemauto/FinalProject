@@ -14,6 +14,6 @@ nodes:
     outputs: [command]
 
   - id: simulator
-    path: simulator.py
+    path: ../../Sim_Module/dora_2d/simulator.py
     inputs:
       teleop: llm-agent-mcp/command
