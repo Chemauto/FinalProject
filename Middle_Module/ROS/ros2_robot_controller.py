@@ -137,7 +137,7 @@ class GenericROS2Controller(Node):
             params: 动作参数
         """
         # 导航类命令 -> cmd_vel
-        if action in ['navigate', 'turn_left', 'turn_right']:
+        if action in ['navigate', 'turn_left', 'turn_right', 'strafe']:
             self._publish_cmd_vel(action, params)
         elif action == 'stop':
             self._publish_stop()
@@ -159,41 +159,39 @@ class GenericROS2Controller(Node):
             return
 
         twist = Twist()
+        speed = float(params.get('speed', 0.5))
 
         # 处理转向
         if action in ['turn_left', 'turn_right']:
             angle_str = params.get('angle', '90deg')
+            angular_speed = float(params.get('angular_speed', 0.5))
             try:
                 angle = float(angle_str.replace('deg', '').replace('-', ''))
-                angular_speed = 0.5
                 twist.angular.z = -angular_speed if action == 'turn_left' else angular_speed
-                self.get_logger().info(f'转向: {angle}度')
-            except:
-                self.get_logger().error(f'无效的角度: {angle_str}')
+                self.get_logger().info(f'转向: {angle}度, 角速度: {twist.angular.z}')
+            except Exception as e:
+                self.get_logger().error(f'无效的角度: {angle_str}, 错误: {e}')
 
-        # 处理导航
+        # 处理前后导航
         elif action == 'navigate':
             direction = params.get('direction', 'front')
-            if 'distance' in params:
-                distance_str = params['distance']
-                distance = self._parse_distance(distance_str)
-                speed = 0.5
+            if direction == 'front':
+                twist.linear.x = speed
+            elif direction == 'back':
+                twist.linear.x = -speed
+            self.get_logger().info(f'导航: {direction}, 速度: {twist.linear.x}')
+        
+        # 处理左右平移
+        elif action == 'strafe':
+            direction = params.get('direction', 'left')
+            if direction == 'left':
+                twist.linear.y = speed
+            elif direction == 'right':
+                twist.linear.y = -speed
+            self.get_logger().info(f'平移: {direction}, 速度: {twist.linear.y}')
 
-                if direction == 'front':
-                    twist.linear.x = speed
-                elif direction == 'back':
-                    twist.linear.x = -speed
-                elif direction == 'left':
-                    twist.linear.y = speed
-                elif direction == 'right':
-                    twist.linear.y = -speed
-
-                self.get_logger().info(f'移动: {direction}, 距离: {distance}m')
 
         self.topic_publishers['cmd_vel'].publish(twist)
-
-        # 如果需要执行一段时间，可以在这里添加逻辑
-        # 但更简单的方式是让技能函数控制持续时间
 
     def _publish_stop(self):
         """发布停止命令"""
@@ -273,8 +271,9 @@ def main(args=None):
     except KeyboardInterrupt:
         print("\n[ROS2] 关闭中...")
     finally:
-        controller.destroy_node()
-        rclpy.shutdown()
+        if 'controller' in locals() and rclpy.ok():
+            controller.destroy_node()
+            rclpy.shutdown()
 
 
 if __name__ == '__main__':

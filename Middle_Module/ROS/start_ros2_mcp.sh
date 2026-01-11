@@ -353,17 +353,17 @@ elif [ "$SIM_ENV" == "gazebo" ]; then
     print_info "启动 robot_state_publisher..."
     # Use system Python (3.10) for ROS2 commands
     PATH="/usr/bin:/bin:$PATH" ros2 run robot_state_publisher robot_state_publisher --ros-args \
-        -p robot_description:="$(xacro /home/robot/ros2_ws/src/go2_gazebo_description/urdf/go2.urdf.xacro)" \
+        -p robot_description:="$(xacro $PROJECT_ROOT/Robot_Module/4Lun/4lun.urdf.xacro)" \
         > /tmp/rsp.log 2>&1 &
     RSP_PID=$!
 
     sleep 3
 
     # Spawn 机器人到 Gazebo
-    print_info "Spawn Go2 机器人到场景中..."
+    print_info "Spawn 4Lun 机器人到场景中..."
     # Use system Python (3.10) for ROS2 commands
     PATH="/usr/bin:/bin:$PATH" ros2 run gazebo_ros spawn_entity.py \
-        -entity go2 \
+        -entity 4lun \
         -topic /robot_description \
         -x 0.0 \
         -y 0.0 \
@@ -393,17 +393,11 @@ elif [ "$SIM_ENV" == "gazebo" ]; then
     print_info "启动 Gazebo Robot Controller (后台)..."
 
     # Use ROS2's Python (3.10) instead of conda's Python
-    /usr/bin/python3 gazebo_robot_controller.py > /tmp/gazebo_controller.log 2>&1 &
+    /usr/bin/python3 "$PROJECT_ROOT/Sim_Module/gazebo/Go2_Gazebo_Description/go2_gazebo_description/gazebo_robot_controller.py" > /tmp/gazebo_controller.log 2>&1 &
     CONTROLLER_PID=$!
     
-    # 启动 Mecanum 轮运动学控制器
-    print_info "启动 Mecanum Control Node (后台)..."
-    python3 mechControl.py > /tmp/mech_control.log 2>&1 &
-    MECH_PID=$!
-
     print_success "Gazebo Robot Controller 已启动 (PID: $CONTROLLER_PID)"
-    print_success "Mecanum Control Node 已启动 (PID: $MECH_PID)"
-    print_info "日志文件: /tmp/gazebo_controller.log and /tmp/mech_control.log"
+    print_info "日志文件: /tmp/gazebo_controller.log"
     
     # 等待控制器初始化
     sleep_and_check() {
@@ -417,7 +411,6 @@ elif [ "$SIM_ENV" == "gazebo" ]; then
     }
     sleep 2
     sleep_and_check $CONTROLLER_PID "Gazebo Robot Controller" "/tmp/gazebo_controller.log" || exit 1
-    sleep_and_check $MECH_PID "Mecanum Control Node" "/tmp/mech_control.log" || exit 1
 
     print_success "所有控制器运行正常"
 
@@ -532,7 +525,7 @@ fi
 
 print_info "  - 在此终端输入自然语言指令，例如："
 print_info '    "前进1米"'
-print_info '    "先左转90度，再往前走1米"'
+print_info '    "先左转9度，再往前走1米"'
 print_info '    "抓取杯子"'
 print_info "  - 输入 'q' 或 'quit' 退出"
 print_info "  - 按 Ctrl+C 退出系统"
@@ -551,31 +544,31 @@ cleanup() {
     # 清理2D仿真器
     if [ -n "$SIMULATOR_PID" ]; then
         print_info "终止 ROS2 Simulator (PID: $SIMULATOR_PID)..."
-        kill $SIMULATOR_PID 2>/dev/null || true
+        kill -9 $SIMULATOR_PID 2>/dev/null || true
     fi
 
     # 清理Gazebo
     if [ -n "$GAZEBO_PID" ]; then
         print_info "终止 Gazebo (PID: $GAZEBO_PID)..."
-        kill $GAZEBO_PID 2>/dev/null || true
+        kill -9 $GAZEBO_PID 2>/dev/null || true
     fi
 
     # 清理Isaac Sim桥接节点
     if [ -n "$BRIDGE_PID" ]; then
         print_info "终止 Isaac Sim 桥接节点 (PID: $BRIDGE_PID)..."
-        kill $BRIDGE_PID 2>/dev/null || true
+        kill -9 $BRIDGE_PID 2>/dev/null || true
     fi
 
     # 清理ROS2控制器
     if [ -n "$CONTROLLER_PID" ]; then
         print_info "终止 ROS2 Robot Controller (PID: $CONTROLLER_PID)..."
-        kill $CONTROLLER_PID 2>/dev/null || true
+        kill -9 $CONTROLLER_PID 2>/dev/null || true
     fi
 
     # 清理 robot_state_publisher
     if [ -n "$RSP_PID" ]; then
         print_info "终止 robot_state_publisher (PID: $RSP_PID)..."
-        kill $RSP_PID 2>/dev/null || true
+        kill -9 $RSP_PID 2>/dev/null || true
     fi
 
     # 额外清理：查找并终止任何残留的相关进程
@@ -611,7 +604,7 @@ trap cleanup INT TERM EXIT
 # 启动交互式 MCP（阻塞）
 if [ "$SIM_ENV" == "gazebo" ]; then
     print_info "启动 Gazebo 专用的交互式 MCP..."
-    python3 ros2_interactive_mcp_gazebo.py
+    python3 ros2_interactive_mcp.py
 else
     print_info "启动标准的交互式 MCP..."
     python3 ros2_interactive_mcp.py
