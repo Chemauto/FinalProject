@@ -7,7 +7,17 @@
 #   ./start_ros2_mcp.sh --sim 2d  # 2D Pygame仿真器
 #   ./start_ros2_mcp.sh --sim isaac # Isaac Sim高保真仿真
 #   ./start_ros2_mcp.sh --sim real # 真实机器人（需连接Go2）
-
+{
+unset http_proxy
+unset https_proxy
+unset HTTP_PROXY
+unset HTTPS_PROXY
+unset ALL_PROXY
+unset all_proxy
+unset no_proxy
+unset NO_PROXY
+}
+# Clear proxy settings
 set -e
 
 # 解析命令行参数
@@ -23,9 +33,9 @@ while [[ $# -gt 0 ]]; do
             echo "用法: $0 [选项]"
             echo ""
             echo "选项:"
-            echo "  --sim {2d|gazebo|isaac|real}  选择仿真环境"
+            echo "  --sim {2d|mujoco|isaac|real}  选择仿真环境"
             echo "                         2d    - 2D Pygame仿真器（默认）"
-            echo "                         gazebo - Gazebo 3D仿真（推荐）"
+            echo "                         mujoco - MuJoCo 3D物理仿真"
             echo "                         isaac - Isaac Sim高保真仿真"
             echo "                         real  - 真实机器人"
             echo "  -h, --help              显示此帮助信息"
@@ -33,7 +43,7 @@ while [[ $# -gt 0 ]]; do
             echo "示例:"
             echo "  $0                     # 使用2D仿真器"
             echo "  $0 --sim 2d            # 使用2D仿真器"
-            echo "  $0 --sim gazebo        # 使用Gazebo 3D仿真"
+            echo "  $0 --sim mujoco        # 使用MuJoCo 3D仿真"
             echo "  $0 --sim isaac         # 使用Isaac Sim"
             echo "  $0 --sim real          # 使用真实机器人"
             exit 0
@@ -89,9 +99,9 @@ case $SIM_ENV in
     2d)
         print_info "仿真环境: 2D Pygame仿真器"
         ;;
-    gazebo)
-        print_info "仿真环境: Gazebo 3D仿真"
-        print_warning "Gazebo启动可能需要15秒左右，请耐心等待..."
+    mujoco)
+        print_info "仿真环境: MuJoCo 3D物理仿真"
+        print_warning "MuJoCo启动可能需要5秒左右，请耐心等待..."
         ;;
     isaac)
         print_info "仿真环境: Isaac Sim高保真仿真"
@@ -103,7 +113,7 @@ case $SIM_ENV in
         ;;
     *)
         print_error "未知仿真环境: $SIM_ENV"
-        print_info "有效选项: 2d, gazebo, isaac, real"
+        print_info "有效选项: 2d, mujoco, isaac, real"
         exit 1
         ;;
 esac
@@ -269,150 +279,72 @@ if [ "$SIM_ENV" == "isaac" ]; then
 
     print_success "Isaac Sim 桥接节点运行正常"
 
-elif [ "$SIM_ENV" == "gazebo" ]; then
-    # Gazebo 3D仿真模式：启动Gazebo和机器人控制器
-    print_info "启动 Gazebo 3D 仿真环境 (后台)..."
-    print_info "这可能需要一些时间，请耐心等待 Gazebo 窗口弹出..."
+elif [ "$SIM_ENV" == "mujoco" ]; then
+    # MuJoCo 3D仿真模式：启动MuJoCo和机器人控制器
+    print_info "启动 MuJoCo 3D 仿真环境 (后台)..."
+    print_info "这可能需要一些时间，请耐心等待 MuJoCo 窗口弹出..."
 
-    # 使用 gazebo 命令启动，并手动加载 ROS2 插件
-    print_info "使用 gazebo 命令启动（手动指定 ROS2 插件）..."
+    # 检查 MuJoCo 安装
+    if ! python3 -c "import mujoco" 2>/dev/null; then
+        print_error "MuJoCo 未安装"
+        print_info "请运行: cd $PROJECT_ROOT/Sim_Module/mujoco && ./install_mujoco.sh"
+        exit 1
+    fi
 
-    # 选择 world 文件（使用简单的 empty.world，插件通过命令行参数加载）
-    GAZEBO_WORLD="/opt/ros/humble/share/gazebo_ros/worlds/empty.world"
+    # 启动 MuJoCo 仿真器
+    print_info "启动 MuJoCo 仿真器..."
+    python3 "$PROJECT_ROOT/Sim_Module/mujoco/mujoco_simulator.py" \
+        > /tmp/mujoco_simulator.log 2>&1 &
+    MUJOCO_PID=$!
 
-    # 启动 Gazebo，手动指定要加载的 ROS2 插件
-    # -slibgazebo_ros_init.so: ROS2 初始化插件
-    # -slibgazebo_ros_factory.so: 提供 /spawn_entity 服务
-    # -slibgazebo_ros_force_system.so: 力系统插件
-    # -slibgazebo_ros_state.so: 状态发布插件
-    stdbuf -oL -eL gazebo "$GAZEBO_WORLD" \
-        -slibgazebo_ros_init.so \
-        -slibgazebo_ros_factory.so \
-        -slibgazebo_ros_force_system.so \
-        -slibgazebo_ros_state.so \
-        > /tmp/gazebo_sim.log 2>&1 &
+    print_success "MuJoCo 仿真器已启动 (PID: $MUJOCO_PID)"
+    print_info "日志文件: /tmp/mujoco_simulator.log"
 
-    GAZEBO_PID=$!
-
-    print_success "Gazebo 仿真环境已启动 (PID: $GAZEBO_PID)"
-    print_info "日志文件: /tmp/gazebo_sim.log"
-
-    # 等待 Gazebo 完全加载（需要更长时间）
-    print_info "等待 Gazebo 初始化（约15秒）..."
-    for i in {1..15}; do
+    # 等待 MuJoCo 完全加载
+    print_info "等待 MuJoCo 初始化（约5秒）..."
+    for i in {1..5}; do
         sleep 1
         echo -n "."
         # 检查进程是否还在运行
-        if ! ps -p $GAZEBO_PID > /dev/null 2>&1; then
+        if ! ps -p $MUJOCO_PID > /dev/null 2>&1; then
             echo ""
-            print_error "Gazebo 进程意外退出！"
-            print_info "查看日志: cat /tmp/gazebo_sim.log"
+            print_error "MuJoCo 进程意外退出！"
+            print_info "查看日志: cat /tmp/mujoco_simulator.log"
             exit 1
         fi
     done
     echo ""
 
-    # 检查 Gazebo 是否正常运行
-    if ! ps -p $GAZEBO_PID > /dev/null 2>&1; then
-        print_error "Gazebo 启动失败！"
-        print_info "查看日志: cat /tmp/gazebo_sim.log"
+    # 检查 MuJoCo 是否正常运行
+    if ! ps -p $MUJOCO_PID > /dev/null 2>&1; then
+        print_error "MuJoCo 启动失败！"
+        print_info "查看日志: cat /tmp/mujoco_simulator.log"
         print_info ""
         print_info "可能的原因："
-        print_info "  1. Gazebo 需要图形界面（确保 $DISPLAY 已设置）"
-        print_info "  2. 显卡驱动问题"
-        print_info "  3. 可以尝试运行: ./start_gazebo_simple.sh"
+        print_info "  1. MuJoCo 需要图形界面（确保 $DISPLAY 已设置）"
+        print_info "  2. Python 环境问题"
+        print_info "  3. 依赖包缺失"
         exit 1
     fi
 
-    print_success "Gazebo 运行正常"
+    print_success "MuJoCo 运行正常"
 
-    # 检查 /spawn_entity 服务是否可用
-    print_info "检查 Gazebo ROS2 服务..."
-    sleep 2
-    if ! ros2 service list 2>/dev/null | grep -q "spawn_entity"; then
-        print_warning "Gazebo ROS2 服务未找到"
-        print_info "尝试手动加载 Gazebo 插件..."
-        print_info "这可能需要几秒钟..."
-        sleep 5
-
-        # 再次检查
-        if ! ros2 service list 2>/dev/null | grep -q "spawn_entity"; then
-            print_error "无法连接到 Gazebo ROS2 服务"
-            print_info ""
-            print_info "建议："
-            print_info "  1. 确保已安装 gazebo_ros_pkgs"
-            print_info "  2. 尝试运行: ros2 run gazebo_ros gazebo"
-            print_info "  3. 查看日志: cat /tmp/gazebo_sim.log"
-            exit 1
-        fi
-    fi
-
-    print_success "Gazebo ROS2 服务已就绪"
-
-    # 启动 robot_state_publisher（发布 robot_description 话题）
-    print_info "启动 robot_state_publisher..."
-    # Use system Python (3.10) for ROS2 commands
-    PATH="/usr/bin:/bin:$PATH" ros2 run robot_state_publisher robot_state_publisher --ros-args \
-        -p robot_description:="$(xacro $PROJECT_ROOT/Robot_Module/4Lun/4lun.urdf.xacro)" \
-        > /tmp/rsp.log 2>&1 &
-    RSP_PID=$!
-
+    # 等待 ROS2 节点启动
+    print_info "等待 ROS2 节点初始化..."
     sleep 3
 
-    # Spawn 机器人到 Gazebo
-    print_info "Spawn 4Lun 机器人到场景中..."
-    # Use system Python (3.10) for ROS2 commands
-    PATH="/usr/bin:/bin:$PATH" ros2 run gazebo_ros spawn_entity.py \
-        -entity 4lun \
-        -topic /robot_description \
-        -x 0.0 \
-        -y 0.0 \
-        -z 0.3 \
-        > /tmp/spawn.log 2>&1 &
-    SPAWN_PID=$!
-
-    sleep 5
-
-    # 检查 spawn 是否成功
-    if ! ps -p $SPAWN_PID > /dev/null 2>&1; then
-        print_warning "Spawn 进程已退出，检查日志..."
-        if grep -q "Successfully spawned entity" /tmp/spawn.log 2>/dev/null; then
-            print_success "机器人 Spawn 成功！"
-        else
-            print_error "机器人 Spawn 失败"
-            print_info "查看日志: cat /tmp/spawn.log"
+    # 检查 /cmd_vel 话题是否可用
+    print_info "检查 ROS2 话题..."
+    if ! ros2 topic list 2>/dev/null | grep -q "/cmd_vel"; then
+        # 等待一段时间让话题创建
+        sleep 3
+        if ! ros2 topic list 2>/dev/null | grep -q "/cmd_vel"; then
+            print_warning "未检测到 /cmd_vel 话题，但继续运行..."
         fi
-    else
-        print_success "机器人 Spawn 命令已发送"
     fi
 
-    print_info "等待机器人加载完成..."
-    sleep 2
-
-    # 启动 Gazebo 机器人控制器
-    print_info "启动 Gazebo Robot Controller (后台)..."
-
-    # Use ROS2's Python (3.10) instead of conda's Python
-    /usr/bin/python3 "$PROJECT_ROOT/Sim_Module/gazebo/Go2_Gazebo_Description/go2_gazebo_description/gazebo_robot_controller.py" > /tmp/gazebo_controller.log 2>&1 &
-    CONTROLLER_PID=$!
-    
-    print_success "Gazebo Robot Controller 已启动 (PID: $CONTROLLER_PID)"
-    print_info "日志文件: /tmp/gazebo_controller.log"
-    
-    # 等待控制器初始化
-    sleep_and_check() {
-        if ! ps -p $1 > /dev/null; then
-            print_error "$2 启动失败"
-            print_info "查看日志: cat $3"
-            # Optional: kill other processes before exiting
-            return 1
-        fi
-        return 0
-    }
-    sleep 2
-    sleep_and_check $CONTROLLER_PID "Gazebo Robot Controller" "/tmp/gazebo_controller.log" || exit 1
-
-    print_success "所有控制器运行正常"
+    print_success "MuJoCo 仿真环境已就绪"
+    print_info "仿真器已集成 ROS2，可通过 /cmd_vel 控制"
 
 elif [ "$SIM_ENV" == "2d" ]; then
     # ... (rest of the script)
@@ -493,17 +425,18 @@ if [ "$SIM_ENV" == "2d" ]; then
     print_info ""
     print_info "💡 使用提示:"
     print_info "  - 2D仿真窗口会显示机器人位置和运动"
-elif [ "$SIM_ENV" == "gazebo" ]; then
+elif [ "$SIM_ENV" == "mujoco" ]; then
     print_info "📺 已启动组件："
-    print_info "  ✓ Gazebo (3D物理仿真环境)"
-    print_info "  ✓ Unitree 四足机器人"
-    print_info "  ✓ Gazebo Robot Controller (机器人控制)"
+    print_info "  ✓ MuJoCo (3D物理仿真环境)"
+    print_info "  ✓ Go2 四足机器人"
+    print_info "  ✓ MuJoCo ROS2 Controller (机器人控制)"
     print_info "  ✓ 交互式 MCP (命令行界面)"
     print_info ""
     print_info "💡 使用提示:"
-    print_info "  - Gazebo提供了真实的物理仿真"
+    print_info "  - MuJoCo 提供高性能物理仿真"
     print_info "  - 支持四足机器人动力学仿真"
-    print_info "  - 适合 Sim2Real 算法开发"
+    print_info "  - 比 Gazebo 更轻量、更快速"
+    print_info "  - 适合强化学习和 Sim2Real"
 elif [ "$SIM_ENV" == "isaac" ]; then
     print_info "📺 已启动组件："
     print_info "  ✓ Isaac Sim (高保真物理仿真)"
@@ -547,10 +480,10 @@ cleanup() {
         kill -9 $SIMULATOR_PID 2>/dev/null || true
     fi
 
-    # 清理Gazebo
-    if [ -n "$GAZEBO_PID" ]; then
-        print_info "终止 Gazebo (PID: $GAZEBO_PID)..."
-        kill -9 $GAZEBO_PID 2>/dev/null || true
+    # 清理 MuJoCo
+    if [ -n "$MUJOCO_PID" ]; then
+        print_info "终止 MuJoCo (PID: $MUJOCO_PID)..."
+        kill -9 $MUJOCO_PID 2>/dev/null || true
     fi
 
     # 清理Isaac Sim桥接节点
@@ -578,13 +511,12 @@ cleanup() {
     pkill -f "ros2_simulator.py" 2>/dev/null || true
     pkill -f "isaac_sim_bridge.py" 2>/dev/null || true
     pkill -f "ros2_robot_controller.py" 2>/dev/null || true
-    pkill -f "gazebo_robot_controller.py" 2>/dev/null || true
+    pkill -f "mujoco_simulator.py" 2>/dev/null || true
     pkill -f "robot_state_publisher" 2>/dev/null || true
-    
-    # 强制终止所有与Gazebo相关的进程
-    pkill -9 -f "gzserver" 2>/dev/null || true
-    pkill -9 -f "gzclient" 2>/dev/null || true
-    pkill -9 -f "gazebo" 2>/dev/null || true
+
+    # 强制终止所有与 MuJoCo 相关的进程
+    pkill -9 -f "mujoco" 2>/dev/null || true
+    pkill -9 -f "MuJoCo" 2>/dev/null || true
     
     # 等待一小段时间，确保进程有时间退出
     sleep 1
@@ -602,8 +534,8 @@ cleanup() {
 trap cleanup INT TERM EXIT
 
 # 启动交互式 MCP（阻塞）
-if [ "$SIM_ENV" == "gazebo" ]; then
-    print_info "启动 Gazebo 专用的交互式 MCP..."
+if [ "$SIM_ENV" == "mujoco" ]; then
+    print_info "启动 MuJoCo 专用的交互式 MCP..."
     python3 ros2_interactive_mcp.py
 else
     print_info "启动标准的交互式 MCP..."

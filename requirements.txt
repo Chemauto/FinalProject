@@ -1,0 +1,24 @@
+# ROS2 2D Simulation - Python Dependencies
+# For use with: ./start_ros2_mcp.sh --sim 2d
+
+# LLM Module - OpenAI API client (for Qwen/Dashscope compatibility)
+openai>=1.0.0
+
+# Environment variables management
+python-dotenv>=1.0.0
+
+# YAML configuration parsing
+pyyaml>=6.0
+
+# 2D Simulator visualization
+pygame>=2.5.0
+
+# ROS2 dependencies
+numpy>=1.26.0
+
+# Note: ROS2 packages (rclpy, geometry_msgs, sensor_msgs, std_msgs)
+# should be installed via apt, not pip:
+#   sudo apt install ros-<distro>-rclpy
+#   sudo apt install ros-<distro>-geometry-msgs
+#   sudo apt install ros-<distro>-sensor-msgs
+#   sudo apt install ros-<distro>-std-msgs

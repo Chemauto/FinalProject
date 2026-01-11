@@ -1,0 +1,18 @@
+<launch>
+  <arg name="paused" default="false"/>
+  <arg name="use_sim_time" default="true"/>
+  <arg name="gui" default="true"/>
+  <arg name="headless" default="false"/>
+  <arg name="debug" default="false"/>
+
+  <!-- 启动 robot_state_publisher 用于发布机器人状态 -->
+  <node pkg="robot_state_publisher" type="robot_state_publisher" name="robot_state_publisher">
+    <param name="robot_description" command="$(find xacro)/xacro $(find go2_description)/xacro/robot.xacro"/>
+  </node>
+
+  <!-- 启动 joint_state_publisher_gui 用于手动控制关节 -->
+  <node pkg="joint_state_publisher_gui" type="joint_state_publisher_gui" name="joint_state_publisher_gui"/>
+
+  <!-- 启动 RViz 可视化 -->
+  <node pkg="rviz" type="rviz" name="rviz" args="-d $(find go2_description)/launch/check_joint.rviz" required="true"/>
+</launch>

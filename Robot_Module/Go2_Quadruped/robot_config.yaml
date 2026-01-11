@@ -1,0 +1,13 @@
+robot:
+  name: "Go2_Quadruped"
+  type: "quadruped"
+
+communication:
+  - ROS2
+
+ros2:
+  subscribe:
+    command_topic: "/robot_command"
+  publish:
+    cmd_vel: "/cmd_vel"
+    gripper: "/gripper"

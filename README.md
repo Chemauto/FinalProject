@@ -45,10 +45,10 @@ FinalProject/
 │   │   └── simulator.py
 │   ├── dora_2d/               # Dora 版 2D 仿真
 │   │   └── simulator.py
-│   └── gazebo/                # Gazebo 3D 仿真
-│       ├── Go2_Gazebo_Description/
-│       ├── go2_sim_launch.py
-│       └── start_gazebo_simple.sh
+│   └── mujoco/                # MuJoCo 3D 物理仿真
+│       ├── mujoco_simulator.py
+│       ├── install_mujoco.sh
+│       └── start_mujoco_sim.sh
 │
 ├── Real_Module/                # ⑥ 真实机器人模块
 │   └── __init__.py            # 硬件驱动接口 (待实现)
