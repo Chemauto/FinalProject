@@ -1,128 +1,315 @@
-# 🤖 Robot Control with MCP + LLM
+# 🤖 Robot Control with MCP + Dual-Layer LLM (Modular Architecture)
 
-基于 Model Context Protocol (MCP) 的机器人控制系统，支持双层 LLM 架构（任务规划 + 执行）。
+基于 Model Context Protocol (MCP) 的机器人控制系统，采用双层LLM架构与完全模块化设计。
 
-## 🎯 项目特点
+## 🎯 核心特性
 
-- **双层 LLM 架构** - 上层任务规划，下层任务执行
-- **多模态支持** - 支持 ROS2、Dora 等多种通信方式
-- **自然语言交互** - 支持中英文复杂指令
-- **易于扩展** - 模块化设计，可轻松添加新技能
+- **双层 LLM 架构**:
+  - 上层 LLM (任务规划): 将复杂指令分解为子任务序列
+  - 下层 LLM (执行控制): 将子任务转换为具体技能调用
+- **7个核心模块**: 每个模块职责清晰,易于维护和扩展
+- **完全模块化**: 添加新机器人只需创建新文件夹,无需修改核心代码
+- **通用 ROS2 桥接**: 根据配置文件动态创建 ROS2 话题，支持任意机器人
+- **多通信协议**: 支持 ROS2、Dora 等多种机器人通信方式
+- **VLM集成**: 支持视觉语言模型进行环境感知
 
-## 📁 项目结构
+## 📁 项目结构 (7个核心模块)
 
 ```
 FinalProject/
-├── MCP_Server/      # 核心：MCP 服务器 + 技能库
-├── ROS_Module/      # ROS2 通信模块（真实机器人）
-├── Dora_Module/     # Dora 仿真模块（仿真测试）
-└── VLM_Modele/      # VLM Demo 程序
+├── README.md
+│
+├── LLM_Module/                 # ① 大语言模型模块 (双层LLM)
+│   ├── llm_core.py            # LLMAgent 类
+│   └── prompts/               # YAML 提示词
+│
+├── VLM_Module/                 # ② 视觉语言模型模块
+│   ├── vlm_core.py            # VLMCore 类
+│   └── prompts/               # VLM 提示词
+│
+├── Middle_Module/              # ③ 中间通信层 (纯通信，代码最少)
+│   ├── ROS/                   # ROS2 通信
+│   │   ├── ros2_interactive_mcp.py
+│   │   ├── ros2_robot_controller.py   # 通用 ROS2 桥接
+│   │   └── start_ros2_mcp.sh
+│   └── Dora/                  # Dora 通信
+│       ├── dora-interactive-mcp.yaml
+│       ├── input_ui.py
+│       └── requirements.txt
+│
+├── MCP_Module/                 # ④ MCP 中间件 (技能注册和调用)
+│   └── mcp_bridge.py          # MCPBridge + SkillRegistry
+│
+├── Sim_Module/                 # ⑤ 仿真模块 (所有仿真代码)
+│   ├── ros2_2d/               # ROS2 版 2D 仿真
+│   │   └── simulator.py
+│   ├── dora_2d/               # Dora 版 2D 仿真
+│   │   └── simulator.py
+│   └── gazebo/                # Gazebo 3D 仿真
+│       ├── Go2_Gazebo_Description/
+│       ├── go2_sim_launch.py
+│       └── start_gazebo_simple.sh
+│
+├── Real_Module/                # ⑥ 真实机器人模块
+│   └── __init__.py            # 硬件驱动接口 (待实现)
+│
+└── Robot_Module/               # ⑦ 机器人模块 (配置和技能)
+    ├── Go2_Quadruped/         # Go2 四足机器人
+    │   ├── robot_config.yaml  # ROS2 话题映射
+    │   └── skills/            # 技能实现
+    └── Sim_2D/                # 2D 仿真机器人
+        ├── robot_config.yaml
+        └── skills/
+```
+
+## 🔄 双层LLM工作流程
+
+```
+用户输入: "向左移动1米,然后旋转90度"
+    ↓
+┌─────────────────────────────────────────┐
+│      LLM Module - 上层LLM (任务规划)      │
+│  Input: 用户指令 + planning_prompt       │
+│  Output: 子任务序列                       │
+└──────────────┬──────────────────────────┘
+               ↓
+┌─────────────────────────────────────────┐
+│      LLM Module - 下层LLM (执行控制)      │
+│  Input: 单个子任务                        │
+│  Output: 技能调用                          │
+└──────────────┬──────────────────────────┘
+               ↓
+┌─────────────────────────────────────────┐
+│      MCP Module - 技能注册与调用          │
+│  从 Robot_Module 加载技能                │
+└──────────────┬──────────────────────────┘
+               ↓
+┌─────────────────────────────────────────┐
+│   Robot_Module/Sim_2D/skills/            │
+│   执行技能函数，返回 action + parameters  │
+└──────────────┬──────────────────────────┘
+               ↓
+┌─────────────────────────────────────────┐
+│   Middle_Module/ROS/                     │
+│   读取 robot_config.yaml                  │
+│   根据配置发布到对应 ROS2 话题             │
+└──────────────┬──────────────────────────┘
+               ↓
+      🤖 Sim_Module (仿真环境)
 ```
 
 ## 🚀 快速开始
 
-### 方式 1: ROS2（推荐用于真实机器人）
+### 方式 1: ROS2 (2D 仿真)
+
+最基础的模式,用于快速验证逻辑。
 
 ```bash
-# 1. 创建 Python 3.10 环境包括后面的dora环境也是建议使用py310版本，ros2版本的要求
-# 其实所有的环境先装着，然后按照这个文件
-conda create -n ros2_env python=3.10 -y
-conda activate ros2_env
-
-# 2. 一键启动
-cd ROS_Module/ros2
-./start_ros2_mcp.sh
+cd Middle_Module/ROS
+./start_ros2_mcp.sh --sim 2d
 ```
 
-**测试指令：**
-```
-先左转90度，再往前走1米
-前进50厘米然后向右转45度
-抓取杯子
-```
-
-### 方式 2: Dora（推荐用于仿真测试）
+### 方式 2: ROS2 (Gazebo 3D 仿真)
 
 ```bash
-# 1. 安装依赖
-pip install dora-rs pyarrow pyyaml python-dotenv
+cd Sim_Module/gazebo
+./start_gazebo_simple.sh
+```
 
-# 2. 启动 Dora
-cd Dora_Module
+### 方式 3: Dora (仿真测试)
+
+```bash
+pip install dora-rs pyarrow pyyaml python-dotenv pygame
+cd Middle_Module/Dora
 dora up
-
-# 3. 运行
 dora start dora-interactive-mcp.yaml --attach
 ```
 
-## 📊 功能对比
+## 🔧 添加新机器人 (只需4步!)
 
-| 特性 | ROS2 | Dora |
-|------|------|------|
-| 真实机器人 | ✅ | ❌ |
-| 仿真环境 | ✅ | ✅ |
-| 双层LLM | ✅ | ✅ |
-| 可视化 | rqt_graph | Rerun |
-| 难度 | 中等 | 简单 |
-
-## 📚 模块文档
-
-- **[MCP_Server](MCP_Server/README.md)** - MCP 服务器和技能库
-- **[ROS_Module](ROS_Module/README.md)** - ROS2 通信和控制
-- **[Dora_Module](Dora_Module/README.md)** - Dora 仿真和配置
-
-## 🔧 环境要求
-
-- Python 3.10（ROS2 Humble 要求）
-- ROS2 Humble（可选，用于真实机器人）
-- Dora（可选，用于仿真）
-- 阿里云通义千问 API Key
-
-## 💡 核心概念
-
-```
-用户输入: "先左转90度，再往前走1米"
-  ↓
-🧠 上层 LLM (任务规划)
-  ↓
-分解: [左转90度] → [前进1米]
-  ↓
-⚙️  下层 LLM (执行)
-  ↓
-调用工具: turn_left(90) → move_forward(1.0m)
-  ↓
-📤 通信层 (ROS2/Dora)
-  ↓
-🤖 机器人执行
-```
-
-## 📝 配置
-
-在项目根目录创建 `.env` 文件：
+### 步骤1: 创建机器人文件夹
 
 ```bash
-Test_API_KEY=sk-your-api-key-here
+mkdir -p Robot_Module/MyNewRobot/skills
 ```
 
-获取 API Key: https://dashscope.aliyun.com
+### 步骤2: 创建配置文件
 
-## 🆚 与传统方案对比
+`Robot_Module/MyNewRobot/robot_config.yaml`:
+```yaml
+robot:
+  name: "MyRobot"
+  type: "custom"
 
-| 指令 | 单层 LLM | 双层 LLM (本系统) |
-|------|---------|-------------------|
-| 先左转90度，再往前走1米 | ❌ 只执行左转 | ✅ 左转 → 前进 |
-| 前进50cm然后向右转 | ❌ 只执行前进 | ✅ 前进 → 右转 |
+communication:
+  - ROS2
 
-## 📞 获取帮助
+ros2:
+  subscribe:
+    command_topic: "/robot_command"
+  publish:
+    cmd_vel: "/cmd_vel"
+```
 
-- ROS2 问题: 查看 [ROS_Module/README.md](ROS_Module/README.md)
-- Dora 问题: 查看 [Dora_Module/README.md](Dora_Module/README.md)
-- MCP 配置: 查看 [MCP_Server/README.md](MCP_Server/README.md)
+### 步骤3: 创建技能文件
 
-## 📄 许可证
+`Robot_Module/MyNewRobot/skills/myrobot_skills.py`:
+```python
+def skill_move_forward(distance: float = 1.0, speed: float = 0.3):
+    """向前移动"""
+    return {
+        'action': 'navigate',
+        'parameters': {'direction': 'front', 'distance': f'{distance}m'}
+    }
+```
 
-GPLv3+
+### 步骤4: 创建技能模块导出
+
+`Robot_Module/MyNewRobot/skills/__init__.py`:
+```python
+from .myrobot_skills import *
+```
+
+完成! 系统会自动加载新机器人。
+
+## 📦 模块说明
+
+### ① LLM_Module - 大语言模型模块
+
+**职责**:
+- 任务规划: 用户指令 → 子任务序列
+- 执行控制: 子任务 → 技能调用
+
+**核心文件**:
+- `llm_core.py`: LLMAgent类实现
+- `prompts/`: YAML格式提示词
+
+### ② VLM_Module - 视觉语言模型模块
+
+**职责**:
+- 环境感知: 图像 → 环境描述
+- 障碍物检测: 图像 → 障碍物列表
+
+**状态**: 待实现
+
+### ③ Middle_Module - 中间通信层
+
+**职责**:
+- 统一通信接口
+- 代码尽可能少
+- 通用 ROS2 桥接
+
+**子模块**:
+- `ROS/`: ROS2通信
+  - `ros2_interactive_mcp.py`: MCP交互
+  - `ros2_robot_controller.py`: **通用 ROS2 桥接**
+  - `start_ros2_mcp.sh`: 启动脚本
+- `Dora/`: Dora通信
+
+### ④ MCP_Module - MCP 中间件
+
+**职责**:
+- 从 Robot_Module 加载和注册技能
+- 提供 MCP 工具定义
+- 执行技能
+
+**核心文件**:
+- `mcp_bridge.py`: MCPBridge + SkillRegistry
+
+### ⑤ Sim_Module - 仿真模块
+
+**职责**:
+- 提供各种仿真环境
+- 支持多种通信方式
+
+**子模块**:
+- `ros2_2d/`: ROS2 版 2D 仿真
+- `dora_2d/`: Dora 版 2D 仿真
+- `gazebo/`: Gazebo 3D 仿真
+
+### ⑥ Real_Module - 真实机器人模块
+
+**职责**:
+- 硬件驱动接口
+- 传感器数据采集
+
+**状态**: 待实现
+
+### ⑦ Robot_Module - 机器人模块 (核心!)
+
+**职责**:
+- 定义机器人配置
+- 实现机器人技能
+- 配置 ROS2 话题映射
+
+**结构**:
+```
+Robot_Module/RobotName/
+├── robot_config.yaml       # 机器人配置和 ROS2 话题映射
+└── skills/                  # 技能实现
+    ├── __init__.py
+    └── robotname_skills.py
+```
+
+## 🎯 使用示例
+
+### 使用 MCP Bridge
+
+```python
+from MCP_Module import create_mcp_bridge
+
+# 创建桥接并加载机器人
+bridge = create_mcp_bridge(['Sim_2D', 'Go2_Quadruped'])
+
+# 查看可用技能
+skills = bridge.get_available_skills()
+
+# 执行技能
+result = bridge.execute_skill('move_forward', distance=1.0)
+```
+
+### 使用 LLM Agent
+
+```python
+from LLM_Module import LLMAgent
+
+llm = LLMAgent(api_key="your_api_key")
+
+# 规划任务
+tasks = llm.plan_tasks("向前走2米,然后左转90度", tools=[])
+
+# 执行流程
+results = llm.run_pipeline("向前走2米", tools=[], execute_tool_fn=fn)
+```
+
+## 🔗 模块依赖关系
+
+```
+用户输入
+  ↓
+LLM_Module (双层LLM处理)
+  ↓
+MCP_Module (技能管理)
+  ↓
+Robot_Module (技能定义 + ROS2话题映射)
+  ↓
+Middle_Module (通信层 - 根据配置发布话题)
+  ↓
+Sim_Module / Real_Module (执行)
+```
+
+## 📚 扩展指南
+
+- [LLM_Module README](LLM_Module/README.md)
+- [VLM_Module README](VLM_Module/README.md)
+- [Middle_Module README](Middle_Module/README.md)
+- [MCP_Module README](MCP_Module/README.md)
+- [Sim_Module README](Sim_Module/README.md)
+- [Real_Module README](Real_Module/README.md)
+- [Robot_Module README](Robot_Module/README.md)
 
 ---
 
-**开始使用:** 选择 ROS2 或 Dora，查看对应模块的 README.md
+**开始使用**: 选择一种仿真方式，按照上面的指令启动。
+
+**项目已完全模块化,添加新机器人只需4步!**

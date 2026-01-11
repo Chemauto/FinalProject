@@ -1,23 +1,70 @@
-/dora-interactive-v2.dora-session.yaml
-/.env
+# 敏感信息
+.env
+.env.local
+*.key
+*.pem
+credentials.json
+config.json
 
 # Python
 __pycache__/
-*.pyc
-*.o
+*.py[cod]
+*$py.class
 *.so
+*.o
 *.egg
-*.egg-info
-.Python
-build/
+*.egg-info/
 dist/
+build/
+.Python
 venv/
 env/
+ENV/
 out/
-# Dora Module outputs
-Dora_Module/out/
+*.log
 
-# ROS2 build artifacts
-ROS_Module/build/
-ROS_Module/install/
-ROS_Module/log/
+# Jupyter Notebook
+.ipynb_checkpoints
+*.ipynb
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Dora 会话文件
+*.dora-session.yaml
+dora-interactive-v2.dora-session.yaml
+
+# ROS2 build artifacts (编译产物)
+**/build/
+**/install/
+**/log/
+**/.colcon_install_layout/
+
+# 项目根目录的编译和日志目录
+install/
+log/
+logs/
+tmp/
+temp/
+
+# Gazebo 临时文件
+*.gazebo
+/gazebo_models/
+
+# 日志文件
+*.log
+
+# 测试和覆盖率
+.pytest_cache/
+.coverage
+htmlcov/
+
+# 临时文件
+*.tmp
+*.bak
+*.swp

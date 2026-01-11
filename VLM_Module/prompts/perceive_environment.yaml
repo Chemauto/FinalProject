@@ -1,0 +1,25 @@
+# Environment Perception Prompt
+# 环境感知提示词模板
+
+prompt: |
+  Analyze this robot's camera view and describe the environment.
+
+  Please provide:
+  1. Overall scene description (indoor/outdoor, room type, etc.)
+  2. Key objects visible and their approximate locations
+  3. Potential obstacles or hazards
+  4. Available paths or open spaces
+  5. Any notable features relevant for navigation
+
+  Respond in JSON format:
+  {{
+    "scene_type": "indoor/outdoor",
+    "description": "overall description",
+    "objects": [
+      {{"name": "object_name", "location": "relative_position", "confidence": 0.9}}
+    ],
+    "obstacles": [
+      {{"type": "obstacle_type", "location": "position", "severity": "low/medium/high"}}
+    ],
+    "navigation_advice": "brief navigation suggestion"
+  }}

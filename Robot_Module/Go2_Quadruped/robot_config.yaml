@@ -1,0 +1,58 @@
+# Go2 Quadruped Robot Configuration
+
+robot:
+  name: "Go2"
+  type: "quadruped"
+  manufacturer: "Unitree"
+
+# 支持的通信方式
+communication:
+  - ROS2
+  - Dora
+
+# ROS2 话题映射配置
+ros2:
+  # 订阅的话题（接收命令）
+  subscribe:
+    command_topic: "/robot_command"
+
+  # 发布的话题（发送控制命令）
+  publish:
+    # 导航控制
+    cmd_vel: "/cmd_vel"  # geometry_msgs/Twist
+
+    # 关节状态（四足机器人腿部关节）
+    # joint_states: "/joint_states"  # sensor_msgs/JointState
+
+# 机器人参数
+parameters:
+  max_speed: 1.5  # m/s
+  max_angular_speed: 2.0  # rad/s
+  wheel_radius: 0.06  # m
+  base_mass: 15.0  # kg
+
+# 可用传感器
+sensors:
+  - name: "camera"
+    type: "RGB"
+    mounted: true
+  - name: "lidar"
+    type: "2D"
+    mounted: true
+  - name: "imu"
+    type: "9-axis"
+    mounted: true
+
+# 支持的技能
+skills:
+  - move_forward
+  - move_backward
+  - rotate_left
+  - rotate_right
+  - stop
+  - move_omni
+
+# 提示词配置
+prompts:
+  planning: "planning_prompt_go2.yaml"
+  execution: "execution_prompt_go2.yaml"

@@ -1,0 +1,82 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="go2_mecanum">
+
+  <!-- Properties -->
+  <xacro:property name="base_mass" value="15.0" />
+  <xacro:property name="wheel_mass" value="1.0" />
+  <xacro:property name="wheel_radius" value="0.05" />
+  <xacro:property name="wheel_length" value="0.1" />
+
+  <!-- Base link -->
+  <link name="base_link">
+    <inertial>
+      <mass value="${base_mass}"/>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <inertia ixx="0.1" ixy="0.0" ixz="0.0" iyy="0.1" iyz="0.0" izz="0.1"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0.15" rpy="0 0 0"/>
+      <geometry><box size="0.35 0.20 0.10"/></geometry>
+      <material name="blue"><color rgba="0.0 0.0 1.0 1.0"/></material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0.15" rpy="0 0 0"/>
+      <geometry><box size="0.35 0.20 0.10"/></geometry>
+    </collision>
+  </link>
+
+  <!-- Mecanum Wheel Macro -->
+  <xacro:macro name="mecanum_wheel" params="prefix parent x y z">
+    <link name="${prefix}_wheel">
+      <inertial>
+        <mass value="${wheel_mass}"/>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <inertia ixx="0.01" ixy="0.0" ixz="0.0" iyy="0.01" iyz="0.0" izz="0.01"/>
+      </inertial>
+      <visual>
+        <origin xyz="0 0 0" rpy="1.57 0 0"/>
+        <geometry><cylinder length="${wheel_length}" radius="${wheel_radius}"/></geometry>
+        <material name="black"><color rgba="0.0 0.0 0.0 1.0"/></material>
+      </visual>
+      <collision>
+        <origin xyz="0 0 0" rpy="1.57 0 0"/>
+        <geometry><cylinder length="${wheel_length}" radius="${wheel_radius}"/></geometry>
+      </collision>
+    </link>
+
+    <joint name="${prefix}_wheel_joint" type="continuous">
+      <parent link="${parent}"/>
+      <child link="${prefix}_wheel"/>
+      <origin xyz="${x} ${y} ${z}" rpy="0 0 0"/>
+      <axis xyz="0 1 0"/>
+    </joint>
+  </xacro:macro>
+
+  <!-- Instantiate wheels -->
+  <xacro:mecanum_wheel prefix="front_left" parent="base_link" x="0.15" y="0.12" z="0.1" />
+  <xacro:mecanum_wheel prefix="front_right" parent="base_link" x="0.15" y="-0.12" z="0.1" />
+  <xacro:mecanum_wheel prefix="back_left" parent="base_link" x="-0.15" y="0.12" z="0.1" />
+  <xacro:mecanum_wheel prefix="back_right" parent="base_link" x="-0.15" y="-0.12" z="0.1" />
+
+  <!-- Gazebo diff_drive plugin -->
+  <gazebo>
+    <plugin filename="libgazebo_ros_diff_drive.so" name="gazebo_ros_diff_drive">
+      <update_rate>50</update_rate>
+      <left_joint>front_left_wheel_joint</left_joint>
+      <left_joint>back_left_wheel_joint</left_joint>
+      <right_joint>front_right_wheel_joint</right_joint>
+      <right_joint>back_right_wheel_joint</right_joint>
+      <wheel_separation>0.24</wheel_separation>
+      <wheel_diameter>0.10</wheel_diameter>
+      <max_wheel_torque>20</max_wheel_torque>
+      <command_topic>/cmd_vel</command_topic>
+      <odometry_topic>/odom</odometry_topic>
+      <odometry_frame>odom</odometry_frame>
+      <robot_base_frame>base_link</robot_base_frame>
+      <publish_odom>true</publish_odom>
+      <publish_odom_tf>true</publish_odom_tf>
+      <publish_wheel_tf>true</publish_wheel_tf>
+    </plugin>
+  </gazebo>
+
+</robot>
