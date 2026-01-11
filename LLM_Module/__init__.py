@@ -14,7 +14,7 @@ LLM Module - 大语言模型模块 (双层LLM架构)
 - prompts/execution_prompt_*.yaml  (执行提示词)
 """
 
-from .llm_core import LLMAgent, get_standard_mcp_tools, get_gazebo_mcp_tools
+from .llm_core import LLMAgent
 
 __version__ = '1.0.0'
-__all__ = ['LLMAgent', 'get_standard_mcp_tools', 'get_gazebo_mcp_tools']
+__all__ = ['LLMAgent']
