@@ -113,7 +113,7 @@ cd Middle_Module/ROS
 
 ```bash
 cd Middle_Module/ROS
-./start_ros2_mcp.sh --sim gazebo  
+./start_ros2_mcp.sh --sim mujoco
 ```
 
 ### 方式 3: Dora (仿真测试)
