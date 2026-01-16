@@ -9,6 +9,7 @@ Interactive_Module 是系统的**用户交互入口**，负责接收用户自然
 - **交互界面**: 提供命令行交互界面 (CLI)
 - **模块协调**: 连接 LLM_Module 和 Robot_Module
 - **动态提示词**: 自动生成包含可用技能列表的提示词
+- **路径参数支持**: 智能处理带路径参数的用户指令
 - **结果展示**: 格式化显示任务规划和执行结果
 - **自动初始化**: ROS2 通讯层自动管理，无需手动配置
 
@@ -38,17 +39,15 @@ Interactive_Module/
                ↓
         ┌──────┴──────┐
         ↓             ↓
-  LLM_Module    Robot_Module
-  (规划+执行)    (工具调用 + ROS2发布)
+    LLM_Module    Robot_Module
+    (规划+执行)    (工具调用 + ROS2发布)
         ↓             ↓
     ROS2 Topic (/robot/command)
         ↓
-  Sim_Module (仿真执行)
+    Sim_Module (仿真执行)
 ```
 
-## 核心文件: interactive.py
-
-### 主函数流程
+## 主函数流程
 
 ```python
 def main():
@@ -89,7 +88,36 @@ def main():
             print(f"📊 [完成] {success_count}/{len(results)} 个任务成功")
 ```
 
-### 工具执行函数
+## 输入指令格式
+
+### 格式1：基础指令
+```
+前进1米
+左转90度
+停止
+后退0.5米
+```
+
+### 格式2：组合指令
+```
+前进1米，然后左转90度
+先右转45度，再前进2米
+左转90度，后退1米，停止
+```
+
+### 格式3：带图片路径的指令（VLM）
+```
+检测颜色并移动
+根据 /home/robot/work/FinalProject/VLM_Module/assets/green.png 检测颜色并执行动作
+前进1米，然后根据 /path/to/red.png 检测颜色
+```
+
+### 格式4：复杂组合指令
+```
+前进1米，左转90度，再根据 /home/robot/work/FinalProject/VLM_Module/assets/blue.png 检测颜色并执行相应动作
+```
+
+## 工具执行函数
 
 ```python
 def execute_tool(function_name: str, function_args: dict) -> dict:
@@ -98,321 +126,187 @@ def execute_tool(function_name: str, function_args: dict) -> dict:
     由 LLM_Module 的下层 LLM 调用
 
     Args:
-        function_name: 工具函数名 (如 "move_forward")
-        function_args: 函数参数 (如 {"distance": 1.0, "speed": 0.3})
+        function_name: 工具函数名称
+        function_args: 工具函数参数字典
 
     Returns:
-        执行结果字典
+        执行结果字典 {"result": ..., "delay": ...}
     """
     # 1. 获取工具函数
     skill_func = get_skill_function(function_name)
 
-    if not skill_func:
-        return {"error": f"Unknown tool: {function_name}"}
-
-    # 2. 调用异步技能函数（自动初始化 ROS2 队列）
+    # 2. 异步执行工具函数
     result = asyncio.run(skill_func(**function_args))
 
     # 3. 估算执行时间
-    delay = calculate_execution_delay(function_name, function_args)
+    delay = calculate_delay(function_name, function_args)
 
     return {"result": result, "delay": delay}
 ```
 
-### 动态提示词加载
+## 动态提示词加载
 
 ```python
-def load_dynamic_prompt(prompt_path, tools):
-    """加载并动态填充提示词
+def load_dynamic_prompt(prompt_path: str, tools: List[Dict]) -> str:
+    """动态加载并填充提示词
 
-    将可用技能列表插入到提示词模板中
+    将可用工具列表填充到提示词模板中
 
     Args:
-        prompt_path: 提示词 YAML 文件路径
+        prompt_path: 提示词文件路径
         tools: 工具定义列表
 
     Returns:
         填充后的提示词字符串
     """
-    import yaml
-
-    # 1. 加载 YAML 模板
     with open(prompt_path, 'r', encoding='utf-8') as f:
-        data = yaml.safe_load(f)
+        prompt_template = f.read()
 
-    # 2. 动态生成配置信息
-    robot_config = format_robot_config(tools)
-    available_skills = format_available_skills(tools)
+    # 生成可用技能列表
+    available_skills = "\n".join([
+        f"- {tool['function']['name']}: {tool['function']['description'][:50]}"
+        for tool in tools
+    ])
 
-    # 3. 填充模板
-    prompt = data.get("prompt", "").format(
-        robot_config=robot_config,
+    # 填充模板
+    return prompt_template.format(
         available_skills=available_skills,
-        user_input="{user_input}"  # 保留占位符供后续填充
+        robot_config="2D差速驱动机器人"
     )
-
-    return prompt
 ```
 
-## ROS2 通讯
-
-### 自动初始化
-
-ROS2 队列在工具函数首次调用时**自动初始化**，无需手动配置：
+## 执行时间估算
 
 ```python
-# Robot_Module/module/base.py
-def _get_action_queue():
-    """获取动作队列（懒加载：首次使用时自动初始化 ROS 队列）"""
-    global _action_queue
-    if _action_queue is None:
-        from ros_topic_comm import get_shared_queue
-        _action_queue = get_shared_queue()  # 自动创建 Publisher
-    return _action_queue
-```
+def calculate_delay(function_name: str, function_args: dict) -> float:
+    """估算工具执行时间
 
-### 话题发布
+    Args:
+        function_name: 工具函数名称
+        function_args: 工具参数
 
-工具函数调用时自动发布到 ROS2 话题：
+    Returns:
+        估算的执行时间（秒）
+    """
+    if function_name in ['move_forward', 'move_backward']:
+        distance = function_args.get('distance', 1.0)
+        speed = function_args.get('speed', 0.3)
+        delay = distance / speed if speed > 0 else 0
+    elif function_name == 'turn':
+        angle = abs(function_args.get('angle', 90.0))
+        angular_speed = function_args.get('angular_speed', 0.5)
+        delay = (angle / 180.0 * 3.14159) / angular_speed if angular_speed > 0 else 0
+    elif function_name == 'detect_color_and_act':
+        delay = 3.3  # VLM识别+动作执行约3.3秒
+    else:
+        delay = 0
 
-```python
-async def move_forward(distance: float = 1.0, speed: float = 0.3) -> str:
-    action = {'action': 'move_forward', 'parameters': {...}}
-    _get_action_queue().put(action)  # 发布到 /robot/command
-    return json.dumps(action)
+    return delay
 ```
 
 ## 使用示例
 
-### 启动交互界面
+### 基础使用
 
 ```bash
-# 方法1: 使用启动脚本
 ./start_robot_system.sh
 
-# 方法2: 直接运行
-python3 Interactive_Module/interactive.py
+# 选择自动启动或手动启动后
+💬 请输入指令: 前进1米
 ```
 
-### 交互示例
+### 完整输出示例
 
 ```
-============================================================
-LLM Interactive Interface
-============================================================
-API: https://dashscope.aliyuncs.com/compatible-mode/v1/
-Model: qwen-plus
-可用工具: 4 个
-------------------------------------------------------------
-  • move_forward(distance: number, speed: number)
-    描述: 向前移动指定距离
-
-  • move_backward(distance: number, speed: number)
-    描述: 向后移动指定距离
-
-  • turn(angle: number, angular_speed: number)
-    描述: 旋转指定角度
-
-  • stop
-    描述: 紧急停止机器人
-------------------------------------------------------------
-提示: 确保已在另一个窗口启动仿真器
-输入 'quit' 或 'exit' 退出
-============================================================
-
-💬 请输入指令: 前进1米然后左转90度
+💬 请输入指令: 前进1米，然后根据 /home/robot/work/FinalProject/VLM_Module/assets/green.png 检测颜色
 
 ████████████████████████████████████████████████████████████
-📥 [用户输入] 前进1米然后左转90度
+📥 [用户输入] 前进1米，然后根据 /home/robot/work/FinalProject/VLM_Module/assets/green.png 检测颜色
 ████████████████████████████████████████████████████████████
 
 ============================================================
 🧠 [上层LLM] 任务规划中...
 ============================================================
 ✅ [规划完成] 共分解为 2 个子任务
-📋 [任务概述] 用户需要先向前移动1米，然后向左旋转90度
+📋 [任务概述] 前进后检测颜色并执行动作
 
 子任务序列：
-  步骤 1: 向前移动1米 (移动)
-  步骤 2: 左转90度 (旋转)
+  步骤 1: 向前移动1.0米 (移动)
+  步骤 2: 根据 /home/robot/work/FinalProject/VLM_Module/assets/green.png 检测颜色并执行相应动作 (视觉检测)
 
-////////////////////////////////////////////////////////////
+████████████████████████████████████████████████████████████
 🚀 [开始执行] 按顺序执行子任务
-////////////////////////////////////////////////////////////
+████████████████████████████████████████████████████████████
 
 【步骤 1/2】
 ──────────────────────────────────────────────────
-⚙️  [执行中] 向前移动1米
+⚙️  [执行中] 向前移动1.0米
 ──────────────────────────────────────────────────
-🔧 [工具调用] move_forward({'distance': 1.0, 'speed': 0.3})
-[base.py] ROS队列已自动初始化
-[ros_topic_comm] ROS 已初始化
-[ActionPublisher] ROS话题发布器已创建: /robot/command
-[ActionPublisher] 发布命令: {'action': 'move_forward', 'parameters': {'distance': 1.0, 'speed': 0.3}}
+🔧 [工具调用] move_forward({'distance': 1.0})
+[base.move_forward] 前进 1.0m, 速度 0.3m/s
 ⏳ [等待] 执行时间: 3.3秒... ✅ 完成!
 
 【步骤 2/2】
 ──────────────────────────────────────────────────
-⚙️  [执行中] 左转90度
+⚙️  [执行中] 根据 /home/robot/work/FinalProject/VLM_Module/assets/green.png 检测颜色并执行相应动作
 ──────────────────────────────────────────────────
-🔧 [工具调用] turn({'angle': 90.0, 'angular_speed': 0.5})
-[ActionPublisher] 发布命令: {'action': 'turn', 'parameters': {'angle': 90.0, 'angular_speed': 0.5}}
-⏳ [等待] 执行时间: 3.1秒... ✅ 完成!
+🔧 [工具调用] detect_color_and_act({'image_path': '/home/robot/work/FinalProject/VLM_Module/assets/green.png'})
+[VLM] 识别颜色: green
+[vision] 检测到绿色，执行后退
+⏳ [等待] 执行时间: 3.3秒... ✅ 完成!
 
-////////////////////////////////////////////////////////////
+████████████████████████████████████████████████████████████
 ✅ [执行完成] 任务总结
-////////////////////////////////////////////////////////////
-  1. 向前移动1米 - ✅ 成功
-  2. 左转90度 - ✅ 成功
+████████████████████████████████████████████████████████████
+  1. 向前移动1.0米 - ✅ 成功
+  2. 检测颜色并执行相应动作 - ✅ 成功
 
 📊 [完成] 2/2 个任务成功
 
 💬 请输入指令:
 ```
 
-## 启动时的输出
-
-### 1. 工具注册信息
-
-```
-============================================================
-[skill.py] 开始注册机器人技能模块...
-============================================================
-[base.py:register_tools] 底盘控制模块已注册 (4 个工具)
-============================================================
-[skill.py] ✓ 所有模块注册完成
-============================================================
-```
-
-### 2. ROS2 初始化
-
-```
-[base.py] ROS队列已自动初始化
-[ros_topic_comm] ROS 已初始化
-[ActionPublisher] ROS话题发布器已创建: /robot/command
-```
-
-### 3. 欢迎界面
-
-```
-============================================================
-LLM Interactive Interface
-============================================================
-API: https://dashscope.aliyuncs.com/compatible-mode/v1/
-Model: qwen-plus
-可用工具: 4 个
-------------------------------------------------------------
-  • move_forward(distance: number, speed: number)
-    参数: distance, speed
-    描述: 向前移动指定距离
-
-  • move_backward(distance: number, speed: number)
-    参数: distance, speed
-    描述: 向后移动指定距离
-
-  • turn(angle: number, angular_speed: number)
-    参数: angle, angular_speed
-    描述: 旋转指定角度
-
-  • stop
-    描述: 紧急停止机器人
-------------------------------------------------------------
-```
-
 ## 退出系统
 
-```
+```bash
 💬 请输入指令: quit
+# 或
+💬 请输入指令: exit
+# 或
+💬 请输入指令: q
+
 👋 再见!
 ```
 
-或使用 `Ctrl+C`:
-
-```
-^C
-👋 再见!
-[skill.py] 清理资源完成
-```
-
-## 错误处理
-
-### API Key 未设置
-
-```
-❌ 错误: 未设置 Test_API_KEY 环境变量
-请设置: export Test_API_KEY=your_api_key_here
-```
-
-### 仿真器未启动
-
-```
-提示: 确保已在另一个窗口启动仿真器
-  python3 Sim_Module/sim2d/simulator.py
-```
-
-### 无效指令
-
-```
-💬 请输入指令: 跳舞
-[上层LLM] 规划失败: 无法识别的指令
-[回退] 将作为单个任务处理
-[下层LLM] 执行中: 跳舞
-⚠️ [警告] 未找到合适的工具
-```
-
-## 依赖
-
-```
-openai>=1.0.0         # OpenAI API 客户端
-pyyaml>=6.0           # YAML 配置解析
-python-dotenv>=1.0.0  # 环境变量管理
-rclpy                 # ROS2 Python 客户端库（自动导入）
-```
-
-## 环境变量
+## 环境变量配置
 
 ```bash
-# 必需
+# .env 文件
 Test_API_KEY=your_api_key_here
+```
 
-# 可选
-ROBOT_MODEL_TYPE=2d   # 机器人类型 (2d/go2)
+```python
+# interactive.py 中读取
+from dotenv import load_dotenv
+load_dotenv()
+
+api_key = os.getenv('Test_API_KEY')
 ```
 
 ## 设计特点
 
-1. **模块解耦**: 不包含具体的 LLM 逻辑，只负责协调
-2. **动态提示词**: 根据可用工具自动生成提示词
-3. **自动初始化**: ROS2 通讯层自动管理，零配置
-4. **清晰输出**: 格式化显示执行过程
-5. **错误恢复**: 完善的错误处理机制
-6. **易于调试**: 详细的日志输出
+1. **简洁交互**: 清晰的命令行界面
+2. **智能路径处理**: 自动提取和传递文件路径参数
+3. **详细反馈**: 显示完整的执行过程
+4. **错误处理**: 优雅处理失败任务
+5. **动态提示词**: 根据可用工具自动生成提示词
+6. **时间估算**: 准确估算工具执行时间
 
-## 与其他模块的关系
+## 依赖
 
-```
-┌─────────────────────────────────────────┐
-│     Interactive_Module                 │
-│     (交互界面 - 入口)                    │
-└──────────────┬──────────────────────────┘
-               │
-       ┌───────┴───────┐
-       ↓               ↓
-┌──────────────┐  ┌──────────────┐
-│ LLM_Module   │  │ Robot_Module │
-│ (规划+执行)   │  │ (工具注册)    │
-└──────────────┘  └──────────────┘
-       ↓               ↓
-   MCP 工具调用    ROS2 发布
-       ↓               ↓
-   └───────────────┘
-          ↓
-    ROS2 Topic
-       ↓
-  ┌──────────────┐
-  │ Sim_Module   │
-  │ (仿真执行)    │
-  └──────────────┘
+```bash
+python-dotenv>=1.0.0 # 环境变量管理
+asyncio               # 异步执行支持
 ```
 
 ## 相关文档
@@ -421,8 +315,8 @@ ROBOT_MODEL_TYPE=2d   # 机器人类型 (2d/go2)
 - [LLM_Module README](../LLM_Module/README.md)
 - [Robot_Module README](../Robot_Module/README.md)
 - [Sim_Module README](../Sim_Module/README.md)
-- [ros_topic_comm.py](../ros_topic_comm.py) - ROS2 通讯模块
+- [VLM_Module README](../VLM_Module/README.md)
 
 ---
 
-**用户友好，功能强大！** 🚀
+**简单交互，强大功能！** 🚀

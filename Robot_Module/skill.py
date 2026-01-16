@@ -27,13 +27,7 @@ _current_dir = Path(__file__).parent
 sys.path.insert(0, str(_current_dir))
 
 # ==============================================================================
-# 1. 导入各功能模块
-# ==============================================================================
-from module.base import register_tools as register_base_tools
-from module.example import register_tools as register_example_tools
-
-# ==============================================================================
-# 2. 全局变量和初始化
+# 1. 全局变量和初始化（必须在导入模块之前）
 # ==============================================================================
 
 # 初始化 FastMCP 服务器
@@ -43,6 +37,12 @@ mcp = FastMCP("robot")
 _tool_registry = {}
 _tool_metadata = {}
 
+# ==============================================================================
+# 2. 导入各功能模块（此时 mcp 已可用）
+# ==============================================================================
+from module.base import register_tools as register_base_tools
+from module.vision import register_tools as register_vision_tools
+from module.example import register_tools as register_example_tools
 
 # ==============================================================================
 # 3. 工具注册和元数据提取
@@ -55,24 +55,29 @@ def get_skill_function(name: str):
 
 def get_tool_definitions():
     """获取工具定义（OpenAI function calling 格式）"""
-    tools = []
+    import asyncio
 
-    for name, metadata in _tool_metadata.items():
-        tool_def = {
-            "type": "function",
-            "function": {
-                "name": name,
-                "description": metadata.get("description", ""),
-                "parameters": metadata.get("parameters", {
-                    "type": "object",
-                    "properties": {},
-                    "required": []
-                })
+    # 从 mcp 获取已注册的工具（异步）
+    async def _get_tools():
+        tools_list = await mcp.list_tools()
+        tools = []
+        for tool in tools_list:
+            tool_def = {
+                "type": "function",
+                "function": {
+                    "name": tool.name,
+                    "description": tool.description if hasattr(tool, 'description') else "",
+                    "parameters": tool.inputSchema if hasattr(tool, 'inputSchema') else {
+                        "type": "object",
+                        "properties": {},
+                        "required": []
+                    }
+                }
             }
-        }
-        tools.append(tool_def)
+            tools.append(tool_def)
+        return tools
 
-    return tools
+    return asyncio.run(_get_tools())
 
 
 # ==============================================================================
@@ -100,11 +105,17 @@ def register_all_modules():
     print("[skill.py] 开始注册机器人技能模块...", file=sys.stderr)
     print("=" * 60, file=sys.stderr)
 
-    # 注册底盘控制模块（传递注册表）
-    register_base_tools(mcp, _tool_registry, _tool_metadata)
+    # 注册底盘控制模块（返回工具函数映射）
+    base_tools = register_base_tools(mcp)
+    _tool_registry.update(base_tools)
 
-    #示例模块
-    # register_example_tools(mcp, _tool_registry, _tool_metadata)
+    # 注册视觉感知模块（返回工具函数映射）
+    vision_tools = register_vision_tools(mcp)
+    _tool_registry.update(vision_tools)
+
+    # 示例模块
+    # example_tools = register_example_tools(mcp)
+    # _tool_registry.update(example_tools)
 
     print("=" * 60, file=sys.stderr)
     print("[skill.py] ✓ 所有模块注册完成", file=sys.stderr)

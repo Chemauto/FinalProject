@@ -46,6 +46,9 @@ class ActionPublisher:
             10  # QoS depth
         )
         print("[ActionPublisher] ROS话题发布器已创建: /robot/command", file=sys.stderr)
+        # 短暂延迟确保ROS连接建立
+        import time
+        time.sleep(0.2)
 
     def put(self, action):
         """发布动作到话题"""

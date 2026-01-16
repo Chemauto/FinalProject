@@ -47,6 +47,8 @@ def execute_tool(function_name: str, function_args: dict) -> dict:
             distance = function_args.get('distance', 1.0)
             speed = function_args.get('speed', 0.3)
             delay = distance / speed if speed > 0 else 0
+        elif function_name == 'detect_color_and_act':
+            delay = 3.3  # 颜色检测+移动约3.3秒
         elif function_name == 'turn':
             angle = abs(function_args.get('angle', 90.0))
             angular_speed = function_args.get('angular_speed', 0.5)

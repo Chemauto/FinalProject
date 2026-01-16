@@ -80,10 +80,19 @@ class LLMAgent:
         import time
         print(f"\n{'─'*50}\n⚙️  [执行中] {task_description}\n{'─'*50}")
         try:
+            system_prompt = """你是一个机器人控制助手。根据子任务描述，调用相应的工具函数。
+
+重要规则：
+1. 如果任务描述中包含文件路径（特别是图片路径 .png, .jpg），必须将其作为参数传入
+2. 调用 detect_color_and_act 时，如果任务中有路径，必须设置 image_path 参数
+3. 示例：任务"根据 /home/path/image.png 检测颜色"应该调用 detect_color_and_act(image_path='/home/path/image.png')
+
+如果无法识别任务或不属于机器人操作，返回空结果。"""
+
             completion = self.client.chat.completions.create(
                 model=self.model,
                 messages=[
-                    {"role": "system", "content": "你是一个机器人控制助手。根据子任务描述，调用相应的工具函数。如果无法识别任务或不属于机器人操作，返回空结果。"},
+                    {"role": "system", "content": system_prompt},
                     {"role": "user", "content": f"执行任务：{task_description}"}
                 ],
                 tools=tools,

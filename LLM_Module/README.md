@@ -9,30 +9,31 @@ LLM_Module 实现了**双层 LLM 架构**，用于机器人的智能任务规划
 - **任务规划 (上层 LLM)**: 将复杂用户指令分解为有序的子任务序列
 - **执行控制 (下层 LLM)**: 将子任务转换为具体的技能函数调用
 - **工具调用支持**: 自动选择和调用合适的机器人技能
+- **路径参数提取**: 智能提取用户输入中的文件路径并传递给工具
 - **错误恢复**: 规划失败时自动回退到单任务执行模式
 
 ## 架构与数据流
 
 ```
-用户输入: "前进1米然后左转90度"
+用户输入: "前进1米，然后根据 /path/to/image.png 检测颜色"
     ↓
 ┌─────────────────────────────────────────┐
 │ 上层LLM (plan_tasks)                    │
-│ 输入: 用户指令 + 可用技能列表            │
-│ 输出: 子任务序列                        │
+│ 1. 保留文件路径信息                      │
+│ 2. 分解为子任务序列                      │
 │   [                                    │
-│     {"task": "前进1米", "type": "移动"},│
-│     {"task": "左转90度", "type": "旋转"} │
+│     {"task": "前进1米", ...},          │
+│     {"task": "根据 /path/to/image.png 检测颜色", ...} │
 │   ]                                    │
 └──────────────┬──────────────────────────┘
                ↓
 ┌─────────────────────────────────────────┐
 │ 下层LLM (execute_single_task)           │
-│ 输入: 单个子任务描述                     │
-│ 输出: 工具调用                          │
+│ 1. 提取文件路径参数                      │
+│ 2. 调用相应工具                           │
 │   {                                    │
-│     "function": "move_forward",        │
-│     "arguments": {"distance": 1.0}     │
+│     "function": "detect_color_and_act",│
+│     "arguments": {"image_path": "/path/to/image.png"} │
 │   }                                    │
 └──────────────┬──────────────────────────┘
                ↓
@@ -76,7 +77,7 @@ llm = LLMAgent(
 # API 配置
 api_key: str              # API 密钥
 base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"  # API 端点
-model: str = "qwen-plus"  # 模型名称
+model: str = "qwen3-32b"  # 模型名称
 
 # 提示词配置
 prompt_path: str = None   # 提示词文件路径（YAML）
@@ -99,30 +100,13 @@ tasks = llm.plan_tasks("向前走2米，然后左转90度", tools)
 # ]
 ```
 
-**数据流**:
+**路径提取功能**:
 ```
-用户输入
+用户输入: "根据 /home/robot/image.png 检测颜色"
     ↓
-填充提示词模板 ({user_input}, {available_skills})
+上层LLM保留完整路径
     ↓
-调用 LLM API
-    ↓
-解析 JSON 响应
-    ↓
-返回子任务序列
-```
-
-**输出示例**:
-```
-============================================================================
-🧠 [上层LLM] 任务规划中...
-============================================================================
-✅ [规划完成] 共分解为 2 个子任务
-📋 [任务概述] 用户需要先向前移动2米，然后向左旋转90度
-
-子任务序列：
-  步骤 1: 向前走2米 (移动)
-  步骤 2: 左转90度 (旋转)
+子任务: {"task": "根据 /home/robot/image.png 检测颜色并执行相应动作"}
 ```
 
 ### 2. `execute_single_task(task_description, tools, execute_tool_fn)` - 执行单个任务
@@ -130,54 +114,25 @@ tasks = llm.plan_tasks("向前走2米，然后左转90度", tools)
 **下层 LLM**：执行单个子任务，通过工具调用实际技能。
 
 ```python
-def execute_tool_fn(function_name: str, function_args: dict) -> dict:
-    """执行工具函数的回调"""
-    # 调用 Robot_Module 中的技能
-    from Robot_Module.skill import get_skill_function
-    skill_func = get_skill_function(function_name)
-    result = asyncio.run(skill_func(**function_args))
-    return {"result": result}
-
 result = llm.execute_single_task(
-    "向前走2米",
-    tools=tools,  # 工具定义列表
+    "根据 /path/to/image.png 检测颜色",
+    tools=tools,
     execute_tool_fn=execute_tool_fn
 )
 
-# 返回格式:
-# {
-#     "success": True,
-#     "action": "move_forward",
-#     "task": "向前走2米",
-#     "result": {...}
-# }
+# LLM会自动提取路径并调用:
+# detect_color_and_act(image_path='/path/to/image.png')
 ```
 
-**数据流**:
+**智能路径提取**:
 ```
-子任务描述
+子任务描述: "根据 /home/robot/image.png 检测颜色并执行相应动作"
     ↓
-填充提示词
+下层LLM分析任务描述
     ↓
-调用 LLM API (function calling)
+提取文件路径: /home/robot/image.png
     ↓
-获取工具调用 (function_name, arguments)
-    ↓
-execute_tool_fn(function_name, **arguments)
-    ↓
-Robot_Module 执行技能
-    ↓
-返回执行结果
-```
-
-**输出示例**:
-```
-──────────────────────────────────────────────────
-⚙️  [执行中] 向前走2米
-──────────────────────────────────────────────────
-🔧 [工具调用] move_forward({'distance': 2.0, 'speed': 0.3})
-[base.move_forward] 前进 2.0m, 速度 0.3m/s
-⏳ [等待] 执行时间: 6.7秒... ✅ 完成!
+构造工具调用: detect_color_and_act(image_path='/home/robot/image.png')
 ```
 
 ### 3. `run_pipeline(user_input, tools, execute_tool_fn)` - 完整流程
@@ -186,166 +141,53 @@ Robot_Module 执行技能
 
 ```python
 results = llm.run_pipeline(
-    "向前走2米，然后左转90度",
-    tools=tools,  # 工具定义列表
+    "前进1米，然后根据 /path/to/green.png 检测颜色",
+    tools=tools,
     execute_tool_fn=execute_tool_fn
 )
-
-# 返回格式:
-# [
-#     {"success": True, "task": "向前走2米", "result": {...}},
-#     {"success": True, "task": "左转90度", "result": {...}}
-# ]
-```
-
-**完整输出示例**:
-```
-////////////////////////////////////////////////////////////
-📥 [用户输入] 向前走2米，然后左转90度
-////////////////////////////////////////////////////////////
-
-============================================================================
-🧠 [上层LLM] 任务规划中...
-============================================================================
-✅ [规划完成] 共分解为 2 个子任务
-...
-
-////////////////////////////////////////////////////////////
-🚀 [开始执行] 按顺序执行子任务
-////////////////////////////////////////////////////////////
-
-【步骤 1/2】
-──────────────────────────────────────────────────
-⚙️  [执行中] 向前走2米
-──────────────────────────────────────────────────
-🔧 [工具调用] move_forward({'distance': 2.0, 'speed': 0.3})
-⏳ [等待] 执行时间: 6.7秒... ✅ 完成!
-
-【步骤 2/2】
-──────────────────────────────────────────────────
-⚙️  [执行中] 左转90度
-──────────────────────────────────────────────────
-🔧 [工具调用] turn({'angle': 90.0, 'angular_speed': 0.5})
-⏳ [等待] 执行时间: 1.8秒... ✅ 完成!
-
-////////////////////////////////////////////////////////////
-✅ [执行完成] 任务总结
-////////////////////////////////////////////////////////////
-  1. 向前走2米 - ✅ 成功
-  2. 左转90度 - ✅ 成功
 ```
 
 ## 提示词系统
 
-### 提示词格式
+### 规划提示词 (planning_prompt_2d.yaml)
 
-提示词使用 YAML 格式，支持变量占位符：
+**关键特性**:
+- **路径保留规则**: 明确指示保留文件路径信息
+- **示例驱动**: 提供带路径的示例
+- **格式化输出**: JSON格式的任务列表
 
 ```yaml
-# prompts/planning_prompt_2d.yaml
-prompt: |
-  你是一个机器人任务规划助手。
-  请将用户的指令分解为简单的子任务序列。
+重要规则：
+- 如果用户指令中包含图片文件路径（如 .png, .jpg），在子任务描述中必须保留完整的路径信息
+- 特别是调用 detect_color_and_act 时，必须明确指定图片路径
 
-  可用技能:
-  {available_skills}
-
-  用户输入：{user_input}
-
-  请返回 JSON 格式的任务列表，包含：
-  - tasks: 子任务数组
-  - summary: 任务概述
-
-  每个子任务包含：
-  - step: 步骤编号
-  - task: 任务描述
-  - type: 任务类型（移动、旋转、停止等）
-
-  输出示例：
-  {{{{
-    "tasks": [
-      {{{{ "step": 1, "task": "左转90度", "type": "转向"}}}},
-      {{{{ "step": 2, "task": "向前移动1米", "type": "移动"}}}}
-    ],
-    "summary": "先转向再前进"
-  }}}}
+示例（带图片路径）:
+输入: "前进1米，然后根据 /home/robot/image.png 检测颜色并执行动作"
+输出:
+{{
+  "tasks": [
+    {{{{ "step": 1, "task": "向前移动1米", "type": "移动"}}}},
+    {{{{ "step": 2, "task": "根据 /home/robot/image.png 检测颜色并执行相应动作", "type": "视觉检测"}}}}
+  ],
+  "summary": "前进后检测颜色并执行动作"
+}}}
 ```
 
-### 变量占位符
+### 执行提示词 (llm_core.py)
 
-- `{user_input}`: 用户输入的指令（在 LLM 调用时填充）
-- `{available_skills}`: 可用技能列表（在初始化时动态生成）
-- `{robot_config}`: 机器人配置信息（可选）
+**关键特性**:
+- **路径提取规则**: 指导LLM从任务描述中提取路径
+- **参数传递规范**: 确保路径参数正确传递给工具
 
-### 花括号转义
+```python
+system_prompt = """你是一个机器人控制助手。
 
-由于 YAML 解析器会将 `{{` 解析为 `{`，所以在 YAML 中需要使用 `{{{{` 来得到最终的 `{{`：
-
+重要规则：
+1. 如果任务描述中包含文件路径（特别是图片路径 .png, .jpg），必须将其作为参数传入
+2. 调用 detect_color_and_act 时，如果任务中有路径，必须设置 image_path 参数
+3. 示例：任务"根据 /home/path/image.png 检测颜色"应该调用 detect_color_and_act(image_path='/home/path/image.png')
+"""
 ```
-YAML 文件: {{{{  →  YAML 解析: {{  →  Python format(): {  →  LLM 接收: {
-```
-
-## 工具定义格式
-
-工具定义使用 **OpenAI Function Calling** 格式：
-
-```json
-{
-  "type": "function",
-  "function": {
-    "name": "move_forward",
-    "description": "向前移动指定距离",
-    "parameters": {
-      "type": "object",
-      "properties": {
-        "distance": {
-          "type": "number",
-          "description": "移动距离（米），默认1.0米"
-        },
-        "speed": {
-          "type": "number",
-          "description": "移动速度（米/秒），默认0.3米/秒"
-        }
-      },
-      "required": []
-    }
-  }
-}
-```
-
-## 错误处理
-
-### 1. 规划失败
-
-```
-❌ [规划失败] JSON解析错误
-[回退] 将作为单个任务处理
-```
-
-**处理机制**:
-- 捕获 JSON 解析异常
-- 自动回退到单任务执行模式
-- 将整个用户输入作为单个任务处理
-
-### 2. 执行失败
-
-```
-⚠️ [警告] 步骤 1 失败，但继续执行后续任务
-```
-
-**处理机制**:
-- 记录错误但继续执行
-- 在最终总结中标记失败任务
-
-### 3. 无效指令
-
-```
-[跳过] 无效指令或无法识别的操作
-```
-
-**处理机制**:
-- 上层 LLM 返回空任务列表
-- 显示提示信息并跳过
 
 ## 使用示例
 
@@ -355,62 +197,138 @@ YAML 文件: {{{{  →  YAML 解析: {{  →  Python format(): {  →  LLM 接�
 from LLM_Module import LLMAgent
 import os
 
-# 初始化
 llm = LLMAgent(api_key=os.getenv('Test_API_KEY'))
 
-# 只进行任务规划
-tasks = llm.plan_tasks("向前走2米，左转90度，后退1米", tools=[])
-for task in tasks:
-    print(f"步骤 {task['step']}: {task['task']}")
+# 任务规划
+tasks = llm.plan_tasks("前进1米，然后左转90度", tools=[])
 ```
 
-### 完整集成
+### 支持路径参数的指令
 
 ```python
-from LLM_Module import LLMAgent
-from Robot_Module.skill import get_skill_function, register_all_modules
-import asyncio
-import os
-
-# 注册工具
-register_all_modules()
-tools = get_tool_definitions()
-
-# 初始化 LLM
-llm = LLMAgent(api_key=os.getenv('Test_API_KEY'))
-
-# 定义执行函数
-def execute_tool(function_name: str, function_args: dict) -> dict:
-    skill_func = get_skill_function(function_name)
-    result = asyncio.run(skill_func(**function_args))
-
-    # 估算执行时间
-    if function_name in ['move_forward', 'move_backward']:
-        distance = function_args.get('distance', 1.0)
-        speed = function_args.get('speed', 0.3)
-        delay = distance / speed if speed > 0 else 0
-    elif function_name == 'turn':
-        angle = abs(function_args.get('angle', 90.0))
-        angular_speed = function_args.get('angular_speed', 0.5)
-        delay = (angle / 180.0 * 3.14159) / angular_speed if angular_speed > 0 else 0
-    else:
-        delay = 0
-
-    return {"result": result, "delay": delay}
-
-# 运行完整流程
+# 示例1：指定图片路径
 results = llm.run_pipeline(
-    "先前进1米然后右转45度",
+    "前进1米，然后根据 /home/robot/work/FinalProject/VLM_Module/assets/green.png 检测颜色",
     tools=tools,
-    execute_tool_fn=execute_tool
+    execute_tool_fn=execute_tool_fn
 )
 
-# 检查结果
-for result in results:
-    if result['success']:
-        print(f"✅ {result['task']} 完成")
-    else:
-        print(f"❌ {result['task']} 失败: {result.get('error')}")
+# 示例2：组合多个动作
+results = llm.run_pipeline(
+    "前进1米，左转90度，再根据 /path/to/blue.png 检测颜色",
+    tools=tools,
+    execute_tool_fn=execute_tool_fn
+)
+```
+
+## 输出示例
+
+### 带路径参数的完整流程
+
+```
+////////////////////////////////////////////////////////////
+📥 [用户输入] 前进1米，然后根据 /path/to/green.png 检测颜色
+////////////////////////////////////////////////////////////
+
+============================================================
+🧠 [上层LLM] 任务规划中...
+============================================================
+✅ [规划完成] 共分解为 2 个子任务
+📋 [任务概述] 前进后检测颜色并执行动作
+
+子任务序列：
+  步骤 1: 向前移动1.0米 (移动)
+  步骤 2: 根据 /path/to/green.png 检测颜色并执行相应动作 (视觉检测)
+
+////////////////////////////////////////////////////////////
+🚀 [开始执行] 按顺序执行子任务
+////////////////////////////////////////////////////////////
+
+【步骤 1/2】
+⚙️  [执行中] 向前移动1.0米
+🔧 [工具调用] move_forward({'distance': 1.0})
+⏳ [等待] 执行时间: 3.3秒... ✅ 完成!
+
+【步骤 2/2】
+⚙️  [执行中] 根据 /path/to/green.png 检测颜色并执行相应动作
+🔧 [工具调用] detect_color_and_act({'image_path': '/path/to/green.png'})
+[VLM] 识别颜色: green
+[vision] 检测到绿色，执行后退
+⏳ [等待] 执行时间: 3.3秒... ✅ 完成!
+```
+
+## 输入指令格式
+
+### 格式1：基础指令
+```
+前进1米
+左转90度
+停止
+```
+
+### 格式2：带图片路径的指令
+```
+根据 /home/robot/work/FinalProject/VLM_Module/assets/green.png 检测颜色并移动
+检测 /path/to/red.png 的颜色
+```
+
+### 格式3：组合指令
+```
+前进1米，然后根据 /home/robot/work/FinalProject/VLM_Module/assets/blue.png 检测颜色
+左转90度，再根据 /path/to/yellow.png 执行相应动作
+```
+
+## 路径参数提取机制
+
+### 工作原理
+
+```
+用户输入包含路径
+    ↓
+┌─────────────────────────────────────────┐
+│ 上层LLM规划阶段                         │
+│ - 识别文件扩展名 (.png, .jpg)          │
+│ - 保留完整路径                          │
+│ - 在子任务描述中包含路径                │
+└──────────────┬──────────────────────────┘
+               ↓
+┌─────────────────────────────────────────┐
+│ 下层LLM执行阶段                         │
+│ - 分析子任务描述                        │
+│ - 提取文件路径                          │
+│ - 构造工具调用参数                      │
+│ - detect_color_and_act(image_path=...)  │
+└──────────────┬──────────────────────────┘
+               ↓
+        VLM使用指定路径识别颜色
+```
+
+### 提示词关键点
+
+1. **规划阶段提示词**:
+   - "如果用户指令中包含图片文件路径，在子任务描述中必须保留完整的路径信息"
+   - 提供带路径的示例
+
+2. **执行阶段提示词**:
+   - "如果任务描述中包含文件路径，必须将其作为参数传入"
+   - "调用 detect_color_and_act 时，如果任务中有路径，必须设置 image_path 参数"
+
+## 错误处理
+
+### 1. 规划失败
+```
+❌ [规划失败] JSON解析错误
+[回退] 将作为单个任务处理
+```
+
+### 2. 执行失败
+```
+⚠️ [警告] 步骤 1 失败，但继续执行后续任务
+```
+
+### 3. 无效指令
+```
+[跳过] 无效指令或无法识别的操作
 ```
 
 ## 依赖
@@ -424,11 +342,11 @@ python-dotenv>=1.0.0 # 环境变量管理
 ## 设计特点
 
 1. **分层解耦**: 任务规划与执行控制分离，职责清晰
-2. **错误恢复**: 多层错误处理，保证系统稳定性
-3. **灵活扩展**: 支持自定义提示词和模型
-4. **详细日志**: 完整的执行过程输出，便于调试
-5. **工具集成**: 原生支持 OpenAI 函数调用 (Function Calling)
-6. **动态提示词**: 根据可用工具自动生成提示词
+2. **路径感知**: 智能提取和传递文件路径参数
+3. **错误恢复**: 多层错误处理，保证系统稳定性
+4. **灵活扩展**: 支持自定义提示词和模型
+5. **详细日志**: 完整的执行过程输出，便于调试
+6. **工具集成**: 原生支持 OpenAI 函数调用
 
 ## 相关文档
 

@@ -2,38 +2,32 @@
 
 ## 概述
 
-VLM_Module 提供了**视觉语言模型 (Vision-Language Model)** 集成能力，使机器人能够理解和分析视觉信息，支持环境感知、障碍物检测和导航决策。
+VLM_Module 提供了**视觉语言模型 (Vision-Language Model)** 集成能力，使机器人能够理解和分析视觉信息。
 
-### 核心功能
+**当前状态**: 🎯 **Demo阶段** - 颜色识别演示，将扩展为完整的环境感知模块
 
-- **环境感知**: 分析图像并生成环境描述
-- **障碍物检测**: 识别图像中的障碍物及其位置
-- **导航建议**: 基于视觉输入提供导航决策
-- **场景分析**: 理解场景内容、物体和空间关系
+## Demo功能：颜色识别与动作映射
 
-### 当前状态
+### 支持的颜色与动作
 
-✅ **框架完成**: VLMCore 类已完全实现
-⚠️ **待集成**: 需要将其集成到主控制流程中
-⚠️ **提示词优化**: 提示词模板需要根据具体应用优化
+| 颜色 | 动作 |
+|------|------|
+| 🔴 红色 | 前进1米 |
+| 🟠 橙色 | 前进1米 |
+| 🟡 黄色 | 左转90度 |
+| 🟢 绿色 | 后退1米 |
+| 🔵 蓝色 | 右转90度 |
+| 🟣 紫色 | 停止 |
+| ⚫ 黑色 | 无动作 |
 
-## 架构与数据流
+### 快速开始
 
-```
-摄像头/图像输入
-    ↓
-┌─────────────────────────────────────────┐
-│ VLM_Module.vlm_core.py                  │
-│                                         │
-│ 1. 图像编码 (base64)                    │
-│ 2. 提示词加载                           │
-│ 3. VLM API 调用                         │
-│ 4. 结果解析                             │
-└──────────────┬──────────────────────────┘
-               ↓
-      视觉分析结果 (文本/结构化数据)
-               ↓
-      (可选) 传递给 LLM_Module 进行决策
+```bash
+# 启动系统
+./start_robot_system.sh
+
+# 输入指令
+检测颜色并移动
 ```
 
 ## 文件结构
@@ -41,9 +35,17 @@ VLM_Module 提供了**视觉语言模型 (Vision-Language Model)** 集成能力�
 ```
 VLM_Module/
 ├── __init__.py           # 模块导出
-├── vlm_core.py           # VLMCore 核心类实现
-└── prompts/              # VLM 视觉提示词模板
-    └── perceive_environment.yaml  # 环境感知提示词
+├── vlm_core.py           # VLMCore 核心类
+├── test_vlm.py           # 基础测试脚本
+├── test_vlm_action.py    # 动作测试脚本
+├── prompts/              # VLM 提示词模板
+│   └── perceive_environment.yaml  # 颜色识别提示词
+└── assets/               # 测试图片
+    ├── red.png
+    ├── green.png
+    ├── blue.png
+    ├── yellow.png
+    └── ...
 ```
 
 ## 核心类: VLMCore
@@ -51,314 +53,243 @@ VLM_Module/
 ### 初始化
 
 ```python
-from VLM_Module import VLMCore
+from VLM_Module.vlm_core import VLMCore
 
-# 使用默认配置
+# 使用默认配置 (本地 Ollama)
 vlm = VLMCore()
 
-# 使用自定义配置文件
-vlm = VLMCore(config_path="path/to/vlm_config.yaml")
+# 自定义配置
+vlm = VLMCore(
+    model='qwen3-vl:4b',
+    host='http://localhost:11434'
+)
 ```
 
-### 配置文件格式
+### 核心方法
 
-`config/vlm_config.yaml` (可选):
+#### `perceive(image_path=None)` - 颜色识别
 
-```yaml
-provider: openai                    # openai, anthropic, or local
-model: gpt-4-vision-preview        # 模型名称
-api_key: ${OPENAI_API_KEY}         # API 密钥
-max_tokens: 1000                    # 最大生成 token 数
-```
-
-## 核心方法
-
-### 1. `analyze_image(image_path, task)` - 通用图像分析
-
-使用 VLM 分析图像并返回结果。
+识别图片中的方块颜色并返回对应动作。
 
 ```python
-result = vlm.analyze_image(
-    image_path="camera_image.jpg",
-    task="describe"  # 任务类型
-)
+result = vlm.perceive('/path/to/image.png')
 
 # 返回格式:
 # {
-#     'success': True,
-#     'result': '图像分析结果文本...',
-#     'provider': 'openai'
+#     'vlm_input': '检测到red色方块',
+#     'action': 'move_forward'
 # }
+
+# 无有效颜色时返回 None
+result = vlm.perceive('/path/to/black.png')
+# 返回: None
 ```
 
-**支持的任务类型**:
-- `describe`: 描述图像内容
-- `detect_objects`: 检测图像中的物体
-- `perceive_environment`: 感知机器人环境
-- `detect_obstacles`: 检测障碍物
-- `suggest_navigation`: 导航建议
-- 自定义任务名称
+## 系统集成
 
-### 2. `perceive_environment(image_path)` - 环境感知
+### 1. 作为 Robot_Module 工具
 
-分析机器人周围环境并生成描述。
+VLM已注册为机器人技能，LLM可直接调用：
 
 ```python
-perception = vlm.perceive_environment("camera_image.jpg")
+# 用户指令
+"检测颜色并移动"
+"根据图片颜色输出动作"
 
-# 返回环境感知结果
-print(perception['result'])
-# 输出示例: "这是一个室内走廊环境，前方有一条笔直的通道，
-#           两侧有墙壁，地面平坦，没有明显障碍物..."
+# LLM会自动调用 detect_color_and_act 工具
 ```
 
-### 3. `detect_obstacles(image_path)` - 障碍物检测
+### 2. 支持自定义图片路径
 
-检测环境中的障碍物。
+```bash
+# 指定图片路径
+前进1米，然后根据 /home/robot/work/FinalProject/VLM_Module/assets/green.png 检测颜色并执行动作
+
+# LLM会正确提取路径并传入参数
+```
+
+### 3. 工具函数定义
 
 ```python
-obstacles = vlm.detect_obstacles("camera_image.jpg")
+# Robot_Module/module/vision.py
+async def detect_color_and_act(image_path: str = None) -> str:
+    """检测图片颜色并执行相应动作
 
-# 返回检测到的障碍物列表
-# [
-#     {'type': 'chair', 'position': 'left', 'distance': '1.5m'},
-#     {'type': 'box', 'position': 'center', 'distance': '3m'}
-# ]
+    重要：如果用户指令中提到了图片路径，必须将完整路径作为image_path参数传入！
+
+    Args:
+        image_path: 图片文件路径（可选）。如果用户提供了路径，必须使用该路径；否则使用默认图片。
+
+    Returns:
+        动作指令JSON字符串
+    """
+    # 识别颜色
+    # 执行对应动作
 ```
 
-### 4. `suggest_navigation(image_path, goal)` - 导航建议
+## 提示词配置
 
-基于视觉输入和目标提供导航建议。
-
-```python
-suggestion = vlm.suggest_navigation(
-    image_path="camera_image.jpg",
-    goal="到达走廊尽头的门"
-)
-
-# 返回导航建议
-print(suggestion['result'])
-# 输出示例: "建议向前直线移动约5米到达门口，
-#           注意避开左侧1.5米处的椅子..."
-```
-
-## 提示词系统
-
-VLM_Module 使用 YAML 格式的提示词模板，支持变量替换：
+`prompts/perceive_environment.yaml`:
 
 ```yaml
-# prompts/perceive_environment.yaml
 prompt: |
-  你是一个机器人环境感知助手。
-  请分析这张来自机器人摄像头的图像。
+  请识别图片中方块的颜色。
 
-  图像路径：{image_path}
+  只返回以下JSON格式，不要其他内容：
+  {
+    "color": "颜色英文"
+  }
 
-  请提供：
-  1. 环境类型（室内/室外）
-  2. 主要物体和障碍物
-  3. 空间布局
-  4. 可通行路径建议
+  颜色映射：
+  - 红色 → "red"
+  - 橙色 → "orange"
+  - 黄色 → "yellow"
+  - 绿色 → "green"
+  - 蓝色 → "blue"
+  - 紫色 → "purple"
+  - 黑色 → "black"
 ```
 
 ## 使用示例
 
-### 基础使用
+### 基础颜色识别测试
 
-```python
-from VLM_Module import VLMCore
-
-# 初始化
-vlm = VLMCore()
-
-# 分析图像
-result = vlm.analyze_image("scene.jpg", task="describe")
-
-if result['success']:
-    print("分析结果:", result['result'])
-else:
-    print("分析失败:", result['error'])
+```bash
+cd /home/robot/work/FinalProject
+python3 VLM_Module/test_vlm.py
 ```
 
-### 与 LLM 集成
+### 动作执行测试
 
-```python
-from VLM_Module import VLMCore
-from LLM_Module import LLMAgent
-
-# 初始化
-vlm = VLMCore()
-llm = LLMAgent(api_key=os.getenv('Test_API_KEY'))
-
-# 获取视觉感知
-vision_result = vlm.perceive_environment('scene.jpg')
-
-# 将视觉信息传递给 LLM 进行决策
-user_input = f"根据摄像头画面: {vision_result['result']}，我应该怎么走？"
-tasks = llm.plan_tasks(user_input, tools=[])
+```bash
+python3 VLM_Module/test_vlm_action.py
 ```
 
-## 与系统集成
+### 交互式测试
 
-### 集成方式 1: 在 Interactive_Module 中集成
+```bash
+./start_robot_system.sh
 
-```python
-from VLM_Module import VLMCore
+# 测试默认图片
+检测颜色并移动
 
-# 在 interactive.py 中添加 VLM 支持
-class InteractiveInterface:
-    def __init__(self):
-        self.vlm = VLMCore()  # 初始化 VLM
+# 测试指定图片（红色）
+前进1米，然后根据 /home/robot/work/FinalProject/VLM_Module/assets/red.png 检测颜色并执行动作
 
-    def capture_and_analyze(self):
-        """捕获并分析摄像头图像"""
-        # 1. 捕获图像
-        image_path = self.capture_image()
-
-        # 2. 分析环境
-        perception = self.vlm.perceive_environment(image_path)
-
-        # 3. 将感知结果传递给 LLM
-        return perception['result']
+# 测试指定图片（绿色）
+检测 /home/robot/work/FinalProject/VLM_Module/assets/green.png 的颜色并移动
 ```
 
-### 集成方式 2: 作为独立工具添加到 Robot_Module
+## 输入指令格式
 
-```python
-# Robot_Module/module/vision.py
-async def analyze_environment(image_path: str) -> str:
-    """分析环境图像
+### 格式1：使用默认图片
+```
+检测颜色并移动
+根据图片颜色输出动作
+```
 
-    Args:
-        image_path: 图像文件路径
+### 格式2：指定图片路径
+```
+根据 /home/robot/work/FinalProject/VLM_Module/assets/green.png 检测颜色并执行动作
+前进1米，然后根据 /path/to/image.png 检测颜色
+```
 
-    Returns:
-        环境描述字符串
-    """
-    from VLM_Module import VLMCore
-    vlm = VLMCore()
-    result = vlm.perceive_environment(image_path)
-    return result['result']
-
-def register_tools(mcp, tool_registry=None, tool_metadata=None):
-    tools = [analyze_environment]
-    # ... 注册逻辑
+### 格式3：组合指令
+```
+前进1米，左转90度，再根据 /home/robot/work/FinalProject/VLM_Module/assets/blue.png 检测颜色并执行相应动作
 ```
 
 ## 依赖
 
-```yaml
-# 核心依赖
-yaml:           # 配置文件解析
-base64:         # 图像编码
-pathlib:        # 路径处理
-typing:         # 类型注解
-
-# 外部依赖 (按需安装)
-openai:         # OpenAI API (GPT-4 Vision)
-anthropic:      # Anthropic API (Claude)
-```
-
-安装命令:
-
 ```bash
-# OpenAI GPT-4 Vision
-pip install openai
+# 核心依赖
+pip install ollama pyyaml
 
-# Anthropic Claude
-pip install anthropic
+# 本地 VLM 模型 (Ollama)
+ollama pull qwen3-vl:4b
 ```
 
-## 错误处理
+## 调试输出
 
-VLMCore 包含完善的错误处理机制：
+VLM包含详细的调试信息：
+
+```
+[VLM] 原始响应: {"color": "red"}
+[VLM] 识别颜色: red
+[vision.detect_color_and_act] 检测到红色/橙色，执行前进
+```
+
+## 配置说明
+
+### 修改默认图片
+
+编辑 `vlm_core.py:10`:
 
 ```python
-result = vlm.analyze_image('image.jpg', task='describe')
-
-if not result['success']:
-    if result['provider'] == 'openai':
-        print(f"OpenAI API 错误: {result['error']}")
-    elif result['provider'] == 'anthropic':
-        print(f"Anthropic API 错误: {result['error']}")
+self.default_image = '/home/robot/work/FinalProject/VLM_Module/assets/green.png'
 ```
 
-## API 配置
+### 修改颜色映射
 
-### OpenAI (GPT-4 Vision)
+编辑 `vlm_core.py:46-54`:
 
 ```python
-# 方法 1: 使用配置文件
-vlm = VLMCore(config_path="config/vlm_config.yaml")
-
-# 方法 2: 使用环境变量
-import os
-os.environ['OPENAI_API_KEY'] = 'sk-...'
-vlm = VLMCore()
-
-# 方法 3: 在配置中指定
-vlm.config['api_key'] = 'sk-...'
+color_action_map = {
+    'red': 'move_forward',
+    'green': 'move_backward',
+    # 添加自定义映射...
+}
 ```
 
-### Anthropic (Claude)
+## 未来扩展计划
 
-```yaml
-# config/vlm_config.yaml
-provider: anthropic
-model: claude-3-opus-20240229
-api_key: ${ANTHROPIC_API_KEY}
-max_tokens: 1000
+### Phase 1: 环境感知 (下一步)
+
+- 场景分析 (室内/室外/房间类型)
+- 物体检测 (识别关键物体及位置)
+- 障碍物识别 (类型、位置、严重程度)
+- 可通行区域分析
+
+### Phase 2: 高级功能
+
+- 多物体跟踪
+- 3D 空间理解
+- 动态场景分析
+- 语义分割
+
+### Phase 3: 决策增强
+
+- 与 LLM 深度集成
+- 视觉导航规划
+- 复杂场景理解
+- 多模态推理
+
+## 数据流设计
+
 ```
-
-## 扩展 VLM 模块
-
-### 添加新的 VLM 提供商
-
-```python
-def _analyze_with_custom_provider(self, image_path: str, prompt: str):
-    """自定义 VLM 提供商实现"""
-    # 1. 编码图像
-    base64_image = self._encode_image(image_path)
-
-    # 2. 调用自定义 API
-    # response = custom_api.call(...)
-
-    # 3. 返回标准格式
-    return {
-        'success': True,
-        'result': response,
-        'provider': 'custom'
-    }
-
-# 在 analyze_image 中添加
-elif provider == 'custom':
-    return self._analyze_with_custom_provider(image_path, prompt)
+┌──────────────┐
+│ 摄像头/图片  │
+└──────┬───────┘
+       ↓
+┌─────────────────────────────────────┐
+│ VLM_Module.vlm_core.perceive()      │
+│                                     │
+│  1. 加载图片                        │
+│  2. 构建提示词                      │
+│  3. 调用 Ollama VLM API             │
+│  4. 解析 JSON 响应                  │
+│  5. 映射颜色 → 动作                 │
+└──────────┬──────────────────────────┘
+           ↓
+    {'color': 'red', 'action': 'move_forward'}
+           ↓
+┌─────────────────────────────────────┐
+│ Robot_Module.detect_color_and_act() │
+│                                     │
+│  1. 接收动作指令                    │
+│  2. 发送到仿真器/真实机器人          │
+└─────────────────────────────────────┘
 ```
-
-### 添加新的分析任务
-
-```python
-def detect_humans(self, image_path: str) -> List[Dict]:
-    """检测图像中的人"""
-    result = self.analyze_image(image_path, task='detect_humans')
-    # 解析结果并返回人员列表
-    return self._parse_human_detection(result)
-```
-
-## 性能优化建议
-
-1. **图像大小**: 发送前压缩图像以减少 API 调用成本
-2. **缓存机制**: 对相同场景缓存分析结果
-3. **异步调用**: 使用异步 API 提高响应速度
-4. **批量处理**: 一次性分析多个图像
-
-## 设计特点
-
-1. **多提供商支持**: 支持 OpenAI 和 Anthropic
-2. **模块化设计**: 易于添加新的 VLM 提供商
-3. **灵活的任务系统**: 支持自定义分析任务
-4. **完善的错误处理**: 统一的错误返回格式
-5. **提示词模板**: YAML 格式的可配置提示词
 
 ## 相关文档
 
