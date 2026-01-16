@@ -2,324 +2,425 @@
 
 ## 概述
 
-Sim_Module 提供了**多种机器人仿真环境**，支持从简单的 2D 验证到高精度的 3D 物理仿真。该模块完全独立，不依赖通信层，便于测试和开发。
+Sim_Module 提供**2D 机器人仿真环境**，基于 Pygame 实现可视化，通过 multiprocessing.Queue 接收来自 Robot_Module 的动作指令并执行仿真。
 
 ### 核心功能
 
-- **2D 仿真**: 快速逻辑验证和算法测试
-- **MuJoCo 3D**: 高性能物理仿真，适合强化学习
-- **多通信方式**: 支持 ROS2 和 Dora 两种通信协议
-- **可视化**: 实时显示机器人状态和环境
+- **2D 仿真**: 基于 Pygame 的轻量级 2D 机器人仿真
+- **实时可视化**: 显示机器人位置、朝向和运动轨迹
+- **队列通信**: 通过 multiprocessing.Queue 接收动作指令
+- **差速驱动**: 模拟差速驱动机器人运动
 
-### 仿真器对比
-
-| 特性 | 2D Pygame | MuJoCo 3D |
-|-----|-----------|-----------|
-| 用途 | 快速验证、逻辑测试 | 高精度物理仿真、强化学习 |
-| 性能 | 极快，实时性高 | 快速，比 Gazebo 快 5-10 倍 |
-| 视觉效果 | 简单 2D 俯视图 | 真实 3D 渲染 |
-| 物理引擎 | 简单运动学 | 完整动力学仿真 |
-| 适用机器人 | 差速机器人 | 四足、机械臂等复杂机器人 |
-| 资源消耗 | 极低 | 中等 |
-
-## 目录结构
+## 文件结构
 
 ```
 Sim_Module/
-├── __init__.py
-├── ros2_2d/                    # ROS2 版 2D 仿真
-│   └── simulator.py            # Pygame 可视化 + ROS2 话题
-├── dora_2d/                    # Dora 版 2D 仿真
-│   └── simulator.py            # Pygame 可视化 + Dora 数据流
-└── mujoco/                     # MuJoCo 3D 物理仿真
-    ├── mujoco_simulator.py     # MuJoCo 仿真器主程序
-    ├── install_mujoco.sh       # MuJoCo 安装脚本
-    ├── start_mujoco_sim.sh     # MuJoCo 启动脚本
-    └── README_MUJOCO.md        # MuJoCo 详细文档
+├── sim2d/
+│   ├── simulator.py      # 2D 仿真器主程序
+│   └── README.md         # 本文件
+└── README.md
 ```
 
-## 2D 仿真器
+## 核心类: Sim2DRobot
 
-### ROS2 版本 (`ros2_2d/simulator.py`)
-
-**差速机器人 2D 仿真器**，使用 ROS2 话题通信。
-
-#### 特性
-
-- Pygame 可视化界面
-- 订阅 `/cmd_vel` 话题 (geometry_msgs/Twist)
-- 实时显示机器人位置、朝向和运动轨迹
-- 网格背景便于距离估算
-
-#### 使用方式
-
-```bash
-# 方式 1: 直接运行
-cd Sim_Module/ros2_2d
-python3 simulator.py
-
-# 方式 2: 通过启动脚本
-cd Middle_Module/ROS
-./start_ros2_mcp.sh --sim 2d
-```
-
-#### 机器人显示
-
-- **蓝色圆形**: 机器人主体
-- **黄色圆点**: 朝向指示器
-- **网格间距**: 50 像素 (约 1 米)
-
-#### 控制示例
-
-```bash
-# 发布 ROS2 命令
-ros2 topic pub /cmd_vel geometry_msgs/Twist "{linear: {x: 0.3}, angular: {z: 0.5}}"
-```
-
-### Dora 版本 (`dora_2d/simulator.py`)
-
-**Dora 数据流版本的 2D 仿真器**，功能与 ROS2 版相同。
-
-#### 使用方式
-
-```bash
-cd Middle_Module/Dora
-dora up
-dora start dora-interactive-mcp.yaml --attach
-```
-
-## MuJoCo 3D 仿真
-
-### 概述
-
-**MuJoCo (Multi-Joint dynamics with Contact)** 是一个高性能物理仿真引擎，特别适合强化学习和复杂机器人仿真。
-
-### 特性
-
-- 高精度物理仿真 (接触、摩擦、动力学)
-- 支持 Unitree Go2 四足机器人 URDF 模型
-- 实时 3D 可视化
-- ROS2 `/cmd_vel` 话题控制
-- 比 Gazebo 快 5-10 倍
-
-### 快速开始
-
-#### 方式 1: 手动启动
-
-```bash
-cd Sim_Module/mujoco
-
-# 首次使用需要安装 MuJoCo
-./install_mujoco.sh
-
-# 启动仿真
-./start_mujoco_sim.sh
-```
-
-#### 方式 2: 通过启动脚本
-
-```bash
-cd Middle_Module/ROS
-./start_ros2_mcp.sh --sim mujoco
-```
-
-### MuJoCo 仿真器功能
-
-- **机器人模型**: Unitree Go2 四足机器人
-- **控制接口**: ROS2 `/cmd_vel` 话题
-- **可视化**: MuJoCo 原生查看器
-- **物理特性**: 完整动力学、接触仿真
-
-### 详细文档
-
-MuJoCo 仿真的详细配置和使用请参考: [README_MUJOCO.md](./mujoco/README_MUJOCO.md)
-
-## 设计原则
-
-### 1. 独立性
-
-仿真器完全独立，不依赖通信层：
-- 可以单独运行和测试
-- 易于移植到其他平台
-- 便于单元测试
-
-### 2. 可互换性
-
-同一个仿真逻辑支持多种通信方式：
-- ROS2 版本: 通过 `/cmd_vel` 话题控制
-- Dora 版本: 通过 Dora 数据流控制
-- 核心仿真代码完全相同
-
-### 3. 轻量级 vs 高精度
-
-- **2D 仿真**: 用于快速验证逻辑，实时性极高
-- **MuJoCo**: 用于高精度物理仿真，适合强化学习训练
-
-## 依赖
-
-### 2D 仿真依赖
-
-```bash
-# Python 包
-pip install pygame>=2.5.0
-
-# ROS2 包
-sudo apt install ros-humble-geometry-msgs
-```
-
-### MuJoCo 仿真依赖
-
-```bash
-# 运行安装脚本
-cd Sim_Module/mujoco
-./install_mujoco.sh
-
-# 或手动安装
-pip install mujoco
-```
-
-## 机器人状态
-
-### 2D 仿真机器人状态
+### 初始化
 
 ```python
-{
-    'x': 400.0,              # X 坐标 (像素)
-    'y': 300.0,              # Y 坐标 (像素)
-    'angle': 0.0,            # 朝向角度 (度，0=东，90=北)
-    'target_x': 400.0,       # 目标 X 坐标
-    'target_y': 300.0,       # 目标 Y 坐标
-    'target_angle': 0.0,     # 目标角度
-    'speed': 0.0,            # 当前速度
-    'angular_speed': 0.0,    # 当前角速度
-    'is_moving': False,      # 是否在运动
-    'last_command': ""       # 最后一条命令
-}
+from sim2d.simulator import Sim2DRobot
+
+# 创建仿真器
+robot = Sim2DRobot(action_queue=None)
 ```
 
-### MuJoCo 仿真机器人状态
+### 参数说明
 
 ```python
-{
-    'position': [x, y, z],       # 3D 位置
-    'orientation': [w, x, y, z], # 四元数姿态
-    'linear_velocity': [vx, vy, vz],
-    'angular_velocity': [wx, wy, wz],
-    'joint_positions': [...],    # 关节位置
-    'joint_velocities': [...]    # 关节速度
-}
+def __init__(self, action_queue=None):
+    """
+    初始化2D机器人仿真器
+
+    Args:
+        action_queue: multiprocessing.Queue，用于接收动作指令
+                      如果为 None，则使用共享队列
+    """
+```
+
+### 机器人状态
+
+```python
+# 位置 (x, y) - 单位: 像素
+self.position = [400, 300]  # 窗口中心
+
+# 朝向 (theta) - 单位: 弧度
+self.orientation = 0.0  # 初始朝向右
+
+# 机器人尺寸
+self.robot_size = 40    # 40x40 像素
+```
+
+## 支持的动作
+
+| 动作 | 参数 | 描述 |
+|------|------|------|
+| `move_forward` | `distance`, `speed` | 向前移动指定距离 |
+| `move_backward` | `distance`, `speed` | 向后移动指定距离 |
+| `turn` | `angle`, `angular_speed` | 原地旋转指定角度 |
+| `stop` | 无 | 立即停止运动 |
+
+## 数据流
+
+```
+Robot_Module (工具函数)
+    ↓ 返回动作指令 JSON
+    {"action": "move_forward", "parameters": {"distance": 1.0, "speed": 0.3}}
+    ↓
+multiprocessing.Queue (进程间通信)
+    ↓
+Sim2DRobot.run()
+    ↓ 读取队列
+action = action_queue.get()
+    ↓ 解析动作
+if action['action'] == 'move_forward':
+    self.move_forward(**action['parameters'])
+    ↓ 执行仿真
+更新机器人状态 + Pygame 可视化
+```
+
+## 核心方法
+
+### 1. `run()` - 主循环
+
+```python
+def run(self):
+    """启动仿真器主循环"""
+    pygame.init()
+    screen = pygame.display.set_mode((800, 600))
+    pygame.display.set_caption("2D Robot Simulator")
+
+    clock = pygame.time.Clock()
+    running = True
+
+    while running:
+        # 1. 处理 Pygame 事件
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                running = False
+            elif event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_ESCAPE:
+                    running = False
+
+        # 2. 从队列读取动作指令
+        try:
+            action = self.action_queue.get_nowait()
+            self.execute_action(action)
+        except:
+            pass
+
+        # 3. 更新机器人状态
+        self.update()
+
+        # 4. 绘制场景
+        self.draw(screen)
+
+        # 5. 刷新显示
+        pygame.display.flip()
+        clock.tick(60)  # 60 FPS
+
+    pygame.quit()
+```
+
+### 2. `execute_action()` - 执行动作
+
+```python
+def execute_action(self, action):
+    """执行动作指令
+
+    Args:
+        action: 动作指令字典
+            {
+                'action': 'move_forward',
+                'parameters': {'distance': 1.0, 'speed': 0.3}
+            }
+    """
+    action_type = action.get('action')
+    params = action.get('parameters', {})
+
+    if action_type == 'move_forward':
+        self.move_forward(**params)
+    elif action_type == 'move_backward':
+        self.move_backward(**params)
+    elif action_type == 'turn':
+        self.turn(**params)
+    elif action_type == 'stop':
+        self.stop()
+```
+
+### 3. `move_forward()` - 前进
+
+```python
+def move_forward(self, distance=1.0, speed=0.3):
+    """向前移动
+
+    Args:
+        distance: 移动距离（米）
+        speed: 移动速度（米/秒）
+    """
+    # 计算目标位置
+    dx = distance * self.pixels_per_meter * math.cos(self.orientation)
+    dy = distance * self.pixels_per_meter * math.sin(self.orientation)
+
+    target_x = self.position[0] + dx
+    target_y = self.position[1] + dy
+
+    # 执行动画移动
+    steps = int(distance / speed * 60)  # 60 FPS
+    for _ in range(steps):
+        self.position[0] += dx / steps
+        self.position[1] += dy / steps
+        pygame.time.delay(1000 // 60)
+
+    self.position = [target_x, target_y]
+```
+
+### 4. `turn()` - 旋转
+
+```python
+def turn(self, angle=90.0, angular_speed=0.5):
+    """原地旋转
+
+    Args:
+        angle: 旋转角度（度），正值为左转
+        angular_speed: 角速度（弧度/秒）
+    """
+    angle_rad = math.radians(angle)
+
+    # 计算目标朝向
+    target_orientation = self.orientation + angle_rad
+
+    # 执行动画旋转
+    duration = abs(angle_rad) / angular_speed
+    steps = int(duration * 60)  # 60 FPS
+
+    for _ in range(steps):
+        self.orientation += angle_rad / steps
+        pygame.time.delay(1000 // 60)
+
+    self.orientation = target_orientation
+```
+
+### 5. `draw()` - 绘制场景
+
+```python
+def draw(self, screen):
+    """绘制仿真场景
+
+    Args:
+        screen: Pygame 屏幕
+    """
+    # 1. 填充背景
+    screen.fill((240, 240, 240))
+
+    # 2. 绘制网格
+    self.draw_grid(screen)
+
+    # 3. 绘制机器人
+    self.draw_robot(screen)
+
+    # 4. 绘制信息
+    self.draw_info(screen)
 ```
 
 ## 使用示例
 
-### 2D 仿真手动控制
+### 直接运行仿真器
 
 ```bash
-# 终端 1: 启动仿真器
-cd Sim_Module/ros2_2d
-python3 simulator.py
-
-# 终端 2: 控制机器人
-source /opt/ros/humble/setup.bash
-ros2 topic pub /cmd_vel geometry_msgs/Twist \
-  "{linear: {x: 0.3}, angular: {z: 0.0}}" --once
+python3 Sim_Module/sim2d/simulator.py
 ```
 
-### 通过 Python 控制仿真
+### 与系统集成
+
+```bash
+# 终端1: 启动仿真器
+python3 Sim_Module/sim2d/simulator.py
+
+# 终端2: 启动交互界面
+python3 Interactive_Module/interactive.py
+```
+
+### 独立测试队列
 
 ```python
-import rclpy
-from rclpy.node import Node
-from geometry_msgs.msg import Twist
+import sys
+sys.path.insert(0, '/home/robot/work/FinalProject')
 
-class SimController(Node):
-    def __init__(self):
-        super().__init__('sim_controller')
-        self.publisher = self.create_publisher(Twist, '/cmd_vel', 10)
+from multiprocessing import Queue
+from Sim_Module.sim2d.simulator import Sim2DRobot
+import json
 
-    def move_forward(self, speed=0.3):
-        msg = Twist()
-        msg.linear.x = speed
-        self.publisher.publish(msg)
+# 创建队列和仿真器
+action_queue = Queue()
+robot = Sim2DRobot(action_queue)
 
-    def stop(self):
-        msg = Twist()
-        self.publisher.publish(msg)
+# 发送动作指令
+action = {
+    'action': 'move_forward',
+    'parameters': {'distance': 1.0, 'speed': 0.3}
+}
+action_queue.put(action)
 
-# 使用
-rclpy.init()
-controller = SimController()
-controller.move_forward(0.3)
-rclpy.spin_once(controller, timeout_sec=1.0)
-controller.stop()
+# 运行仿真器
+robot.run()
 ```
 
-## 性能说明
+## 仿真界面
 
-### 2D 仿真
+### 窗口
 
-- **帧率**: 60 FPS
-- **延迟**: <10ms
-- **CPU 占用**: <5%
-- **适用场景**: 快速逻辑验证、算法测试
+```
+┌────────────────────────────────────────┐
+│       2D Robot Simulator              │
+│  ┌──────────────────────────────────┐ │
+│  │  背景: 浅灰色                      │ │
+│  │  网格: 浅灰色线条                  │ │
+│  │                                  │ │
+│  │         ┃──>                      │ │
+│  │         ┃  机器人 (蓝色方块)        │ │
+│  │         ┃                         │ │
+│  │                                  │ │
+│  └──────────────────────────────────┘ │
+│                                        │
+│  Position: (420, 315)                 │
+│  Orientation: 90.0°                   │
+└────────────────────────────────────────┘
+```
 
-### MuJoCo 仿真
+### 信息显示
 
-- **帧率**: 50-100 FPS (取决于模型复杂度)
-- **物理精度**: 毫秒级
-- **与 Gazebo 对比**: 速度快 5-10 倍
-- **适用场景**: 强化学习、高精度物理仿真
+- **Position**: 机器人位置 (x, y) 像素
+- **Orientation**: 机器人朝向 (度)
 
-## 扩展仿真模块
-
-### 添加新的 2D 机器人
-
-在 `ros2_2d/simulator.py` 中修改 `Robot` 类:
+## 配置参数
 
 ```python
-class CustomRobot(Robot):
-    def __init__(self, x, y):
-        super().__init__(x, y)
-        # 添加自定义属性
-        self.arm_angle = 0
+# 窗口大小
+WINDOW_WIDTH = 800
+WINDOW_HEIGHT = 600
 
-    def draw(self, screen):
-        super().draw(screen)
-        # 绘制自定义部件
-        pass
+# 机器人参数
+ROBOT_SIZE = 40           # 机器人尺寸（像素）
+PIXELS_PER_METER = 50     # 像素-米转换比例
+
+# 颜色
+COLOR_BG = (240, 240, 240)        # 背景色（浅灰）
+COLOR_GRID = (200, 200, 200)      # 网格颜色
+COLOR_ROBOT = (0, 120, 215)       # 机器人颜色（蓝色）
+COLOR_DIRECTION = (255, 0, 0)     # 朝向指示颜色（红色）
 ```
 
-### 添加新的 MuJoCo 机器人
+## 通信机制
 
-1. 准备 URDF 模型文件
-2. 在 `mujoco_simulator.py` 中加载模型
-3. 配置关节和驱动器
-4. 测试仿真效果
+### 队列格式
 
-## 故障排除
+```python
+# 动作指令格式
+action = {
+    'action': 'move_forward',  # 动作类型
+    'parameters': {             # 动作参数
+        'distance': 1.0,
+        'speed': 0.3
+    }
+}
+```
 
-### 2D 仿真器无法启动
+### 支持的动作类型
 
-1. 检查 Pygame 是否安装: `python3 -c "import pygame"`
-2. 检查 ROS2 环境: `source /opt/ros/humble/setup.bash`
-3. 检查端口占用: `lsof -i :8000`
+```python
+ACTIONS = {
+    'move_forward': '前进',
+    'move_backward': '后退',
+    'turn': '旋转',
+    'stop': '停止'
+}
+```
 
-### MuJoCo 仿真器无法启动
+## 共享队列
 
-1. 检查 MuJoCo 安装: `python3 -c "import mujoco"`
-2. 检查 OpenGL 支持: `glxinfo | grep "OpenGL version"`
-3. 尝试 headless 模式 (无可视化)
+使用 `shared_queue.py` 实现跨进程通信：
 
-### 仿真器卡顿
+```python
+# 文件: /tmp/robot_finalproject/commands.jsonl
+{"action": "move_forward", "parameters": {"distance": 1.0, "speed": 0.3}}
+{"action": "turn", "parameters": {"angle": 90.0, "angular_speed": 0.5}}
+```
 
-1. 关闭其他占用 GPU 的程序
-2. 降低仿真频率
-3. 减小可视化窗口
+## 依赖
+
+```
+pygame>=2.5.0    # Pygame 2D 可视化
+```
+
+## 键盘控制
+
+| 按键 | 功能 |
+|------|------|
+| `ESC` | 退出仿真器 |
+| 关闭窗口 | 退出仿真器 |
+
+## 设计特点
+
+1. **轻量级**: 纯 Pygame 实现，无复杂依赖
+2. **实时性**: 60 FPS 流畅动画
+3. **队列驱动**: 异步接收动作指令
+4. **可视化**: 清晰显示机器人状态
+5. **易于扩展**: 可添加更多机器人类型
+
+## 扩展仿真器
+
+### 添加障碍物
+
+```python
+def __init__(self, action_queue=None):
+    # 添加障碍物列表
+    self.obstacles = [
+        {'position': (500, 300), 'size': (50, 50)},
+        {'position': (600, 400), 'size': (40, 40)}
+    ]
+
+def draw(self, screen):
+    # 绘制障碍物
+    for obs in self.obstacles:
+        pygame.draw.rect(screen, (100, 100, 100), obs)
+```
+
+### 添加轨迹绘制
+
+```python
+def __init__(self, action_queue=None):
+    self.trajectory = []  # 轨迹点列表
+
+def move_forward(self, distance=1.0, speed=0.3):
+    # 记录轨迹点
+    self.trajectory.append(tuple(self.position))
+
+def draw(self, screen):
+    # 绘制轨迹
+    if len(self.trajectory) > 1:
+        pygame.draw.lines(screen, (0, 200, 0), False, self.trajectory, 2)
+```
+
+## 性能优化
+
+1. **FPS 控制**: 使用 `clock.tick(60)` 保持稳定帧率
+2. **异步读取**: 使用 `get_nowait()` 避免阻塞
+3. **增量更新**: 逐步更新位置和朝向，平滑动画
 
 ## 相关文档
 
-- [MuJoCo 详细文档](./mujoco/README_MUJOCO.md) - MuJoCo 仿真详细说明
-- [Middle_Module README](../Middle_Module/README.md) - 通信层模块
-- [Robot_Module README](../Robot_Module/README.md) - 机器人模块
-- [主项目 README](../README.md) - 项目总览
+- [主项目 README](../README.md)
+- [Robot_Module README](../Robot_Module/README.md)
+- [Interactive_Module README](../Interactive_Module/README.md)
 
+---
+
+**仿真，可视化！** 🚀

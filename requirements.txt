@@ -1,24 +1,69 @@
-# ROS2 2D Simulation - Python Dependencies
-# For use with: ./start_ros2_mcp.sh --sim 2d
+# ========================================
+# FinalProject - 机器人控制系统依赖
+# 双层LLM架构 + MCP工具注册 + 2D仿真
+# ========================================
 
-# LLM Module - OpenAI API client (for Qwen/Dashscope compatibility)
+# ========================================
+# 核心依赖
+# ========================================
+
+# OpenAI API 客户端
+# 兼容 Qwen/Dashscope 等支持 OpenAI API 格式的服务
 openai>=1.0.0
 
-# Environment variables management
+# 环境变量管理
 python-dotenv>=1.0.0
 
-# YAML configuration parsing
+# YAML 配置解析
 pyyaml>=6.0
 
-# 2D Simulator visualization
-pygame>=2.5.0
-
-# ROS2 dependencies
+# 数值计算
 numpy>=1.26.0
 
-# Note: ROS2 packages (rclpy, geometry_msgs, sensor_msgs, std_msgs)
-# should be installed via apt, not pip:
-#   sudo apt install ros-<distro>-rclpy
-#   sudo apt install ros-<distro>-geometry-msgs
-#   sudo apt install ros-<distro>-sensor-msgs
-#   sudo apt install ros-<distro>-std-msgs
+# ========================================
+# MCP 服务器框架
+# ========================================
+
+# FastMCP - MCP 服务器框架
+# 用于 Robot_Module 的工具注册
+fastmcp>=0.1.0
+
+# ========================================
+# 仿真与可视化
+# ========================================
+
+# Pygame - 2D 仿真器可视化
+# 用于 Sim_Module/sim2d/simulator.py
+pygame>=2.5.0
+
+# ========================================
+# 可选依赖（按需安装）
+# ========================================
+
+# VLM Module - 视觉语言模型支持
+# 取消注释以安装视觉功能所需的依赖
+# openai        # OpenAI GPT-4 Vision (已包含在核心依赖中)
+# anthropic     # Anthropic Claude 3 Vision
+# pip install anthropic
+
+# ========================================
+# 说明
+# ========================================
+#
+# 安装所有核心依赖:
+#   pip install -r requirements.txt
+#
+# 安装核心依赖 + VLM 支持:
+#   pip install -r requirements.txt
+#   pip install anthropic
+#
+# ========================================
+# 已移除的依赖（新架构不再需要）
+# ========================================
+# - rclpy (ROS2 Python 客户端)
+# - geometry_msgs, sensor_msgs, std_msgs (ROS2 消息)
+# - dora-rs, pyarrow (Dora 数据流框架)
+#
+# 新架构使用 multiprocessing.Queue 进行进程间通信
+# 不再依赖 ROS2 或 Dora
+# ========================================

@@ -1,30 +1,32 @@
 """
-Robot Module - 机器人模块 (核心!)
+Robot_Module - MCP 工具函数注册中心
 
-功能:
-- 定义每种机器人的配置和技能
-- 机器人特定的提示词
-- 机器人特定的控制器
-
-每个机器人子模块包含:
-- robot_config.yaml (机器人配置)
-- skills/ (技能定义)
-- controllers/ (控制器)
-- prompts/ (机器人专用提示词)
-
-现有机器人:
-- Go2_Quadruped/ (Unitree Go2四足机器人)
-- Sim_2D/ (2D仿真机器人)
-
-添加新机器人:
-1. 创建 Robot_Module/NewRobot/ 文件夹
-2. 添加 robot_config.yaml
-3. 添加 skills/newrobot_skills.py
-4. 添加 prompts/ (可选)
+基于 FastMCP 的模块化设计，主要组件:
+- skill.py: MCP 服务器入口，注册所有模块
+- module/base.py: 底盘控制模块（移动、旋转、停止）
+- module/example.py: 示例模块（添加新功能的参考模板）
 """
 
-from .Go2_Quadruped import Go2Robot
-from .Sim_2D import Sim2DRobot
+__version__ = "3.0.0"
 
-__version__ = '1.0.0'
-__all__ = ['Go2Robot', 'Sim2DRobot']
+from .skill import (
+    mcp,
+    register_all_modules,
+    set_global_action_queue,
+    get_global_action_queue,
+    get_skill_function,
+    get_tool_definitions
+)
+
+# 兼容旧版：set_action_queue 是 set_global_action_queue 的别名
+set_action_queue = set_global_action_queue
+
+__all__ = [
+    "mcp",
+    "register_all_modules",
+    "set_global_action_queue",
+    "get_global_action_queue",
+    "set_action_queue",  # 兼容旧版
+    "get_skill_function",
+    "get_tool_definitions"
+]

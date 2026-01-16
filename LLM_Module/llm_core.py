@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 LLM Core - 双层LLM架构核心模块
-包含任务规划和任务执行的通用逻辑，可以被Dora、ROS2等不同适配器使用
+包含任务规划和任务执行的通用逻辑
 """
 import os
 import json
@@ -22,7 +22,7 @@ class LLMAgent:
         初始化LLM代理
         """
         self.client = OpenAI(api_key=api_key, base_url=base_url)
-        self.model = "qwen-plus"
+        self.model = "qwen3-32b"
         self.planning_prompt_template = self.load_prompt(prompt_path)
 
     def load_prompt(self, prompt_path: str) -> str:
@@ -54,7 +54,8 @@ class LLMAgent:
                     {"role": "system", "content": "你是一个专业的机器人任务规划助手。输出必须是有效的JSON格式。"},
                     {"role": "user", "content": planning_prompt}
                 ],
-                temperature=0.3
+                temperature=0.3,
+                extra_body={"enable_thinking": False}
             )
             response_text = completion.choices[0].message.content.strip()
             if response_text.startswith("```"):
@@ -86,7 +87,8 @@ class LLMAgent:
                     {"role": "user", "content": f"执行任务：{task_description}"}
                 ],
                 tools=tools,
-                tool_choice="auto"
+                tool_choice="auto",
+                extra_body={"enable_thinking": False}
             )
             response_message = completion.choices[0].message
             tool_calls = response_message.tool_calls
