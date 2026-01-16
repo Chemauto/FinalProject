@@ -13,40 +13,22 @@ Functions:
 import sys
 import json
 import inspect
-from multiprocessing import Queue
 
 # 全局动作队列（用于与仿真器通信）
 _action_queue = None
 
 
-def set_action_queue(queue: Queue = None):
-    """设置全局动作队列（如果不提供，则使用共享队列）"""
+def _get_action_queue():
+    """获取动作队列（懒加载：首次使用时自动初始化 ROS 队列）"""
     global _action_queue
-
-    # 如果没有提供队列，使用共享队列
-    if queue is None:
-        _action_queue = _get_shared_queue()
-    else:
-        _action_queue = queue
-
-    print("[base.py] 动作队列已设置", file=sys.stderr)
-
-
-def get_action_queue() -> Queue:
-    """获取全局动作队列"""
+    if _action_queue is None:
+        from pathlib import Path
+        project_root = Path(__file__).parent.parent.parent
+        sys.path.insert(0, str(project_root))
+        from ros_topic_comm import get_shared_queue
+        _action_queue = get_shared_queue()
+        print("[base.py] ROS队列已自动初始化", file=sys.stderr)
     return _action_queue
-
-
-def _get_shared_queue():
-    """获取共享队列"""
-    from pathlib import Path
-
-    # 添加项目根目录到路径
-    project_root = Path(__file__).parent.parent.parent
-    sys.path.insert(0, str(project_root))
-
-    from shared_queue import get_shared_queue
-    return get_shared_queue()
 
 
 # ==============================================================================
@@ -72,9 +54,8 @@ async def move_forward(distance: float = 1.0, speed: float = 0.3) -> str:
         'parameters': {'distance': distance, 'speed': speed}
     }
 
-    # 发送到仿真器（如果队列可用）
-    if _action_queue:
-        _action_queue.put(action)
+    # 发送到仿真器
+    _get_action_queue().put(action)
 
     return json.dumps(action, ensure_ascii=False)
 
@@ -98,9 +79,8 @@ async def move_backward(distance: float = 1.0, speed: float = 0.3) -> str:
         'parameters': {'distance': distance, 'speed': speed}
     }
 
-    # 发送到仿真器（如果队列可用）
-    if _action_queue:
-        _action_queue.put(action)
+    # 发送到仿真器
+    _get_action_queue().put(action)
 
     return json.dumps(action, ensure_ascii=False)
 
@@ -125,9 +105,8 @@ async def turn(angle: float = 90.0, angular_speed: float = 0.5) -> str:
         'parameters': {'angle': angle, 'angular_speed': angular_speed}
     }
 
-    # 发送到仿真器（如果队列可用）
-    if _action_queue:
-        _action_queue.put(action)
+    # 发送到仿真器
+    _get_action_queue().put(action)
 
     return json.dumps(action, ensure_ascii=False)
 
@@ -147,9 +126,8 @@ async def stop() -> str:
         'parameters': {}
     }
 
-    # 发送到仿真器（如果队列可用）
-    if _action_queue:
-        _action_queue.put(action)
+    # 发送到仿真器
+    _get_action_queue().put(action)
 
     return json.dumps(action, ensure_ascii=False)
 

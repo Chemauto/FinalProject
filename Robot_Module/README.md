@@ -8,7 +8,7 @@ Robot_Module 是机器人技能的**MCP (Model Context Protocol) 工具注册中
 
 - **模块化工具注册**: 基于 FastMCP 的工具注册框架
 - **自动元数据提取**: 从函数签名和 docstring 自动提取工具定义
-- **进程间通信**: 通过 multiprocessing.Queue 与仿真器通信
+- **ROS2 通讯**: 通过 ROS2 话题与仿真器通信
 - **易于扩展**: 添加新工具只需编写函数并注册
 
 ## 文件结构
@@ -86,7 +86,7 @@ async def move_forward(distance: float = 1.0, speed: float = 0.3) -> str:
         'parameters': {'distance': distance, 'speed': speed}
     }
 
-    # 发送到仿真器
+    # 发送到仿真器（通过 ROS2 话题）
     if _action_queue:
         _action_queue.put(action)
 
@@ -151,10 +151,10 @@ module/base.py.move_forward()
     ↓
 _action_queue.put(action)
     ↓
-multiprocessing.Queue
-    ↓
+ROS2 Topic (/robot/command)
+    ↓ 发布消息
 Sim_Module (仿真器)
-    ↓ 执行动作并可视化
+    ↓ 订阅消息并执行动作
 ```
 
 ## 添加新工具模块
@@ -180,16 +180,34 @@ Functions:
 
 import sys
 import json
-import inspect
 
 # 全局动作队列（用于与仿真器通信）
 _action_queue = None
 
 
 def set_action_queue(queue=None):
-    """设置全局动作队列"""
+    """设置全局动作队列（使用 ROS2 话题通讯）"""
     global _action_queue
-    # ... 队列设置逻辑
+
+    # 如果没有提供队列，使用 ROS 话题通讯
+    if queue is None:
+        _action_queue = _get_ros_queue()
+    else:
+        _action_queue = queue
+
+    print("[your_module.py] 动作队列已设置", file=sys.stderr)
+
+
+def _get_ros_queue():
+    """获取 ROS 话题队列"""
+    from pathlib import Path
+
+    # 添加项目根目录到路径
+    project_root = Path(__file__).parent.parent.parent
+    sys.path.insert(0, str(project_root))
+
+    from ros_topic_comm import get_shared_queue
+    return get_shared_queue()
 
 
 # =============================================================================
@@ -224,12 +242,7 @@ async def your_tool(param1: str, param2: float = 10.0) -> str:
 
 # =============================================================================
 # MCP 注册函数
-# ==============================================================================
-
-def _extract_tool_metadata(func):
-    """从函数提取工具元数据（OpenAI function calling 格式）"""
-    # ... 元数据提取逻辑
-
+# =============================================================================
 
 def register_tools(mcp, tool_registry=None, tool_metadata=None):
     """注册你的模块的工具函数到 MCP 服务器
@@ -239,6 +252,8 @@ def register_tools(mcp, tool_registry=None, tool_metadata=None):
         tool_registry: 工具函数注册表（可选）
         tool_metadata: 工具元数据注册表（可选）
     """
+    import inspect
+
     # 要注册的工具函数列表
     tools = [your_tool]
 
@@ -248,7 +263,19 @@ def register_tools(mcp, tool_registry=None, tool_metadata=None):
 
         # 提取并存储元数据（用于 LLM function calling）
         if tool_registry is not None and tool_metadata is not None:
-            name, metadata = _extract_tool_metadata(func)
+            # 提取元数据（简化版）
+            name = func.__name__
+            doc = inspect.getdoc(func) or ""
+
+            metadata = {
+                "description": doc.split("\n\n")[0].split("\n")[0] if doc else "",
+                "parameters": {
+                    "type": "object",
+                    "properties": {},
+                    "required": []
+                }
+            }
+
             tool_registry[name] = func
             tool_metadata[name] = metadata
 
@@ -273,7 +300,7 @@ def register_all_modules():
 
 ```bash
 # 重启交互界面
-python3 Interactive_Module/interactive.py
+./start_robot_system.sh
 
 # 查看是否显示新工具
 # 可用工具: N 个
@@ -323,38 +350,53 @@ async def move_forward(distance: float = 1.0, speed: float = 0.3) -> str:
 
 ## 通信机制
 
-### 与仿真器通信
+### ROS2 话题通讯
 
-Robot_Module 通过 `multiprocessing.Queue` 与 Sim_Module 通信：
+Robot_Module 通过 **ROS2 话题** 与 Sim_Module 通信：
 
 ```python
-# 1. 初始化共享队列
-from shared_queue import get_shared_queue
+# 1. 初始化 ROS 话题队列
+from ros_topic_comm import get_shared_queue
 _action_queue = get_shared_queue()
 
 # 2. 发送动作指令
 action = {'action': 'move_forward', 'parameters': {...}}
 _action_queue.put(action)
 
-# 3. 仿真器接收指令
-action = action_queue.get()
+# 3. 仿真器接收指令（通过订阅 /robot/command 话题）
 # 执行动作...
 ```
 
-### 文件队列实现
+### 话题格式
 
-使用 `shared_queue.py` 实现跨进程通信：
+- **话题名称**: `/robot/command`
+- **消息类型**: `std_msgs/String`
+- **消息格式**: JSON 字符串
 
 ```python
-# 文件: /tmp/robot_finalproject/commands.jsonl
+# 消息示例
 {"action": "move_forward", "parameters": {"distance": 1.0, "speed": 0.3}}
 {"action": "turn", "parameters": {"angle": 90.0, "angular_speed": 0.5}}
+```
+
+### 调试命令
+
+```bash
+# 查看话题列表
+ros2 topic list
+
+# 查看话题消息
+ros2 topic echo /robot/command
+
+# 查看话题信息
+ros2 topic info /robot/command
 ```
 
 ## 依赖
 
 ```
 fastmcp>=0.1.0    # MCP 服务器框架
+rclpy             # ROS2 Python 客户端库
 ```
 
 ## 设计特点
@@ -371,13 +413,42 @@ fastmcp>=0.1.0    # MCP 服务器框架
 - [Interactive_Module README](../Interactive_Module/README.md)
 - [LLM_Module README](../LLM_Module/README.md)
 - [Sim_Module README](../Sim_Module/README.md)
+- [ros_topic_comm.py](../ros_topic_comm.py) - ROS2 通讯模块
 
 ## 示例：完整的工具添加流程
 
 假设我们要添加一个"播放声音"的工具：
 
-1. **创建 `module/sound.py`**:
+### 1. 创建 `module/sound.py`
+
 ```python
+"""声音模块 (Sound Module)
+
+负责机器人声音播放功能。
+
+Functions:
+    - play_sound: 播放指定声音
+"""
+
+import sys
+import json
+
+_action_queue = None
+
+
+def set_action_queue(queue=None):
+    """设置全局动作队列"""
+    global _action_queue
+    from pathlib import Path
+    if queue is None:
+        project_root = Path(__file__).parent.parent.parent
+        sys.path.insert(0, str(project_root))
+        from ros_topic_comm import get_shared_queue
+        _action_queue = get_shared_queue()
+    else:
+        _action_queue = queue
+
+
 async def play_sound(sound_name: str, volume: float = 0.8) -> str:
     """播放指定声音
 
@@ -388,15 +459,42 @@ async def play_sound(sound_name: str, volume: float = 0.8) -> str:
     Returns:
         播放结果JSON字符串
     """
-    action = {'action': 'play_sound', 'parameters': {'sound_name': sound_name, 'volume': volume}}
+    action = {
+        'action': 'play_sound',
+        'parameters': {'sound_name': sound_name, 'volume': volume}
+    }
+
+    if _action_queue:
+        _action_queue.put(action)
+
     return json.dumps(action, ensure_ascii=False)
 
+
 def register_tools(mcp, tool_registry=None, tool_metadata=None):
+    """注册声音模块的工具函数"""
     tools = [play_sound]
-    # ... 注册逻辑
+
+    for func in tools:
+        mcp.tool()(func)
+        if tool_registry is not None and tool_metadata is not None:
+            tool_registry[func.__name__] = func
+            tool_metadata[func.__name__] = {
+                "description": "播放指定声音",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "sound_name": {"type": "string"},
+                        "volume": {"type": "number"}
+                    },
+                    "required": ["sound_name"]
+                }
+            }
+
+    print("[sound.py] 声音模块已注册 (1 个工具)", file=sys.stderr)
 ```
 
-2. **在 `skill.py` 中注册**:
+### 2. 在 `skill.py` 中注册
+
 ```python
 from module.sound import register_tools as register_sound_tools
 
@@ -405,7 +503,8 @@ def register_all_modules():
     register_sound_tools(mcp, _tool_registry, _tool_metadata)
 ```
 
-3. **测试**:
+### 3. 测试
+
 ```bash
 # 重启系统
 ./start_robot_system.sh

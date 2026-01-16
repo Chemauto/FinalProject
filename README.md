@@ -1,14 +1,15 @@
 # 🤖 FinalProject - 基于双层LLM的机器人控制系统
 
-基于双层 LLM 架构的机器人控制系统，采用 MCP (Model Context Protocol) 模块化设计。
+基于双层 LLM 架构的机器人控制系统，采用 MCP (Model Context Protocol) 模块化设计，使用 **ROS2 话题**进行通信。
 
 ## 🎯 核心特性
 
 - **双层 LLM 架构**: 任务规划 + 执行控制分离
 - **MCP 模块化设计**: 参考 RoboOS，工具注册标准化
-- **简化通信**: multiprocessing.Queue，无 ROS2 依赖
+- **ROS2 通讯**: 使用 ROS2 话题，标准化通信
 - **自然语言控制**: 支持中文指令控制机器人
 - **2D 仿真**: 基于 Pygame 的轻量级仿真环境
+- **懒加载设计**: 自动初始化，零配置
 
 ## 🔄 系统架构与数据流
 
@@ -43,11 +44,11 @@
 │    输出: 动作指令 JSON ({"action": "move_forward", ...}) │
 └──────────────┬──────────────────────────────┘
                ↓
-      multiprocessing.Queue (进程间通信)
-               ↓
+      ROS2 Topic (/robot/command)
+         ↓ 发布 JSON 消息
 ┌─────────────────────────────────────────────┐
 │ ④ Sim_Module (2D 仿真器)                    │
-│    输入: 动作指令 JSON                       │
+│    输入: 订阅 ROS2 话题                      │
 │    输出: 机器人运动可视化 + 状态更新          │
 └─────────────────────────────────────────────┘
 ```
@@ -74,9 +75,11 @@ FinalProject/
 ├── Interactive_Module/    # 交互界面
 │   └── interactive.py     # CLI 交互主程序
 │
-└── Sim_Module/            # 仿真模块
-    └── sim2d/
-        └── simulator.py   # 2D Pygame 仿真器
+├── Sim_Module/            # 仿真模块
+│   └── sim2d/
+│       └── simulator.py   # 2D Pygame 仿真器
+│
+└── ros_topic_comm.py      # ROS2 通讯模块
 ```
 
 ## 🚀 快速开始
@@ -85,6 +88,7 @@ FinalProject/
 
 - Python 3.10+
 - Linux (推荐 Ubuntu 22.04)
+- ROS2 Humble (可选，用于调试)
 
 ### 安装
 
@@ -92,10 +96,17 @@ FinalProject/
 # 1. 克隆项目
 cd /home/robot/work/FinalProject
 
-# 2. 安装依赖
+# 2. 创建 conda 环境 (可选)
+conda create -n ros2_env python=3.10
+conda activate ros2_env
+
+# 3. 安装 ROS2 Humble (如果未安装)
+# 参考: https://docs.ros.org/en/humble/Installation.html
+
+# 4. 安装 Python 依赖
 pip install -r requirements.txt
 
-# 3. 配置 API Key
+# 5. 配置 API Key
 export Test_API_KEY=your_api_key_here
 ```
 
@@ -142,7 +153,10 @@ async def your_tool(param: float) -> str:
     Args:
         param: 参数描述
     """
+    # ROS 队列会自动初始化
+    from .base import _get_action_queue
     action = {'action': 'your_action', 'parameters': {'param': param}}
+    _get_action_queue().put(action)
     return json.dumps(action)
 ```
 
@@ -167,6 +181,40 @@ def register_all_modules():
 
 详细说明请查看各模块的 README.md。
 
+## 📡 ROS2 通讯
+
+### 话题格式
+
+- **话题名称**: `/robot/command`
+- **消息类型**: `std_msgs/String`
+- **消息格式**: JSON 字符串
+
+```json
+{
+  "action": "move_forward",
+  "parameters": {
+    "distance": 1.0,
+    "speed": 0.3
+  }
+}
+```
+
+### 调试命令
+
+```bash
+# 查看话题列表
+ros2 topic list
+
+# 查看话题消息
+ros2 topic echo /robot/command
+
+# 查看话题信息
+ros2 topic info /robot/command
+
+# 查看节点图
+ros2 run rqt_graph rqt_graph
+```
+
 ## 📝 依赖
 
 ```
@@ -176,6 +224,7 @@ pygame>=2.5.0         # 2D 仿真可视化
 pyyaml>=6.0           # YAML 配置解析
 numpy>=1.26.0         # 数值计算
 python-dotenv>=1.0.0  # 环境变量管理
+rclpy                 # ROS2 Python 客户端库
 ```
 
 ## 📚 相关文档

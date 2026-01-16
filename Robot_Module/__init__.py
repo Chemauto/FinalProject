@@ -12,21 +12,13 @@ __version__ = "3.0.0"
 from .skill import (
     mcp,
     register_all_modules,
-    set_global_action_queue,
-    get_global_action_queue,
     get_skill_function,
     get_tool_definitions
 )
 
-# 兼容旧版：set_action_queue 是 set_global_action_queue 的别名
-set_action_queue = set_global_action_queue
-
 __all__ = [
     "mcp",
     "register_all_modules",
-    "set_global_action_queue",
-    "get_global_action_queue",
-    "set_action_queue",  # 兼容旧版
     "get_skill_function",
     "get_tool_definitions"
 ]

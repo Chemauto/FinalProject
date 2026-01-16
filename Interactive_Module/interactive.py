@@ -6,7 +6,6 @@ Interactive Interface - 交互界面
 """
 import os
 import sys
-import json
 import asyncio
 from pathlib import Path
 
@@ -26,7 +25,6 @@ except ImportError:
 
 from LLM_Module.llm_core import LLMAgent
 from Robot_Module.skill import (
-    set_action_queue,
     get_skill_function,
     get_tool_definitions,
     register_all_modules
@@ -127,9 +125,6 @@ def main():
         print("❌ 错误: 未设置 Test_API_KEY 环境变量", file=sys.stderr)
         print("请设置: export Test_API_KEY=your_api_key_here", file=sys.stderr)
         sys.exit(1)
-
-    # 设置动作队列（使用共享队列）
-    set_action_queue()
 
     # 从 Robot_Module 获取工具定义
     tools = get_tool_definitions()

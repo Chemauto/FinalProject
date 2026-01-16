@@ -10,6 +10,7 @@ Interactive_Module 是系统的**用户交互入口**，负责接收用户自然
 - **模块协调**: 连接 LLM_Module 和 Robot_Module
 - **动态提示词**: 自动生成包含可用技能列表的提示词
 - **结果展示**: 格式化显示任务规划和执行结果
+- **自动初始化**: ROS2 通讯层自动管理，无需手动配置
 
 ## 文件结构
 
@@ -28,7 +29,7 @@ Interactive_Module/
 │ Interactive_Module.interactive.py      │
 │                                         │
 │ 1. 接收用户自然语言指令                  │
-│ 2. 注册 Robot_Module 工具               │
+│ 2. 注册 Robot_Module 工具（自动）       │
 │ 3. 动态加载并填充提示词                  │
 │ 4. 调用 LLM_Module 双层LLM               │
 │ 5. 执行 MCP 工具函数                     │
@@ -38,7 +39,11 @@ Interactive_Module/
         ┌──────┴──────┐
         ↓             ↓
   LLM_Module    Robot_Module
-  (规划+执行)    (工具调用)
+  (规划+执行)    (工具调用 + ROS2发布)
+        ↓             ↓
+    ROS2 Topic (/robot/command)
+        ↓
+  Sim_Module (仿真执行)
 ```
 
 ## 核心文件: interactive.py
@@ -54,34 +59,31 @@ def main():
     # 2. 检查 API Key
     api_key = os.getenv('Test_API_KEY')
 
-    # 3. 设置动作队列（使用共享队列）
-    set_action_queue()
-
-    # 4. 从 Robot_Module 获取工具定义
+    # 3. 从 Robot_Module 获取工具定义
     tools = get_tool_definitions()
 
-    # 5. 获取提示词路径
+    # 4. 获取提示词路径
     prompt_path = "LLM_Module/prompts/planning_prompt_2d.yaml"
 
-    # 6. 初始化 LLM Agent
+    # 5. 初始化 LLM Agent
     llm_agent = LLMAgent(api_key=api_key, prompt_path=str(prompt_path))
 
-    # 7. 动态加载并填充提示词
+    # 6. 动态加载并填充提示词
     dynamic_prompt = load_dynamic_prompt(prompt_path, tools)
     llm_agent.planning_prompt_template = dynamic_prompt
 
-    # 8. 主循环 - 接收用户输入
+    # 7. 主循环 - 接收用户输入
     while True:
         user_input = input("💬 请输入指令: ").strip()
 
-        # 9. 执行双层 LLM 流程
+        # 8. 执行双层 LLM 流程
         results = llm_agent.run_pipeline(
             user_input=user_input,
             tools=tools,
             execute_tool_fn=execute_tool
         )
 
-        # 10. 显示结果
+        # 9. 显示结果
         if results:
             success_count = sum(1 for r in results if r.get("success"))
             print(f"📊 [完成] {success_count}/{len(results)} 个任务成功")
@@ -108,7 +110,7 @@ def execute_tool(function_name: str, function_args: dict) -> dict:
     if not skill_func:
         return {"error": f"Unknown tool: {function_name}"}
 
-    # 2. 调用异步技能函数
+    # 2. 调用异步技能函数（自动初始化 ROS2 队列）
     result = asyncio.run(skill_func(**function_args))
 
     # 3. 估算执行时间
@@ -152,37 +154,32 @@ def load_dynamic_prompt(prompt_path, tools):
     return prompt
 ```
 
-### 格式化函数
+## ROS2 通讯
+
+### 自动初始化
+
+ROS2 队列在工具函数首次调用时**自动初始化**，无需手动配置：
 
 ```python
-def format_robot_config(tools):
-    """格式化机器人配置信息"""
-    config_lines = ["机器人类型: 2D仿真机器人（差速驱动）"]
-    config_lines.append("\n可用技能:")
+# Robot_Module/module/base.py
+def _get_action_queue():
+    """获取动作队列（懒加载：首次使用时自动初始化 ROS 队列）"""
+    global _action_queue
+    if _action_queue is None:
+        from ros_topic_comm import get_shared_queue
+        _action_queue = get_shared_queue()  # 自动创建 Publisher
+    return _action_queue
+```
 
-    for tool in tools:
-        func = tool.get("function", {})
-        name = func.get("name", "")
-        desc = func.get("description", "")
-        params = func.get("parameters", {}).get("properties", {})
-        config_lines.append(f"- {name}({', '.join(params.keys())}): {desc}")
+### 话题发布
 
-    return "\n".join(config_lines)
+工具函数调用时自动发布到 ROS2 话题：
 
-
-def format_available_skills(tools):
-    """格式化可用技能列表"""
-    skills = []
-    for tool in tools:
-        func = tool.get("function", {})
-        name = func.get("name", "")
-        desc = func.get("description", "")
-        params = func.get("parameters", {}).get("properties", {})
-
-        param_str = ", ".join([f"{k}: {v.get('type', '')}" for k, v in params.items()])
-        skills.append(f"  - {name}({param_str}): {desc}")
-
-    return "\n".join(skills)
+```python
+async def move_forward(distance: float = 1.0, speed: float = 0.3) -> str:
+    action = {'action': 'move_forward', 'parameters': {...}}
+    _get_action_queue().put(action)  # 发布到 /robot/command
+    return json.dumps(action)
 ```
 
 ## 使用示例
@@ -248,7 +245,10 @@ Model: qwen-plus
 ⚙️  [执行中] 向前移动1米
 ──────────────────────────────────────────────────
 🔧 [工具调用] move_forward({'distance': 1.0, 'speed': 0.3})
-[base.move_forward] 前进 1.0m, 速度 0.3m/s
+[base.py] ROS队列已自动初始化
+[ros_topic_comm] ROS 已初始化
+[ActionPublisher] ROS话题发布器已创建: /robot/command
+[ActionPublisher] 发布命令: {'action': 'move_forward', 'parameters': {'distance': 1.0, 'speed': 0.3}}
 ⏳ [等待] 执行时间: 3.3秒... ✅ 完成!
 
 【步骤 2/2】
@@ -256,7 +256,7 @@ Model: qwen-plus
 ⚙️  [执行中] 左转90度
 ──────────────────────────────────────────────────
 🔧 [工具调用] turn({'angle': 90.0, 'angular_speed': 0.5})
-[base.turn] 左转 90.0°, 角速度 0.5rad/s
+[ActionPublisher] 发布命令: {'action': 'turn', 'parameters': {'angle': 90.0, 'angular_speed': 0.5}}
 ⏳ [等待] 执行时间: 3.1秒... ✅ 完成!
 
 ////////////////////////////////////////////////////////////
@@ -279,17 +279,17 @@ Model: qwen-plus
 [skill.py] 开始注册机器人技能模块...
 ============================================================
 [base.py:register_tools] 底盘控制模块已注册 (4 个工具)
-[example.py:register_tools] 示例模块已注册 (1 个工具)
 ============================================================
 [skill.py] ✓ 所有模块注册完成
 ============================================================
 ```
 
-### 2. 队列初始化
+### 2. ROS2 初始化
 
 ```
-[SharedQueue] 命令文件: /tmp/robot_finalproject/commands.jsonl
-[base.py] 动作队列已设置
+[base.py] ROS队列已自动初始化
+[ros_topic_comm] ROS 已初始化
+[ActionPublisher] ROS话题发布器已创建: /robot/command
 ```
 
 ### 3. 欢迎界面
@@ -300,7 +300,7 @@ LLM Interactive Interface
 ============================================================
 API: https://dashscope.aliyuncs.com/compatible-mode/v1/
 Model: qwen-plus
-可用工具: 5 个
+可用工具: 4 个
 ------------------------------------------------------------
   • move_forward(distance: number, speed: number)
     参数: distance, speed
@@ -316,10 +316,6 @@ Model: qwen-plus
 
   • stop
     描述: 紧急停止机器人
-
-  • example_tool(param1: string, param2: number)
-    参数: param1, param2
-    描述: 示例工具函数
 ------------------------------------------------------------
 ```
 
@@ -370,6 +366,7 @@ Model: qwen-plus
 openai>=1.0.0         # OpenAI API 客户端
 pyyaml>=6.0           # YAML 配置解析
 python-dotenv>=1.0.0  # 环境变量管理
+rclpy                 # ROS2 Python 客户端库（自动导入）
 ```
 
 ## 环境变量
@@ -386,9 +383,10 @@ ROBOT_MODEL_TYPE=2d   # 机器人类型 (2d/go2)
 
 1. **模块解耦**: 不包含具体的 LLM 逻辑，只负责协调
 2. **动态提示词**: 根据可用工具自动生成提示词
-3. **清晰输出**: 格式化显示执行过程
-4. **错误恢复**: 完善的错误处理机制
-5. **易于调试**: 详细的日志输出
+3. **自动初始化**: ROS2 通讯层自动管理，零配置
+4. **清晰输出**: 格式化显示执行过程
+5. **错误恢复**: 完善的错误处理机制
+6. **易于调试**: 详细的日志输出
 
 ## 与其他模块的关系
 
@@ -405,10 +403,12 @@ ROBOT_MODEL_TYPE=2d   # 机器人类型 (2d/go2)
 │ (规划+执行)   │  │ (工具注册)    │
 └──────────────┘  └──────────────┘
        ↓               ↓
-   MCP 工具调用    动作指令
+   MCP 工具调用    ROS2 发布
        ↓               ↓
    └───────────────┘
           ↓
+    ROS2 Topic
+       ↓
   ┌──────────────┐
   │ Sim_Module   │
   │ (仿真执行)    │
@@ -421,6 +421,7 @@ ROBOT_MODEL_TYPE=2d   # 机器人类型 (2d/go2)
 - [LLM_Module README](../LLM_Module/README.md)
 - [Robot_Module README](../Robot_Module/README.md)
 - [Sim_Module README](../Sim_Module/README.md)
+- [ros_topic_comm.py](../ros_topic_comm.py) - ROS2 通讯模块
 
 ---
 

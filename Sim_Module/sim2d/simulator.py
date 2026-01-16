@@ -149,10 +149,10 @@ def draw_grid(screen):
 def main():
     """主函数 - 2D仿真器"""
 
-    # 获取共享队列
+    # 获取ROS话题队列
     import sys
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-    from shared_queue import get_shared_queue
+    from ros_topic_comm import get_shared_queue
 
     # 初始化 Pygame
     pygame.init()
@@ -160,16 +160,19 @@ def main():
     pygame.display.set_caption("2D Robot Simulator")
     clock = pygame.time.Clock()
 
-    # 创建机器人和共享队列
+    # 创建机器人和ROS话题队列
     robot = Robot(WIDTH // 2, HEIGHT // 2)
     action_queue = get_shared_queue()
+
+    # 设置订阅器
+    action_queue.setup_subscriber()
 
     print("="*60, file=sys.stderr)
     print("2D Robot Simulator", file=sys.stderr)
     print("="*60, file=sys.stderr)
     print(f"窗口大小: {WIDTH}x{HEIGHT}", file=sys.stderr)
     print(f"机器人初始位置: ({robot.x}, {robot.y})", file=sys.stderr)
-    print("通信方式: multiprocessing.Queue", file=sys.stderr)
+    print("通信方式: ROS2 Topic (/robot/command)", file=sys.stderr)
     print("", file=sys.stderr)
     print("按 ESC 或关闭窗口退出", file=sys.stderr)
     print("="*60, file=sys.stderr)
@@ -177,6 +180,9 @@ def main():
     running = True
     try:
         while running:
+            # 处理ROS回调（非阻塞）
+            action_queue.spin_once(timeout_sec=0.001)
+
             # 处理 Pygame 事件
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
@@ -208,6 +214,7 @@ def main():
     except KeyboardInterrupt:
         print("\n[Simulator] 被用户中断", file=sys.stderr)
     finally:
+        action_queue.shutdown()
         pygame.quit()
         print("[Simulator] 已关闭", file=sys.stderr)
 

@@ -20,7 +20,6 @@ import signal
 import atexit
 import json
 from pathlib import Path
-from multiprocessing import Queue
 from mcp.server.fastmcp import FastMCP
 
 # 添加当前目录到 Python 路径
@@ -30,7 +29,7 @@ sys.path.insert(0, str(_current_dir))
 # ==============================================================================
 # 1. 导入各功能模块
 # ==============================================================================
-from module.base import register_tools as register_base_tools, set_action_queue, get_action_queue
+from module.base import register_tools as register_base_tools
 from module.example import register_tools as register_example_tools
 
 # ==============================================================================
@@ -40,25 +39,9 @@ from module.example import register_tools as register_example_tools
 # 初始化 FastMCP 服务器
 mcp = FastMCP("robot")
 
-# 全局动作队列
-_action_queue = None
-
 # 工具注册表
 _tool_registry = {}
 _tool_metadata = {}
-
-
-def set_global_action_queue(queue: Queue):
-    """设置全局动作队列并传递给所有模块"""
-    global _action_queue
-    _action_queue = queue
-    set_action_queue(queue)
-    print("[skill.py] 全局动作队列已设置", file=sys.stderr)
-
-
-def get_global_action_queue() -> Queue:
-    """获取全局动作队列"""
-    return _action_queue
 
 
 # ==============================================================================
