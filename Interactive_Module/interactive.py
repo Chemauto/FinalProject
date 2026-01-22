@@ -9,6 +9,12 @@ import sys
 import asyncio
 from pathlib import Path
 
+# 取消代理设置（避免 OpenAI 客户端使用错误的代理）
+for var in ['http_proxy', 'https_proxy', 'HTTP_PROXY', 'HTTPS_PROXY',
+            'ALL_PROXY', 'all_proxy', 'no_proxy', 'NO_PROXY']:
+    if var in os.environ:
+        del os.environ[var]
+
 # 添加项目根目录到路径
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
@@ -72,6 +78,9 @@ def format_robot_config(tools):
         desc = func.get("description", "")
         params = func.get("parameters", {}).get("properties", {})
 
+        # 转义大括号
+        desc = desc.replace("{", "{{").replace("}", "}}")
+
         config_lines.append(f"- {name}({', '.join(params.keys())}): {desc}")
 
     return "\n".join(config_lines)
@@ -85,6 +94,9 @@ def format_available_skills(tools):
         name = func.get("name", "")
         desc = func.get("description", "")
         params = func.get("parameters", {}).get("properties", {})
+
+        # 转义大括号，避免被当作模板占位符
+        desc = desc.replace("{", "{{").replace("}", "}}")
 
         param_str = ", ".join([f"{k}: {v.get('type', '')}" for k, v in params.items()])
         skills.append(f"  - {name}({param_str}): {desc}")

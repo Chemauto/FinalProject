@@ -136,6 +136,7 @@ class ChaseController:
         # 获取机器人当前位置
         robot_pos = self.get_robot_position()
         if not robot_pos:
+            print("[ChaseController] 无法获取机器人位置", file=sys.stderr)
             return {"success": False, "error": "无法获取机器人位置"}
 
         robot_x = robot_pos['x']
@@ -148,8 +149,12 @@ class ChaseController:
         # 计算距离
         distance = self.calculate_distance(robot_x, robot_y, target_x, target_y)
 
+        print(f"[ChaseController] 当前位置: ({robot_x:.1f}, {robot_y:.1f}), "
+              f"目标: ({target_x}, {target_y}), 距离: {distance:.1f}px", file=sys.stderr)
+
         # 检查是否到达
         if distance < self.arrival_threshold:
+            print(f"[ChaseController] ✓ 已到达目标！距离: {distance:.1f}px", file=sys.stderr)
             return {
                 "success": True,
                 "status": "arrived",
@@ -167,6 +172,7 @@ class ChaseController:
 
         # 如果角度差较大，先旋转
         if abs(angle_diff) > 5:  # 5度容差
+            print(f"[ChaseController] 旋转 {angle_diff:.1f}°", file=sys.stderr)
             if progress_callback:
                 progress_callback({
                     "action": "turn",
@@ -185,6 +191,7 @@ class ChaseController:
             }
 
         # 角度对准后，向前移动
+        print(f"[ChaseController] 前进 {self.step_distance}m", file=sys.stderr)
         if progress_callback:
             progress_callback({
                 "action": "move",

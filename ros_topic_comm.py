@@ -131,6 +131,145 @@ class ActionSubscriber:
 _publisher_instance = None
 _subscriber_instance = None
 
+# 机器人状态（共享内存）
+_robot_state = {
+    'x': 400.0,
+    'y': 300.0,
+    'angle': 0.0
+}
+
+
+def get_robot_state():
+    """获取机器人当前状态"""
+    global _robot_state
+    return _robot_state.copy()
+
+
+def set_robot_state(x=None, y=None, angle=None):
+    """更新机器人状态（仅用于本地）"""
+    global _robot_state
+    if x is not None:
+        _robot_state['x'] = x
+    if y is not None:
+        _robot_state['y'] = y
+    if angle is not None:
+        _robot_state['angle'] = angle
+
+
+# 机器人位置发布器和订阅器（用于跨进程通信）
+_robot_state_publisher = None
+_robot_state_subscriber = None
+_cached_robot_state = None
+
+
+class RobotStatePublisher:
+    """机器人状态发布器"""
+    def __init__(self):
+        _ros_init()
+        self.node = Node('robot_state_publisher')
+        self.publisher = self.node.create_publisher(
+            String,
+            '/robot/state',
+            10
+        )
+        print("[RobotStatePublisher] ROS话题发布器已创建: /robot/state", file=sys.stderr)
+        import time
+        time.sleep(0.2)
+
+    def publish(self, x, y, angle):
+        """发布机器人状态"""
+        try:
+            state = {'x': x, 'y': y, 'angle': angle}
+            msg = String()
+            msg.data = json.dumps(state, ensure_ascii=False)
+            self.publisher.publish(msg)
+        except Exception as e:
+            print(f"[RobotStatePublisher] 发布失败: {e}", file=sys.stderr)
+
+    def shutdown(self):
+        """关闭"""
+        self.node.destroy_node()
+
+
+class RobotStateSubscriber:
+    """机器人状态订阅器"""
+    def __init__(self):
+        _ros_init()
+        self.node = Node('robot_state_subscriber')
+        self.subscription = self.node.create_subscription(
+            String,
+            '/robot/state',
+            self._message_callback,
+            10
+        )
+        print("[RobotStateSubscriber] ROS话题订阅器已创建: /robot/state", file=sys.stderr)
+
+    def _message_callback(self, msg):
+        """内部回调"""
+        global _cached_robot_state
+        try:
+            _cached_robot_state = json.loads(msg.data)
+        except Exception as e:
+            print(f"[RobotStateSubscriber] 解析失败: {e}", file=sys.stderr)
+
+    def spin_once(self, timeout_sec=0.001):
+        """处理一次ROS回调"""
+        try:
+            rclpy.spin_once(self.node, timeout_sec=timeout_sec)
+        except Exception:
+            pass
+
+    def shutdown(self):
+        """关闭"""
+        self.node.destroy_node()
+
+
+def publish_robot_state(x, y, angle):
+    """发布机器人状态（仿真器调用）"""
+    global _robot_state_publisher
+    if _robot_state_publisher is None:
+        _robot_state_publisher = RobotStatePublisher()
+    _robot_state_publisher.publish(x, y, angle)
+
+
+def get_robot_state_from_subscriber():
+    """从订阅器获取机器人状态（交互程序调用）"""
+    global _cached_robot_state, _robot_state_subscriber
+    if _robot_state_subscriber is None:
+        _robot_state_subscriber = RobotStateSubscriber()
+    return _cached_robot_state
+
+
+def get_robot_state_subscriber():
+    """获取机器人状态订阅器实例"""
+    global _robot_state_subscriber
+    if _robot_state_subscriber is None:
+        _robot_state_subscriber = RobotStateSubscriber()
+    return _robot_state_subscriber
+
+
+# 兼容接口：修改 get_robot_state 使用订阅器
+_original_get_robot_state = get_robot_state
+
+
+def get_robot_state():
+    """获取机器人状态（跨进程，使用订阅器）"""
+    global _cached_robot_state, _robot_state_subscriber
+
+    # 如果订阅器还没创建，创建它
+    if _robot_state_subscriber is None:
+        _robot_state_subscriber = RobotStateSubscriber()
+
+    # 处理一次 ROS 回调
+    _robot_state_subscriber.spin_once()
+
+    # 如果有缓存的状态，返回它
+    if _cached_robot_state is not None:
+        return _cached_robot_state.copy()
+
+    # 否则返回默认值
+    return _original_get_robot_state()
+
 
 def get_action_publisher():
     """获取动作发布器单例"""
@@ -206,6 +345,224 @@ class SharedCommandQueue:
 def get_shared_queue():
     """获取ROS话题命令队列"""
     return SharedCommandQueue()
+
+
+# ==============================================================================
+# 敌人位置共享（使用ROS2话题）
+# ==============================================================================
+
+_enemy_positions_publisher = None
+_enemy_positions_subscriber = None
+_cached_enemy_positions = []
+
+# 敌人清除命令（ROS2话题）
+_enemy_remove_publisher = None
+_enemy_remove_subscriber = None
+_pending_enemy_removals = queue.Queue()  # 待清除的敌人ID队列
+
+
+class EnemyRemovePublisher:
+    """敌人清除命令发布器"""
+    def __init__(self):
+        _ros_init()
+        self.node = Node('enemy_remove_publisher')
+        self.publisher = self.node.create_publisher(
+            String,
+            '/robot/enemy_remove',
+            10
+        )
+        print("[EnemyRemovePublisher] ROS话题发布器已创建: /robot/enemy_remove", file=sys.stderr)
+        import time
+        time.sleep(0.2)
+
+    def publish(self, enemy_id):
+        """发布敌人清除命令"""
+        try:
+            msg = String()
+            msg.data = json.dumps({'enemy_id': enemy_id}, ensure_ascii=False)
+            self.publisher.publish(msg)
+            print(f"[EnemyRemovePublisher] 发送清除命令: {enemy_id}", file=sys.stderr)
+        except Exception as e:
+            print(f"[EnemyRemovePublisher] 发布失败: {e}", file=sys.stderr)
+
+    def shutdown(self):
+        """关闭"""
+        self.node.destroy_node()
+
+
+class EnemyRemoveSubscriber:
+    """敌人清除命令订阅器"""
+    def __init__(self):
+        _ros_init()
+        self.node = Node('enemy_remove_subscriber')
+        self.subscription = self.node.create_subscription(
+            String,
+            '/robot/enemy_remove',
+            self._message_callback,
+            10
+        )
+        print("[EnemyRemoveSubscriber] ROS话题订阅器已创建: /robot/enemy_remove", file=sys.stderr)
+
+    def _message_callback(self, msg):
+        """内部回调"""
+        try:
+            command = json.loads(msg.data)
+            enemy_id = command.get('enemy_id')
+            if enemy_id:
+                _pending_enemy_removals.put(enemy_id)
+        except Exception as e:
+            print(f"[EnemyRemoveSubscriber] 解析失败: {e}", file=sys.stderr)
+
+    def spin_once(self, timeout_sec=0.001):
+        """处理一次ROS回调"""
+        try:
+            rclpy.spin_once(self.node, timeout_sec=timeout_sec)
+        except Exception:
+            pass
+
+    def shutdown(self):
+        """关闭"""
+        self.node.destroy_node()
+
+    def get_pending_removals(self):
+        """获取待清除的敌人ID列表"""
+        removals = []
+        try:
+            while True:
+                enemy_id = _pending_enemy_removals.get_nowait()
+                removals.append(enemy_id)
+        except queue.Empty:
+            pass
+        return removals
+
+
+class EnemyPositionsPublisher:
+    """敌人位置发布器"""
+    def __init__(self):
+        _ros_init()
+        self.node = Node('enemy_positions_publisher')
+        self.publisher = self.node.create_publisher(
+            String,
+            '/robot/enemies',
+            10
+        )
+        print("[EnemyPositionsPublisher] ROS话题发布器已创建: /robot/enemies", file=sys.stderr)
+        import time
+        time.sleep(0.2)
+
+    def publish(self, positions):
+        """发布敌人位置"""
+        try:
+            msg = String()
+            msg.data = json.dumps(positions, ensure_ascii=False)
+            self.publisher.publish(msg)
+            if len(positions) > 0:
+                print(f"[EnemyPositionsPublisher] 已发布 {len(positions)} 个敌人位置", file=sys.stderr)
+        except Exception as e:
+            print(f"[EnemyPositionsPublisher] 发布失败: {e}", file=sys.stderr)
+
+    def shutdown(self):
+        """关闭"""
+        self.node.destroy_node()
+
+
+class EnemyPositionsSubscriber:
+    """敌人位置订阅器"""
+    def __init__(self):
+        _ros_init()
+        self.node = Node('enemy_positions_subscriber')
+        self.subscription = self.node.create_subscription(
+            String,
+            '/robot/enemies',
+            self._message_callback,
+            10
+        )
+        print("[EnemyPositionsSubscriber] ROS话题订阅器已创建: /robot/enemies", file=sys.stderr)
+
+    def _message_callback(self, msg):
+        """内部回调"""
+        global _cached_enemy_positions
+        try:
+            _cached_enemy_positions = json.loads(msg.data)
+        except Exception as e:
+            print(f"[EnemyPositionsSubscriber] 解析失败: {e}", file=sys.stderr)
+
+    def spin_once(self, timeout_sec=0.001):
+        """处理一次ROS回调"""
+        try:
+            rclpy.spin_once(self.node, timeout_sec=timeout_sec)
+        except Exception:
+            pass
+
+    def shutdown(self):
+        """关闭"""
+        self.node.destroy_node()
+
+
+def get_enemy_positions_publisher():
+    """获取敌人位置发布器单例"""
+    global _enemy_positions_publisher
+    if _enemy_positions_publisher is None:
+        _enemy_positions_publisher = EnemyPositionsPublisher()
+    return _enemy_positions_publisher
+
+
+def get_enemy_positions_subscriber():
+    """获取敌人位置订阅器单例"""
+    global _enemy_positions_subscriber
+    if _enemy_positions_subscriber is None:
+        _enemy_positions_subscriber = EnemyPositionsSubscriber()
+    return _enemy_positions_subscriber
+
+
+def publish_enemy_positions(positions):
+    """发布敌人位置（仿真器调用）"""
+    publisher = get_enemy_positions_publisher()
+    publisher.publish(positions)
+
+
+def get_enemy_positions_from_subscriber():
+    """获取敌人位置（交互程序调用）"""
+    global _cached_enemy_positions
+    return _cached_enemy_positions
+
+
+def set_enemy_positions(positions):
+    """设置并发布敌人位置（兼容接口）"""
+    publish_enemy_positions(positions)
+
+
+def get_enemy_positions():
+    """获取敌人位置（兼容接口）"""
+    subscriber = get_enemy_positions_subscriber()
+    subscriber.spin_once()
+    return get_enemy_positions_from_subscriber()
+
+
+# ==============================================================================
+# 敌人清除命令接口
+# ==============================================================================
+
+def get_enemy_remove_publisher():
+    """获取敌人清除命令发布器单例"""
+    global _enemy_remove_publisher
+    if _enemy_remove_publisher is None:
+        _enemy_remove_publisher = EnemyRemovePublisher()
+    return _enemy_remove_publisher
+
+
+def get_enemy_remove_subscriber():
+    """获取敌人清除命令订阅器单例"""
+    global _enemy_remove_subscriber
+    if _enemy_remove_subscriber is None:
+        _enemy_remove_subscriber = EnemyRemoveSubscriber()
+    return _enemy_remove_subscriber
+
+
+def remove_enemy(enemy_id):
+    """发送清除敌人命令（追击模块调用）"""
+    publisher = get_enemy_remove_publisher()
+    publisher.publish(enemy_id)
 
 
 if __name__ == "__main__":

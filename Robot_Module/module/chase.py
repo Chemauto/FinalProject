@@ -13,6 +13,10 @@ from typing import Dict, Optional
 _action_queue = None
 _robot_getter = None
 
+# 追击参数配置
+MAX_STEP_DISTANCE = 0.5  # 最大步长（米）
+ARRIVAL_THRESHOLD = 5.0  # 到达阈值（像素）
+
 
 def _get_action_queue():
     """获取动作队列（懒加载）"""
@@ -49,15 +53,43 @@ async def _turn(angle: float = 90.0, angular_speed: float = 0.5):
     await asyncio.sleep(abs(angle) / 180.0 * 3.14159 / angular_speed if angular_speed > 0 else 1)
 
 
-def _get_robot_position() -> Optional[Dict]:
-    """
-    获取机器人当前位置
+def _calculate_step_distance(current_distance_pixels: float) -> float:
+    """使用PID控制计算步长（距离越近步长越小）
 
-    注意：这需要从仿真器获取，目前返回模拟值
-    实际使用时需要实现ROS话题订阅或共享内存
+    Args:
+        current_distance_pixels: 当前距离（像素）
+
+    Returns:
+        步长（米）
     """
-    # TODO: 实现从仿真器获取真实位置
-    # 目前返回中心位置作为示例
+    # 将像素转换为米
+    distance_meters = current_distance_pixels / 100.0
+
+    # PID控制：步长与距离成正比，但不超过最大值
+    # 距离越远，步长越大（最大0.5米）
+    # 距离越近，步长越小（最小0.1米，保证不会太小）
+    step_distance = min(distance_meters * 0.8, MAX_STEP_DISTANCE)
+    step_distance = max(step_distance, 0.1)  # 最小0.1米
+
+    return step_distance
+
+
+def _get_robot_position() -> Optional[Dict]:
+    """从 ROS 订阅器获取机器人当前位置"""
+    from pathlib import Path
+    project_root = Path(__file__).parent.parent.parent
+    sys.path.insert(0, str(project_root))
+    from ros_topic_comm import get_robot_state
+
+    # get_robot_state() 已经通过订阅器获取实时位置
+    state = get_robot_state()
+    if state:
+        return {
+            'x': state.get('x', 400.0),
+            'y': state.get('y', 300.0),
+            'angle': state.get('angle', 0.0)
+        }
+    # 默认位置
     return {'x': 400.0, 'y': 300.0, 'angle': 0.0}
 
 
@@ -77,6 +109,179 @@ def register_tools(mcp):
     """
 
     @mcp.tool()
+    async def chase_enemy() -> str:
+        """追击敌人（简化版，直接调用 move_forward 和 turn）
+
+        自动获取敌人位置并追击最近的敌人。这个工具会：
+        1. 获取当前所有敌人的位置
+        2. 找到距离最近的敌人
+        3. 计算需要旋转的角度
+        4. 调用 turn() 旋转到目标方向
+        5. 调用 move_forward() 前进到目标位置
+
+        Returns:
+            执行结果JSON字符串
+
+        Examples:
+            chase_enemy()  # 自动追击最近的敌人
+        """
+        print(f"[chase.chase_enemy] 开始追击敌人", file=sys.stderr)
+
+        # 获取敌人位置（带重试）
+        from pathlib import Path
+        project_root = Path(__file__).parent.parent.parent
+        sys.path.insert(0, str(project_root))
+        from ros_topic_comm import get_enemy_positions as get_positions
+        from ros_topic_comm import get_robot_state_subscriber
+        from Test_Module.chase_core import ChaseController
+
+        # 处理 ROS 回调，确保收到最新消息
+        subscriber = get_robot_state_subscriber()
+        for i in range(10):  # 尝试10次
+            subscriber.spin_once()
+            positions = get_positions()
+            if len(positions) > 0:
+                break
+            print(f"[chase.chase_enemy] 第{i+1}次尝试获取敌人位置，等待...", file=sys.stderr)
+            await asyncio.sleep(0.3)  # 等待300ms
+
+        print(f"[chase.chase_enemy] 最终获取到 {len(positions)} 个敌人", file=sys.stderr)
+
+        if not positions:
+            return json.dumps({
+                "success": False,
+                "error": "没有找到敌人，请先在仿真器中生成敌人"
+            }, ensure_ascii=False)
+
+        # 获取机器人位置
+        subscriber.spin_once()  # 确保获取最新位置
+        robot_pos = _get_robot_position()
+        print(f"[chase.chase_enemy] 机器人位置: ({robot_pos['x']:.1f}, {robot_pos['y']:.1f}), 角度: {robot_pos['angle']:.1f}°",
+              file=sys.stderr)
+
+        # 找到最近的敌人
+        import math
+        nearest = None
+        min_dist = float('inf')
+
+        for enemy in positions:
+            dist = math.sqrt(
+                (enemy['x'] - robot_pos['x'])**2 +
+                (enemy['y'] - robot_pos['y'])**2
+            )
+            if dist < min_dist:
+                min_dist = dist
+                nearest = enemy
+
+        if not nearest:
+            return json.dumps({
+                "success": False,
+                "error": "无法找到最近的敌人"
+            }, ensure_ascii=False)
+
+        target_x = nearest['x']
+        target_y = nearest['y']
+
+        print(f"[chase.chase_enemy] 追击目标: {nearest['id']} at ({target_x}, {target_y})",
+              file=sys.stderr)
+        print(f"[chase.chase_enemy] 距离: {min_dist:.1f} 像素 ({min_dist/100:.2f} 米)",
+              file=sys.stderr)
+
+        # 计算角度和距离
+        controller = ChaseController()
+        target_angle = controller.calculate_target_angle(
+            robot_pos['x'], robot_pos['y'], target_x, target_y
+        )
+        angle_diff = controller.calculate_angle_difference(
+            robot_pos['angle'], target_angle
+        )
+
+        print(f"[chase.chase_enemy] 目标角度: {target_angle:.1f}°, 需要旋转: {angle_diff:.1f}°",
+              file=sys.stderr)
+
+        # 步骤1: 旋转
+        if abs(angle_diff) > 5:
+            print(f"[chase.chase_enemy] 步骤1: 旋转 {angle_diff:.1f}°", file=sys.stderr)
+            await _turn(angle=angle_diff, angular_speed=0.5)
+            await asyncio.sleep(3)  # 等待旋转完成
+
+            # 更新机器人位置
+            subscriber.spin_once()
+            robot_pos = _get_robot_position()
+        else:
+            print(f"[chase.chase_enemy] 步骤1: 角度已对准，无需旋转", file=sys.stderr)
+
+        # 步骤2: 前进（使用PID控制，直到到达）
+        step_count = 0
+
+        while True:
+            subscriber.spin_once()
+            state = _get_robot_position()
+            current_dist = controller.calculate_distance(
+                state['x'], state['y'],
+                target_x, target_y
+            )
+
+            print(f"[chase.chase_enemy] 步骤2.{step_count + 1}: 当前距离 {current_dist:.1f} 像素",
+                  file=sys.stderr)
+
+            if current_dist < ARRIVAL_THRESHOLD:  # 到达阈值（5像素）
+                print(f"[chase.chase_enemy] ✓ 已到达目标！误差 {current_dist:.1f} 像素", file=sys.stderr)
+                break
+
+            # 使用PID控制计算前进距离
+            step_distance = _calculate_step_distance(current_dist)
+            print(f"[chase.chase_enemy]  前进 {step_distance:.2f} 米 (PID控制)", file=sys.stderr)
+
+            await _move_forward(distance=step_distance, speed=0.3)
+            await asyncio.sleep(2)  # 等待移动完成
+
+            subscriber.spin_once()
+            step_count += 1
+
+        print(f"[chase.chase_enemy] 追击完成！", file=sys.stderr)
+
+        # 清除已追击的敌人
+        from ros_topic_comm import remove_enemy
+        print(f"[chase.chase_enemy] 清除敌人: {nearest['id']}", file=sys.stderr)
+        remove_enemy(nearest['id'])
+
+        return json.dumps({
+            "success": True,
+            "message": f"追击完成，到达目标 ({target_x}, {target_y})，已清除敌人 {nearest['id']}"
+        }, ensure_ascii=False)
+
+    @mcp.tool()
+    async def get_enemy_positions() -> str:
+        """获取当前仿真器中的所有敌人位置
+
+        从仿真器获取当前所有敌人的位置信息，用于追击或任务规划。
+
+        Returns:
+            敌人位置列表JSON字符串，格式为：
+            [{"id": "1", "x": 100, "y": 200}, {"id": "2", "x": 500, "y": 400}]
+
+        Examples:
+            get_enemy_positions()
+        """
+        from pathlib import Path
+        project_root = Path(__file__).parent.parent.parent
+        sys.path.insert(0, str(project_root))
+        from ros_topic_comm import get_enemy_positions as get_positions
+
+        # 等待并重试，确保收到敌人位置
+        positions = []
+        for attempt in range(5):  # 最多尝试5次
+            positions = get_positions()
+            if len(positions) > 0:
+                break
+            print(f"[chase.get_enemy_positions] 第{attempt+1}次尝试: 未收到敌人位置，等待...", file=sys.stderr)
+            await asyncio.sleep(0.2)  # 等待200ms
+
+        print(f"[chase.get_enemy_positions] 最终获取到 {len(positions)} 个敌人", file=sys.stderr)
+        return json.dumps(positions, ensure_ascii=False)
+
+    @mcp.tool()
     async def chase_target(
         target_x: float,
         target_y: float,
@@ -85,20 +290,21 @@ def register_tools(mcp):
     ) -> str:
         """自动追击指定坐标的目标
 
-        机器人会自动计算目标角度和距离，执行旋转和前进动作，直到接近目标。
+        计算目标位置的角度和距离，然后调用 turn() 和 move_forward() 机器人移动到目标。
+        这个工具会自动处理旋转和前进的完整过程。
 
         Args:
             target_x: 目标X坐标（像素）
             target_y: 目标Y坐标（像素）
-            threshold: 到达阈值（像素），默认20像素，距离小于此值视为到达
+            threshold: 到达阈值（像素），默认20像素
             step_distance: 每步移动距离（米），默认0.5米
 
         Returns:
-            执行结果JSON字符串，包含状态、步数、最终距离等信息
+            执行结果JSON字符串
 
         Examples:
-            chase_target(target_x=700, target_y=300)  # 追击坐标(700, 300)的目标
-            chase_target(target_x=100, target_y=100, threshold=30)  # 自定义阈值
+            chase_target(target_x=700, target_y=300)
+            chase_target(target_x=100, target_y=100, threshold=30)
         """
         print(f"[chase.chase_target] 开始追击: ({target_x}, {target_y})",
               file=sys.stderr)
@@ -107,6 +313,16 @@ def register_tools(mcp):
         project_root = Path(__file__).parent.parent.parent
         sys.path.insert(0, str(project_root))
         from Test_Module.chase_core import ChaseController
+        from ros_topic_comm import get_robot_state_subscriber
+
+        # 处理 ROS 回调
+        subscriber = get_robot_state_subscriber()
+        subscriber.spin_once()
+
+        # 获取当前机器人位置
+        robot_pos = _get_robot_position()
+        print(f"[chase.chase_target] 机器人当前位置: ({robot_pos['x']}, {robot_pos['y']})",
+              file=sys.stderr)
 
         # 创建控制器
         controller = ChaseController(
@@ -118,6 +334,9 @@ def register_tools(mcp):
         # 设置参数
         controller.arrival_threshold = threshold
         controller.step_distance = step_distance
+
+        print(f"[chase.chase_target] 开始调用 ChaseController，最大步数: {controller.max_steps}",
+              file=sys.stderr)
 
         # 执行追击
         result = await controller.chase_target(
@@ -260,9 +479,11 @@ def register_tools(mcp):
 
         return json.dumps(result, ensure_ascii=False)
 
-    print("[chase.py:register_tools] 追击模块已注册 (3 个工具)", file=sys.stderr)
+    print("[chase.py:register_tools] 追击模块已注册 (5 个工具)", file=sys.stderr)
 
     return {
+        'chase_enemy': chase_enemy,
+        'get_enemy_positions': get_enemy_positions,
         'chase_target': chase_target,
         'chase_nearest_enemy': chase_nearest_enemy,
         'calculate_chase_angle': calculate_chase_angle

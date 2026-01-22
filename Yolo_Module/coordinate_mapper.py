@@ -6,6 +6,7 @@
 处理屏幕坐标和仿真坐标之间的转换
 """
 
+import sys
 from typing import Tuple, Optional
 from dataclasses import dataclass
 
@@ -87,6 +88,7 @@ class CoordinateMapper:
         自动检测窗口偏移量
 
         通过获取窗口位置和大小来计算偏移
+        注意：此功能仅支持 Windows 系统（需要 pywin32）
 
         Args:
             window_title: 窗口标题
@@ -94,10 +96,15 @@ class CoordinateMapper:
         Returns:
             是否成功检测
         """
+        import platform
+        if platform.system() != "Windows":
+            print("[CoordinateMapper] 自动检测窗口偏移仅支持 Windows，将使用默认偏移", file=sys.stderr)
+            return False
+
         try:
             import win32gui
         except ImportError:
-            print("[CoordinateMapper] 需要 pywin32", file=sys.stderr)
+            print("[CoordinateMapper] 未安装 pywin32，将使用默认偏移", file=sys.stderr)
             return False
 
         hwnd = win32gui.FindWindow(None, window_title)
