@@ -47,6 +47,19 @@ out/
 # 项目特定
 # ========================================
 
+# WebUI - 后端 Python 虚拟环境
+WebUI/backend/venv/
+WebUI/backend/__pycache__/
+WebUI/backend/*.log
+
+# WebUI - 前端 Node.js 依赖和构建产物
+WebUI/frontend/node_modules/
+WebUI/frontend/dist/
+WebUI/frontend/.vite/
+WebUI/frontend/npm-debug.log*
+WebUI/frontend/yarn-debug.log*
+WebUI/frontend/yarn-error.log*
+
 # 临时通信队列文件
 /tmp/robot_finalproject/
 
