@@ -88,6 +88,17 @@ class EnhancedSimulator:
         self.running = True
         self.show_chase_line = True
         self.selected_enemy_id = None
+        self.mouse_mark_mode = False  # 鼠标标记模式
+
+        # 导入坐标映射器
+        try:
+            from Yolo_Module.coordinate_mapper import CoordinateMapper
+            self.coord_mapper = CoordinateMapper()
+            # 自动检测窗口偏移
+            self.coord_mapper.auto_detect_offset()
+        except ImportError:
+            print("[警告] 未找到 Yolo_Module，坐标映射可能不准确", file=sys.stderr)
+            self.coord_mapper = None
 
         print("="*60, file=sys.stderr)
         print("增强版 2D Robot Simulator", file=sys.stderr)
@@ -96,6 +107,7 @@ class EnhancedSimulator:
         print("  • 按 R: 随机生成敌人", file=sys.stderr)
         print("  • 按 C: 清除所有敌人", file=sys.stderr)
         print("  • 按 L: 切换追击线显示", file=sys.stderr)
+        print("  • 按 M: 进入/退出鼠标标记模式", file=sys.stderr)
         print("  • 按 1-9: 选择敌人", file=sys.stderr)
         print("  • 按 ESC: 退出", file=sys.stderr)
         print("="*60, file=sys.stderr)
@@ -118,11 +130,47 @@ class EnhancedSimulator:
         """切换追击线显示"""
         self.show_chase_line = not self.show_chase_line
 
+    def toggle_mouse_mark_mode(self):
+        """切换鼠标标记模式"""
+        self.mouse_mark_mode = not self.mouse_mark_mode
+
+        if self.mouse_mark_mode:
+            print("\n[Simulator] >>> 进入鼠标标记模式 <<<", file=sys.stderr)
+            print("  点击地图任意位置生成敌人", file=sys.stderr)
+            print("  按 'M' 或 'ESC' 退出标记模式", file=sys.stderr)
+        else:
+            print("\n[Simulator] <<< 退出鼠标标记模式 >>>", file=sys.stderr)
+
+    def spawn_enemy_at_position(self, x: float, y: float):
+        """在指定位置生成敌人"""
+        enemy = self.enemy_manager.spawn_enemy(
+            x=x,
+            y=y,
+            color=(255, 50, 50),
+            move_mode="static",
+            name=f"点击敌人{self.enemy_manager.next_id}"
+        )
+
+        self.selected_enemy_id = enemy.id
+
+        print(f"[Simulator] 在点击位置生成敌人: {enemy.name} at ({x:.1f}, {y:.1f})",
+              file=sys.stderr)
+
     def handle_events(self):
         """处理事件"""
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 self.running = False
+
+            elif event.type == pygame.MOUSEBUTTONDOWN:
+                # 鼠标点击处理
+                if self.mouse_mark_mode and event.button == 1:  # 左键
+                    mouse_x, mouse_y = pygame.mouse.get_pos()
+
+                    # 确保点击在仿真区域内
+                    if mouse_y < HEIGHT:
+                        # 直接使用鼠标坐标（Pygame 坐标已经是仿真坐标）
+                        self.spawn_enemy_at_position(mouse_x, mouse_y)
 
             elif event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_ESCAPE:
@@ -133,6 +181,8 @@ class EnhancedSimulator:
                     self.clear_enemies()
                 elif event.key == pygame.K_l:
                     self.toggle_chase_line()
+                elif event.key == pygame.K_m:
+                    self.toggle_mouse_mark_mode()
                 elif event.key in [pygame.K_1, pygame.K_2, pygame.K_3,
                                   pygame.K_4, pygame.K_5, pygame.K_6,
                                   pygame.K_7, pygame.K_8, pygame.K_9]:
@@ -195,9 +245,15 @@ class EnhancedSimulator:
             self.screen.blit(surface, (20, panel_y + 45 + i * 25))
 
         # 操作提示
-        hint_texts = ["[R]生成 [C]清除 [L]连线 [ESC]退出"]
-        hint_surface = info_font.render(hint_texts[0], True, (120, 120, 120))
-        self.screen.blit(hint_surface, (WIDTH - 250, panel_y + 10))
+        if self.mouse_mark_mode:
+            hint_texts = ["[鼠标标记模式] 点击生成敌人  [M]退出"]
+            hint_color = (200, 100, 50)  # 橙色
+        else:
+            hint_texts = ["[R]生成 [C]清除 [M]标记 [L]连线 [ESC]退出"]
+            hint_color = (120, 120, 120)
+
+        hint_surface = info_font.render(hint_texts[0], True, hint_color)
+        self.screen.blit(hint_surface, (WIDTH - 350, panel_y + 10))
 
     def draw(self):
         """绘制场景"""
@@ -222,6 +278,22 @@ class EnhancedSimulator:
 
         # 绘制机器人
         self.robot.draw(sim_surface)
+
+        # 鼠标标记模式：绘制十字准星
+        if self.mouse_mark_mode:
+            mouse_x, mouse_y = pygame.mouse.get_pos()
+
+            # 绘制十字线
+            pygame.draw.line(sim_surface, (200, 100, 50),
+                           (mouse_x, 0), (mouse_x, HEIGHT), 1)
+            pygame.draw.line(sim_surface, (200, 100, 50),
+                           (0, mouse_y), (WIDTH, mouse_y), 1)
+
+            # 绘制坐标提示
+            font = pygame.font.Font(None, 20)
+            coord_text = f"({mouse_x}, {mouse_y})"
+            text_surface = font.render(coord_text, True, (200, 100, 50))
+            sim_surface.blit(text_surface, (mouse_x + 10, mouse_y + 10))
 
         # 绘制信息面板
         self.draw_info_panel()
