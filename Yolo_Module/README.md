@@ -1,493 +1,380 @@
-# Interactive_Module - 交互界面模块
-
-用户交互界面的核心模块，提供 CLI 命令行交互功能，协调 LLM 和 Robot_Module。
-
-## 📁 模块结构
-
-```
-Interactive_Module/
-├── README.md              # 本文档
-└── interactive.py         # CLI 交互主程序
-```
-
-## 🎯 功能特性
-
-- **自然语言交互**: 支持中文指令输入
-
-====================================
-Yolo_Module 模块详细文档
-====================================
-
 # Yolo_Module - YOLO 目标检测模块
 
-基于 YOLO 算法的目标检测模块，提供屏幕捕获、目标识别、坐标映射等功能。
+基于 YOLOv8 的目标检测模块，支持屏幕截图、目标检测和坐标映射。
 
 ## 📁 模块结构
 
 ```
 Yolo_Module/
 ├── README.md                  # 本文档
-├── __init__.py
-├── coordinate_mapper.py       # 坐标映射
-├── demo.py                    # 演示程序
-├── screen_capture.py          # 屏幕捕获
-├── target_detector.py         # 目标检测器
-└── test/                      # 测试文件
+├── yolo_simulator.py          # YOLO 追击仿真器
+└── test/                      # YOLO 核心模块
+    ├── __init__.py
+    ├── yolo_detector.py       # YOLO 检测器
+    ├── screen_capture.py      # 屏幕截图工具
+    └── coordinate_mapper.py   # 坐标映射器
 ```
 
 ## 🎯 功能特性
 
-- **实时检测**: 基于 YOLO 的实时目标检测
-- **屏幕捕获**: 自动捕获屏幕内容
-- **坐标映射**: 屏幕坐标到仿真器坐标的转换
-- **多目标支持**: 同时检测多个目标
-- **可视化**: 绘制检测框和标签
+- **YOLO 目标检测**: 使用 ultralytics YOLOv8 检测图像中的目标
+- **屏幕截图**: 支持全屏截图和区域截图（pyautogui 或 mss）
+- **坐标映射**: 屏幕坐标 ↔ 仿真器坐标双向映射
+- **模块化设计**: 独立的模块，易于集成和扩展
+- **延迟初始化**: YOLO 模型按需加载，减少启动时间
 
 ## 🔧 核心组件
 
-### target_detector.py - 目标检测器
+### test/yolo_detector.py - YOLO 检测器
 
-**TargetDetector 类：**
-
-```python
-class TargetDetector:
-    """YOLO 目标检测器"""
-
-    def __init__(self, model_name="yolov8n.pt"):
-        """
-        初始化检测器
-
-        Args:
-            model_name: YOLO 模型名称
-        """
-        from ultralytics import YOLO
-        self.model = YOLO(model_name)
-
-    def detect(self, image):
-        """
-        检测图像中的目标
-
-        Args:
-            image: OpenCV 图像 (numpy array)
-
-        Returns:
-            检测结果列表
-            [
-                {"class": "person", "confidence": 0.95, "bbox": [x, y, w, h]},
-                ...
-            ]
-        """
-
-    def detect_screen(self, region=None):
-        """
-        检测屏幕区域中的目标
-
-        Args:
-            region: 截图区域 (left, top, right, bottom)
-
-        Returns:
-            检测结果列表
-        """
-
-    def draw_detections(self, image, detections):
-        """
-        在图像上绘制检测结果
-
-        Args:
-            image: OpenCV 图像
-            detections: 检测结果列表
-
-        Returns:
-            绘制后的图像
-        """
-```
-
-**使用示例：**
+**YoloDetector 类：**
 
 ```python
-from Yolo_Module.target_detector import TargetDetector
+from Yolo_Module.test import YoloDetector
 
 # 初始化检测器
-detector = TargetDetector(model_name="yolov8n.pt")
+detector = YoloDetector(model_name="yolov8n.pt")
 
-# 检测图像
-detections = detector.detect(image)
+# 检测目标
+detections = detector.detect(image_array, conf_threshold=0.25)
 
-# 遍历结果
-for det in detections:
-    print(f"类别: {det['class']}, 置信度: {det['confidence']:.2f}")
-    print(f"位置: {det['bbox']}")
+# 检测结果格式
+# [{
+#   "center": (x, y),        # 中心坐标
+#   "confidence": 0.85,      # 置信度
+#   "class": "person",       # 类别
+#   "box": (x1, y1, x2, y2)  # 边界框
+# }]
 
-# 检测屏幕
-detections = detector.detect_screen(region=(0, 0, 800, 600))
+# 只检测人员
+person_detections = detector.detect_person(image_array)
 ```
 
-**支持的 YOLO 模型：**
+**支持的模型：**
+- `yolov8n.pt` - Nano (最快，推荐实时应用)
+- `yolov8s.pt` - Small
+- `yolov8m.pt` - Medium
+- `yolov8l.pt` - Large
+- `yolov8x.pt` - XLarge (最准确)
 
-- `yolov8n.pt` - YOLOv8 Nano（最快，精度一般）
-- `yolov8s.pt` - YOLOv8 Small（推荐）
-- `yolov8m.pt` - YOLOv8 Medium（平衡）
-- `yolov8l.pt` - YOLOv8 Large（高精度，慢）
-- `yolov8x.pt` - YOLOv8 XL（最高精度，最慢）
-
-### screen_capture.py - 屏幕捕获
+### test/screen_capture.py - 屏幕截图工具
 
 **ScreenCapture 类：**
 
 ```python
-class ScreenCapture:
-    """屏幕捕获工具"""
+from Yolo_Module.test import ScreenCapture
 
-    def __init__(self):
-        """初始化屏幕捕获"""
+# 初始化截图工具
+capturer = ScreenCapture()
 
-    def capture_screen(self, region=None):
-        """
-        捕获屏幕内容
+# 截取全屏
+image = capturer.capture_screen()
 
-        Args:
-            region: 截图区域 (left, top, right, bottom)
+# 截取区域
+image = capturer.capture_region(x=100, y=100, width=800, height=600)
 
-        Returns:
-            OpenCV 图像 (numpy array)
-        """
+# 保存图像
+ScreenCapture.save_image(image_array, "/tmp/screenshot.jpg")
 
-    def capture_window(self, window_title):
-        """
-        捕获指定窗口的内容
-
-        Args:
-            window_title: 窗口标题
-
-        Returns:
-            OpenCV 图像
-        """
+# 保存图像（带时间戳）
+filename = ScreenCapture.save_image_with_timestamp(
+    image_array,
+    directory="/tmp",
+    prefix="capture"
+)
 ```
 
-**使用示例：**
+**依赖项：**
+- `pyautogui` 或 `mss` - 屏幕截图
+- `opencv-python` - 图像保存
 
-```python
-from Yolo_Module.screen_capture import ScreenCapture
-
-# 初始化
-capture = ScreenCapture()
-
-# 捕获全屏
-image = capture.capture_screen()
-
-# 捕获指定区域
-image = capture.capture_screen(region=(0, 0, 800, 600))
-
-# 捕获指定窗口
-image = capture.capture_window("2D Robot Simulator")
-```
-
-### coordinate_mapper.py - 坐标映射
+### test/coordinate_mapper.py - 坐标映射器
 
 **CoordinateMapper 类：**
 
 ```python
-class CoordinateMapper:
-    """坐标映射工具"""
+from Yolo_Module.test import CoordinateMapper
 
-    def __init__(self, screen_region, simulator_size):
-        """
-        初始化坐标映射器
-
-        Args:
-            screen_region: 屏幕区域 (left, top, right, bottom)
-            simulator_size: 仿真器尺寸 (width, height)
-        """
-
-    def screen_to_simulator(self, x, y):
-        """
-        屏幕坐标转仿真器坐标
-
-        Args:
-            x, y: 屏幕坐标
-
-        Returns:
-            (sim_x, sim_y) 仿真器坐标
-        """
-
-    def simulator_to_screen(self, x, y):
-        """
-        仿真器坐标转屏幕坐标
-
-        Args:
-            x, y: 仿真器坐标
-
-        Returns:
-            (screen_x, screen_y) 屏幕坐标
-        """
-```
-
-**使用示例：**
-
-```python
-from Yolo_Module.coordinate_mapper import CoordinateMapper
-
-# 初始化（仿真器窗口在屏幕的 (100, 100) 到 (900, 700)）
+# 初始化映射器
 mapper = CoordinateMapper(
-    screen_region=(100, 100, 900, 700),
-    simulator_size=(800, 600)
+    screen_region=(100, 100, 800, 600),  # x, y, width, height
+    simulator_size=(800, 600)            # width, height
 )
 
-# 屏幕坐标转仿真器坐标
-sim_x, sim_y = mapper.screen_to_simulator(500, 400)
+# 屏幕坐标 → 仿真器坐标
+sim_x, sim_y = mapper.screen_to_simulator(screen_x=400, screen_y=300)
 
-# 仿真器坐标转屏幕坐标
-screen_x, screen_y = mapper.simulator_to_screen(400, 300)
+# 仿真器坐标 → 屏幕坐标
+screen_x, screen_y = mapper.simulator_to_screen(sim_x=400, sim_y=300)
+
+# 绝对屏幕坐标 → 仿真器坐标
+sim_x, sim_y = mapper.absolute_screen_to_simulator(abs_screen_x=500, abs_screen_y=400)
+
+# 动态更新配置
+mapper.set_screen_region((200, 200, 800, 600))
+mapper.set_simulator_size((1024, 768))
 ```
 
-### demo.py - 演示程序
+### yolo_simulator.py - YOLO 追击仿真器
 
-**功能：**
+**YoloSimulator 类：**
 
-1. 捕获仿真器屏幕
-2. 使用 YOLO 检测目标
-3. 映射坐标
-4. 绘制检测结果
-5. 显示可视化窗口
+集成 YOLO 检测、屏幕截图和 2D 仿真器的完整仿真系统。
 
-**运行演示：**
+```python
+from Yolo_Module.yolo_simulator import YoloSimulator
 
-```bash
-python3 Yolo_Module/demo.py
+# 启动仿真器
+simulator = YoloSimulator()
+simulator.run()
 ```
+
+**操作说明：**
+- **鼠标左键拖动**: 选择区域进行截图和检测
+- **按 S**: 设置屏幕截图区域
+- **按 C**: 清除所有敌人
+- **按 L**: 切换追击线显示
+- **按 ESC**: 退出
+
+**工作流程：**
+1. 启动仿真器：`python3 Yolo_Module/yolo_simulator.py`
+2. 按 `S` 设置屏幕截图区域
+3. 在仿真器中拖动鼠标选择区域
+4. 自动使用 YOLO 检测并生成敌人
+5. 通过 ROS2 接口执行追击
 
 ## 🚀 快速开始
 
 ### 1. 安装依赖
 
 ```bash
-# 安装 YOLO
-pip install ultralytics
+# 基础依赖
+pip install ultralytics opencv-python numpy
 
-# 安装屏幕捕获
-pip install pillow pyautogui
+# 屏幕截图（任选其一）
+pip install pyautogui
+# 或
+pip install mss
 
-# 安装 OpenCV
-pip install opencv-python
+# Pygame（仿真器）
+pip install pygame
 ```
 
-### 2. 下载模型
+### 2. 下载 YOLO 模型
+
+首次运行时，YOLO 会自动下载模型。也可以手动下载：
 
 ```bash
-# 自动下载（首次运行时）
-python3 -c "from ultralytics import YOLO; YOLO('yolov8n.pt')"
+# 使用 YOLO CLI
+yolo detect model=yolov8n.pt
 
-# 或手动下载
+# 或直接下载
 wget https://github.com/ultralytics/assets/releases/download/v0.0.0/yolov8n.pt
 ```
 
-### 3. 运行演示
+### 3. 运行仿真器
 
 ```bash
-# 启动仿真器（终端1）
-python3 Sim_Module/sim2d/simulator.py
+# 启动 YOLO 追击仿真器
+python3 Yolo_Module/yolo_simulator.py
 
-# 运行 YOLO 演示（终端2）
-python3 Yolo_Module/demo.py
+# 按 S 设置屏幕区域，格式: x y width height
+# 示例: 100 100 800 600
 ```
 
-### 4. 查看结果
+### 4. 测试单个模块
 
-演示程序会显示：
-- 原始截图
-- 检测框
-- 类别标签
-- 置信度分数
+```bash
+# 测试 YOLO 检测器
+python3 Yolo_Module/test/yolo_detector.py
+
+# 测试屏幕截图
+python3 Yolo_Module/test/screen_capture.py
+
+# 测试坐标映射
+python3 Yolo_Module/test/coordinate_mapper.py
+```
 
 ## 💡 使用场景
 
-### 场景 1: 检测仿真器中的敌人
+### 场景 1: 检测图像中的目标
 
 ```python
-from Yolo_Module.target_detector import TargetDetector
-from Yolo_Module.screen_capture import ScreenCapture
+from Yolo_Module.test import YoloDetector, ScreenCapture
+import cv2
 
 # 初始化
-detector = TargetDetector()
-capture = ScreenCapture()
+detector = YoloDetector(model_name="yolov8n.pt")
+capturer = ScreenCapture()
 
-# 捕获仿真器窗口
-image = capture.capture_window("2D Robot Simulator")
+# 截图
+image = capturer.capture_region(100, 100, 800, 600)
 
-# 检测目标
+# 检测
 detections = detector.detect(image)
 
-# 过滤类别
-enemies = [d for d in detections if d['class'] == 'person']
-```
-
-### 场景 2: 实时目标追踪
-
-```python
-import cv2
-import time
-
-while True:
-    # 捕获屏幕
-    image = capture.capture_screen(region=(0, 0, 800, 600))
-
-    # 检测目标
-    detections = detector.detect(image)
-
-    # 绘制结果
-    image = detector.draw_detections(image, detections)
-
-    # 显示
-    cv2.imshow("YOLO Detection", image)
-    if cv2.waitKey(1) & 0xFF == ord('q'):
-        break
-
-    time.sleep(0.1)  # 10 FPS
-
-cv2.destroyAllWindows()
-```
-
-### 场景 3: 坐标映射与追击
-
-```python
-from Yolo_Module.coordinate_mapper import CoordinateMapper
-
-# 初始化映射器
-mapper = CoordinateMapper(
-    screen_region=(100, 100, 900, 700),
-    simulator_size=(800, 600)
-)
-
-# 检测目标
-detections = detector.detect_screen(region=(100, 100, 900, 700))
-
-# 映射坐标
+# 保存结果（绘制边界框）
 for det in detections:
-    x, y, w, h = det['bbox']
-    center_x = x + w / 2
-    center_y = y + h / 2
+    x1, y1, x2, y2 = det["box"]
+    cv2.rectangle(image, (int(x1), int(y1)), (int(x2), int(y2)), (0, 255, 0), 2)
+    cv2.putText(image, det["class"], (int(x1), int(y1) - 10),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
 
-    # 转换为仿真器坐标
-    sim_x, sim_y = mapper.screen_to_simulator(center_x, center_y)
+cv2.imwrite("/tmp/result.jpg", cv2.cvtColor(image, cv2.COLOR_RGB2BGR))
+```
 
-    print(f"目标在仿真器坐标: ({sim_x:.1f}, {sim_y:.1f})")
+### 场景 2: 集成到仿真器
+
+```python
+from Yolo_Module.test import YoloDetector, ScreenCapture, CoordinateMapper
+from Yolo_Module.yolo_simulator import YoloSimulator
+
+# 创建仿真器
+simulator = YoloSimulator()
+
+# 仿真器会自动：
+# 1. 监听鼠标拖动选择区域
+# 2. 截取选定区域
+# 3. 使用 YOLO 检测
+# 4. 在检测到的位置生成敌人
+# 5. 通过 ROS2 发布追击命令
+
+simulator.run()
+```
+
+### 场景 3: 与 ROS2 集成
+
+```python
+from Yolo_Module.test import YoloDetector, ScreenCapture, CoordinateMapper
+from ros_topic_comm import get_shared_queue
+
+# 初始化
+detector = YoloDetector()
+capturer = ScreenCapture()
+mapper = CoordinateMapper(screen_region=(100, 100, 800, 600),
+                         simulator_size=(800, 600))
+
+# 获取 ROS 队列
+queue = get_shared_queue()
+
+# 截图并检测
+image = capturer.capture_region(100, 100, 800, 600)
+detections = detector.detect(image)
+
+# 发布追击命令
+for det in detections:
+    screen_x, screen_y = det["center"]
+    sim_x, sim_y = mapper.screen_to_simulator(screen_x, screen_y)
+
+    # 发布敌人位置
+    from ros_topic_comm import set_enemy_positions
+    set_enemy_positions([{"id": 0, "x": sim_x, "y": sim_y}])
+
+    # 发布追击命令
+    queue.put({
+        "action": "chase_enemy",
+        "parameters": {}
+    })
+```
+
+## 🐛 调试技巧
+
+### 1. 查看检测结果
+
+```python
+detections = detector.detect(image)
+for det in detections:
+    print(f"类别: {det['class']}")
+    print(f"置信度: {det['confidence']:.2f}")
+    print(f"中心: ({det['center'][0]:.1f}, {det['center'][1]:.1f})")
+    print(f"边界框: {det['box']}")
+```
+
+### 2. 保存截图调试
+
+```python
+# 仿真器会自动保存截图到 /tmp/yolo_capture_*.jpg
+# 查看截图确认区域是否正确
+ls -l /tmp/yolo_capture_*.jpg
+```
+
+### 3. 调整 YOLO 参数
+
+```python
+# 提高置信度阈值（减少误检）
+detections = detector.detect(image, conf_threshold=0.5)
+
+# 使用更大的模型（提高准确率）
+detector = YoloDetector(model_name="yolov8m.pt")
+```
+
+### 4. 测试坐标映射
+
+```python
+# 测试屏幕坐标到仿真器坐标的映射
+mapper = CoordinateMapper(screen_region=(100, 100, 800, 600),
+                         simulator_size=(800, 600))
+
+# 测试关键点
+test_points = [
+    (0, 0),           # 左上角
+    (400, 300),       # 中心
+    (800, 600),       # 右下角
+]
+
+for sx, sy in test_points:
+    sim_x, sim_y = mapper.screen_to_simulator(sx, sy)
+    print(f"屏幕({sx}, {sy}) → 仿真器({sim_x:.1f}, {sim_y:.1f})")
 ```
 
 ## 🔧 配置说明
 
 ### YOLO 模型选择
 
-| 模型 | 大小 | 速度 | 精度 | 推荐场景 |
-|------|------|------|------|----------|
-| yolov8n | 6MB | 最快 | 一般 | 实时检测 |
-| yolov8s | 23MB | 快 | 良好 | 平衡选择 ✅ |
-| yolov8m | 52MB | 中等 | 很好 | 高精度需求 |
-| yolov8l | 84MB | 慢 | 优秀 | 离线分析 |
-| yolov8x | 119MB | 最慢 | 最佳 | 研究用途 |
+| 模型 | 大小 | 速度 | 准确率 | 推荐场景 |
+|------|------|------|--------|----------|
+| yolov8n | 6MB | 最快 | 一般 | 实时应用 |
+| yolov8s | 23MB | 快 | 良好 | 平衡选择 |
+| yolov8m | 52MB | 中等 | 高 | 高精度需求 |
+| yolov8l | 84MB | 慢 | 很高 | 离线处理 |
+| yolov8x | 119MB | 最慢 | 最高 | 最佳精度 |
 
-### 检测参数调整
-
-```python
-# 调整置信度阈值
-detections = detector.detect(image, conf_threshold=0.5)
-
-# 调整 IoU 阈值
-detections = detector.detect(image, iou_threshold=0.5)
-
-# 限制检测数量
-detections = detector.detect(image, max_detections=10)
-```
-
-## 🐛 调试技巧
-
-### 1. 测试屏幕捕获
+### 屏幕截图方式
 
 ```python
-from Yolo_Module.screen_capture import ScreenCapture
-import cv2
+# 方式 1: pyautogui（推荐）
+pip install pyautogui
 
-capture = ScreenCapture()
-image = capture.capture_screen()
-cv2.imwrite("test_capture.png", image)
-print("截图已保存到 test_capture.png")
+# 方式 2: mss（更快）
+pip install mss
+
+# ScreenCapture 会自动选择可用的方式
 ```
-
-### 2. 测试坐标映射
-
-```python
-from Yolo_Module.coordinate_mapper import CoordinateMapper
-
-mapper = CoordinateMapper(
-    screen_region=(100, 100, 900, 700),
-    simulator_size=(800, 600)
-)
-
-# 测试四个角
-print(mapper.screen_to_simulator(100, 100))  # 应该返回 (0, 0)
-print(mapper.screen_to_simulator(900, 700))  # 应该返回 (800, 600)
-```
-
-### 3. 可视化检测框
-
-```python
-detections = detector.detect(image)
-image = detector.draw_detections(image, detections)
-cv2.imshow("Detections", image)
-cv2.waitKey(0)
-```
-
-### 4. 保存检测结果
-
-```python
-import json
-
-results = {
-    'timestamp': time.time(),
-    'detections': detections
-}
-
-with open('detections.json', 'w') as f:
-    json.dump(results, f, indent=2)
-```
-
-## 🔗 相关模块
-
-- `Sim_Module/sim2d/simulator.py` - 2D 仿真器
-- `Robot_Module/module/chase.py` - 追击功能
-- `ros_topic_comm.py` - ROS2 通讯
 
 ## 📝 依赖
 
 ```
-ultralytics>=8.0.0  # YOLO 模型
+ultralytics>=8.0.0  # YOLOv8
 opencv-python>=4.8.0  # 图像处理
-pillow>=10.0.0  # 图像 I/O
-pyautogui>=0.9.0  # 屏幕捕获（可选）
-numpy>=1.24.0  # 数值计算
+numpy>=1.24.0  # 数组运算
+pyautogui>=0.9.0  # 屏幕截图（可选）
+mss>=9.0.0  # 屏幕截图（可选）
+pygame>=2.5.0  # 仿真器
 ```
+
+## 🔗 相关模块
+
+- `Test_Module/chase_simulator.py` - 简单的追击仿真器
+- `Sim_Module/sim2d/simulator.py` - 主仿真器
+- `ros_topic_comm.py` - ROS2 通讯模块
 
 ## 🎯 性能优化
 
-- **使用 GPU**: `device='cuda'` 或 `device='0'`
-- **减小输入尺寸**: `imgsz=640` 改为 `imgsz=320`
-- **使用轻量模型**: `yolov8n.pt` 而非 `yolov8x.pt`
-- **限制类别**: `classes=[0]` 只检测人（COCO 数据集）
-
-## 📊 COCO 数据集类别
-
-```
-0: person (人)
-1: bicycle (自行车)
-2: car (汽车)
-3: motorcycle (摩托车)
-...
-16: dog (狗)
-17: cat (猫)
-...
-```
-
-完整类别列表：[COCO Dataset](https://cocodataset.org/#overview)
+- **本地运行**: YOLO 推理在本地执行，无需网络
+- **GPU 加速**: 自动检测并使用 CUDA（如果可用）
+- **模型缓存**: 首次加载后缓存模型，减少后续初始化时间
+- **延迟初始化**: 模型按需加载，减少启动时间
 
 ---
 
-**目标检测，精准识别！** 🎯
+**目标检测，智能感知！** 🎯
