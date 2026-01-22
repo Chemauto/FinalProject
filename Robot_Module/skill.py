@@ -42,6 +42,7 @@ _tool_metadata = {}
 # ==============================================================================
 from module.base import register_tools as register_base_tools
 from module.vision import register_tools as register_vision_tools
+from module.chase import register_tools as register_chase_tools
 from module.example import register_tools as register_example_tools
 
 # ==============================================================================
@@ -112,6 +113,10 @@ def register_all_modules():
     # 注册视觉感知模块（返回工具函数映射）
     vision_tools = register_vision_tools(mcp)
     _tool_registry.update(vision_tools)
+
+    # 注册追击模块（返回工具函数映射）
+    chase_tools = register_chase_tools(mcp)
+    _tool_registry.update(chase_tools)
 
     # 示例模块
     # example_tools = register_example_tools(mcp)
