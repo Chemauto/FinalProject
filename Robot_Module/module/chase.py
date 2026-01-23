@@ -10,6 +10,7 @@
 import sys
 import json
 import asyncio
+import math
 from pathlib import Path
 from typing import Dict, Optional
 
@@ -50,7 +51,9 @@ async def _turn(angle: float = 90.0, angular_speed: float = 0.5):
         'parameters': {'angle': angle, 'angular_speed': angular_speed}
     }
     _get_action_queue().put(action)
-    await asyncio.sleep(abs(angle) / 180.0 * 3.14159 / angular_speed if angular_speed > 0 else 1)
+    # 等待旋转完成（基于角度和角速度计算，再额外缓冲50%）
+    estimated_time = abs(angle) / 180.0 * 3.14159 / angular_speed if angular_speed > 0 else 1
+    await asyncio.sleep(estimated_time * 1.5 + 0.5)
 
 
 def _get_robot_position() -> Optional[Dict]:
@@ -77,6 +80,73 @@ def _calculate_step_distance(current_distance_pixels: float) -> float:
 
 
 # ==============================================================================
+# 核心计算函数（原 chase_core.py）
+# ==============================================================================
+
+def _calculate_target_angle(robot_x: float, robot_y: float,
+                           target_x: float, target_y: float) -> float:
+    """
+    计算目标方向角度
+
+    Args:
+        robot_x, robot_y: 机器人坐标
+        target_x, target_y: 目标坐标
+
+    Returns:
+        目标角度（度），范围 [0, 360)
+        0° = 东，90° = 北，180° = 西，270° = 南
+    """
+    # 计算向量
+    dx = target_x - robot_x
+    dy = target_y - robot_y  # 屏幕坐标系y向下
+
+    # 计算角度（注意：dy取负值，因为屏幕y向下）
+    angle_rad = math.atan2(-dy, dx)
+    angle_deg = math.degrees(angle_rad)
+
+    # 归一化到 [0, 360)
+    angle_deg = angle_deg % 360
+
+    return angle_deg
+
+
+def _calculate_angle_difference(current_angle: float,
+                                target_angle: float) -> float:
+    """
+    计算角度差
+
+    Args:
+        current_angle: 当前角度（度）
+        target_angle: 目标角度（度）
+
+    Returns:
+        角度差（度），范围 [-180, 180]
+        正值 = 左转，负值 = 右转
+    """
+    diff = target_angle - current_angle
+
+    # 标准化到 [-180, 180]
+    diff = (diff + 180) % 360 - 180
+
+    return diff
+
+
+def _calculate_distance(x1: float, y1: float,
+                        x2: float, y2: float) -> float:
+    """
+    计算两点间距离
+
+    Args:
+        x1, y1: 点1坐标
+        x2, y2: 点2坐标
+
+    Returns:
+        距离（像素）
+    """
+    return math.sqrt((x2 - x1)**2 + (y2 - y1)**2)
+
+
+# ==============================================================================
 # MCP 工具注册
 # ==============================================================================
 
@@ -98,18 +168,32 @@ def register_tools(mcp):
         """
         project_root = Path(__file__).parent.parent.parent
         sys.path.insert(0, str(project_root))
-        from ros_topic_comm import get_enemy_positions as get_positions
+        from ros_topic_comm import get_enemy_positions as get_positions, get_enemy_positions_subscriber
 
-        # 等待并重试
-        positions = []
-        for attempt in range(5):
-            positions = get_positions()
-            if len(positions) > 0:
-                break
-            print(f"[chase.get_enemy_positions] 第{attempt+1}次尝试: 未收到敌人位置，等待...", file=sys.stderr)
-            await asyncio.sleep(0.2)
+        # 获取订阅器（首次调用时会初始化ROS连接）
+        subscriber = get_enemy_positions_subscriber()
+        print(f"[chase.get_enemy_positions] 订阅器已创建，等待ROS连接建立...", file=sys.stderr)
 
-        print(f"[chase.get_enemy_positions] 最终获取到 {len(positions)} 个敌人", file=sys.stderr)
+        # 首次初始化等待：给ROS订阅者时间建立连接
+        # 注意：订阅器初始化需要额外0.5秒（在 ros_topic_comm.py 中）
+        await asyncio.sleep(1.0)
+
+        # 强制刷新：多次调用 spin_once 确保接收到最新消息
+        print(f"[chase.get_enemy_positions] 开始刷新ROS回调...", file=sys.stderr)
+
+        # 积极刷新：多次快速调用 spin_once，持续等待消息
+        for i in range(50):  # 增加到50次刷新
+            subscriber.spin_once()
+            if i % 10 == 9:  # 每10次稍微等待
+                await asyncio.sleep(0.2)
+
+        # 等待消息处理完成
+        await asyncio.sleep(0.5)
+
+        # 获取敌人位置
+        positions = get_positions()
+
+        print(f"[chase.get_enemy_positions] 获取到 {len(positions)} 个敌人: {positions}", file=sys.stderr)
         return json.dumps(positions, ensure_ascii=False)
 
     @mcp.tool()
@@ -156,24 +240,25 @@ def register_tools(mcp):
         project_root = Path(__file__).parent.parent.parent
         sys.path.insert(0, str(project_root))
         from ros_topic_comm import get_robot_state_subscriber
-        from Test_Module.chase_core import ChaseController
 
-        # 获取机器人位置
+        # 获取机器人位置订阅器
         subscriber = get_robot_state_subscriber()
+
+        # 等待一小段时间，获取最新的机器人位置
+        await asyncio.sleep(0.5)
         subscriber.spin_once()
         robot_pos = _get_robot_position()
         print(f"[chase.chase_enemy] 机器人位置: ({robot_pos['x']:.1f}, {robot_pos['y']:.1f}), 角度: {robot_pos['angle']:.1f}°",
               file=sys.stderr)
 
         # 找到最近的敌人
-        import math
         nearest = None
         min_dist = float('inf')
 
         for enemy in positions:
-            dist = math.sqrt(
-                (enemy['x'] - robot_pos['x'])**2 +
-                (enemy['y'] - robot_pos['y'])**2
+            dist = _calculate_distance(
+                robot_pos['x'], robot_pos['y'],
+                enemy['x'], enemy['y']
             )
             if dist < min_dist:
                 min_dist = dist
@@ -194,16 +279,14 @@ def register_tools(mcp):
               file=sys.stderr)
 
         # 计算角度和距离
-        controller = ChaseController()
-        target_angle = controller.calculate_target_angle(
+        target_angle = _calculate_target_angle(
             robot_pos['x'], robot_pos['y'], target_x, target_y
         )
-        angle_diff = controller.calculate_angle_difference(
+        angle_diff = _calculate_angle_difference(
             robot_pos['angle'], target_angle
         )
 
         # 详细调试信息
-        import math
         dx = target_x - robot_pos['x']
         dy = target_y - robot_pos['y']
         print(f"[chase.chase_enemy] 调试: dx={dx}, dy={dy}", file=sys.stderr)
@@ -216,10 +299,19 @@ def register_tools(mcp):
             print(f"[chase.chase_enemy] 步骤1: 旋转前 - 机器人角度: {robot_pos['angle']:.1f}°", file=sys.stderr)
             print(f"[chase.chase_enemy] 步骤1: 旋转 {angle_diff:.1f}°", file=sys.stderr)
             await _turn(angle=angle_diff, angular_speed=0.5)
-            await asyncio.sleep(3)
 
-            subscriber.spin_once()
-            robot_pos = _get_robot_position()
+            # 等待并检查旋转是否完成
+            for check in range(10):
+                await asyncio.sleep(0.5)
+                subscriber.spin_once()
+                robot_pos = _get_robot_position()
+                new_angle_diff = _calculate_angle_difference(
+                    robot_pos['angle'], target_angle
+                )
+                if abs(new_angle_diff) < 10:  # 角度差小于10度认为完成
+                    break
+                print(f"[chase.chase_enemy]  旋转检查 {check+1}: 角度差 {new_angle_diff:.1f}°", file=sys.stderr)
+
             print(f"[chase.chase_enemy] 步骤1: 旋转后 - 机器人角度: {robot_pos['angle']:.1f}°", file=sys.stderr)
         else:
             print(f"[chase.chase_enemy] 步骤1: 角度已对准，无需旋转", file=sys.stderr)
@@ -231,7 +323,7 @@ def register_tools(mcp):
         while step_count < max_steps:
             subscriber.spin_once()
             state = _get_robot_position()
-            current_dist = controller.calculate_distance(
+            current_dist = _calculate_distance(
                 state['x'], state['y'],
                 target_x, target_y
             )
@@ -248,17 +340,32 @@ def register_tools(mcp):
             print(f"[chase.chase_enemy]  前进 {step_distance:.2f} 米 (PID控制)", file=sys.stderr)
 
             await _move_forward(distance=step_distance, speed=0.3)
-            await asyncio.sleep(2)
+
+            # 等待前进完成（距离/速度 + 缓冲）
+            await asyncio.sleep(step_distance / 0.3 * 1.2 + 0.3)
 
             subscriber.spin_once()
             step_count += 1
 
         print(f"[chase.chase_enemy] 追击完成！", file=sys.stderr)
 
-        # 清除已追击的敌人
+        # 清除已追击的敌人（发送清除命令给仿真器）
         from ros_topic_comm import remove_enemy
         print(f"[chase.chase_enemy] 清除敌人: {nearest['id']}", file=sys.stderr)
         remove_enemy(nearest['id'])
+
+        # 等待仿真器处理清除命令并发布新的敌人位置
+        # 仿真器会立即发布更新后的位置（见 simulator.py spawn_enemy_at）
+        print(f"[chase.chase_enemy] 等待仿真器更新敌人位置...", file=sys.stderr)
+        await asyncio.sleep(1.0)  # 给仿真器足够的时间处理
+
+        # 多次刷新ROS回调，确保接收到仿真器发布的最新位置
+        for i in range(10):
+            subscriber.spin_once()
+            if i % 3 == 0:
+                await asyncio.sleep(0.1)  # 每3次稍微等待一下
+
+        print(f"[chase.chase_enemy] 清除流程完成", file=sys.stderr)
 
         return json.dumps({
             "success": True,

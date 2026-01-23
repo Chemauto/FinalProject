@@ -410,6 +410,7 @@ class EnemyRemoveSubscriber:
             enemy_id = command.get('enemy_id')
             if enemy_id:
                 _pending_enemy_removals.put(enemy_id)
+                print(f"[EnemyRemoveSubscriber] 收到清除命令: {enemy_id}", file=sys.stderr)
         except Exception as e:
             print(f"[EnemyRemoveSubscriber] 解析失败: {e}", file=sys.stderr)
 
@@ -478,12 +479,18 @@ class EnemyPositionsSubscriber:
             10
         )
         print("[EnemyPositionsSubscriber] ROS话题订阅器已创建: /robot/enemies", file=sys.stderr)
+        # 等待发布-订阅连接建立
+        import time
+        time.sleep(0.5)
+        print("[EnemyPositionsSubscriber] 订阅器初始化完成", file=sys.stderr)
 
     def _message_callback(self, msg):
         """内部回调"""
         global _cached_enemy_positions
         try:
-            _cached_enemy_positions = json.loads(msg.data)
+            new_positions = json.loads(msg.data)
+            _cached_enemy_positions = new_positions
+            print(f"[EnemyPositionsSubscriber] 已更新缓存: {len(_cached_enemy_positions)} 个敌人 {_cached_enemy_positions}", file=sys.stderr)
         except Exception as e:
             print(f"[EnemyPositionsSubscriber] 解析失败: {e}", file=sys.stderr)
 

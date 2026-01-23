@@ -5,6 +5,7 @@ LLM Core - 双层LLM架构核心模块
 包含任务规划和任务执行的通用逻辑
 """
 import os
+import sys
 import json
 import yaml
 from openai import OpenAI
@@ -88,20 +89,40 @@ class LLMAgent:
         try:
             system_prompt = """你是一个机器人控制助手。根据子任务描述，调用相应的工具函数。
 
-重要规则：
-1. 如果任务描述中包含文件路径（特别是图片路径 .png, .jpg），必须将其作为参数传入
-2. 调用 detect_color_and_act 时，如果任务中有路径，必须设置 image_path 参数
-3. 示例：任务"根据 /home/path/image.png 检测颜色"应该调用 detect_color_and_act(image_path='/home/path/image.png')
-4. **追击敌人需要先获取位置**：如果任务是"追击最近的敌人"，必须使用上一步获取的敌人位置结果
-   - 先调用 get_enemy_positions() 获取位置
-   - 再调用 chase_enemy(enemy_positions) 追击，其中 enemy_positions 是上一步的结果
+【关键规则 - 强制执行】
+1. **追击敌人任务（最重要）**：
+   - 如果任务描述包含"追击"字样，必须调用 chase_enemy(enemy_positions=...)
+   - enemy_positions 参数必须使用"上一步的结果"中的值
+   - 即使上一步的结果是空列表 []，也要传递给 chase_enemy！
+   - **绝对禁止**在追击任务中调用 get_enemy_positions()
 
-如果无法识别任务或不属于机器人操作，返回空结果。"""
+2. **正确示例**：
+   - 任务："获取敌人位置" → 调用 get_enemy_positions()
+   - 任务："追击最近的敌人" + 上一步结果='[{"id":"1","x":100,"y":200}]' → 调用 chase_enemy(enemy_positions='[{"id":"1","x":100,"y":200}]')
+   - 任务："追击最近的敌人" + 上一步结果='[]' → 调用 chase_enemy(enemy_positions='[]')
+
+3. **错误示例（不要这样做）**：
+   - 任务："追击敌人" → 调用 get_enemy_positions()  ❌ 错误！
+   - 任务："追击敌人" → 调用 chase_enemy()  ❌ 缺少参数！
+
+4. **图片路径参数**：
+   - 如果任务描述中包含文件路径（.png, .jpg），必须将其作为参数传入
+   - 调用 detect_color_and_act 时，必须设置 image_path 参数
+
+【执行决策】
+- 如果有"上一步的结果"且任务是"追击" → chase_enemy(enemy_positions=上一步的结果)
+- 如果任务是"获取敌人位置" → get_enemy_positions()
+- 其他任务 → 根据描述调用相应工具
+
+记住：chase_enemy 需要一个 JSON 字符串参数，不要调用它时省略参数！"""
 
             # 构建用户消息
             user_message = f"执行任务：{task_description}"
             if previous_result is not None:
                 user_message += f"\n\n上一步的结果：{previous_result}"
+                print(f"[LLM] 上一步结果: {previous_result}", file=sys.stderr)
+            else:
+                print(f"[LLM] 没有上一步结果", file=sys.stderr)
 
             completion = self.client.chat.completions.create(
                 model=self.model,

@@ -224,11 +224,16 @@ class EnemyManager:
 
     def remove_enemy(self, enemy_id: str) -> bool:
         """移除敌人"""
-        if enemy_id in self.enemies:
-            del self.enemies[enemy_id]
-            print(f"[EnemyManager] 移除敌人: {enemy_id}", file=sys.stderr)
+        # 确保 enemy_id 是字符串
+        enemy_id_str = str(enemy_id)
+
+        if enemy_id_str in self.enemies:
+            del self.enemies[enemy_id_str]
+            print(f"[EnemyManager] 移除敌人: {enemy_id_str}", file=sys.stderr)
             return True
-        return False
+        else:
+            print(f"[EnemyManager] 移除失败: 找不到敌人ID {enemy_id_str}, 现有: {list(self.enemies.keys())}", file=sys.stderr)
+            return False
 
     def clear_all(self):
         """清除所有敌人"""
