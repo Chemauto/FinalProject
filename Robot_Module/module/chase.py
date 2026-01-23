@@ -318,7 +318,9 @@ def register_tools(mcp):
 
         # 步骤2: 前进（使用PID控制，直到到达）
         step_count = 0
-        max_steps = 20
+        max_steps = 30
+        prev_dist = float('inf')
+        dist_increase_count = 0  # 距离连续增大的次数
 
         while step_count < max_steps:
             subscriber.spin_once()
@@ -335,6 +337,44 @@ def register_tools(mcp):
                 print(f"[chase.chase_enemy] ✓ 已到达目标！误差 {current_dist:.1f} 像素", file=sys.stderr)
                 break
 
+            # 检测距离是否在增大（说明方向偏离）
+            if current_dist > prev_dist:
+                dist_increase_count += 1
+                print(f"[chase.chase_enemy]  ⚠️  距离增大 ({prev_dist:.1f} → {current_dist:.1f})，第{dist_increase_count}次",
+                      file=sys.stderr)
+
+                # 连续3次距离增大，需要重新校正角度
+                if dist_increase_count >= 3:
+                    print(f"[chase.chase_enemy]  🔧 重新校正角度...", file=sys.stderr)
+
+                    # 重新计算目标角度
+                    new_target_angle = _calculate_target_angle(
+                        state['x'], state['y'], target_x, target_y
+                    )
+                    new_angle_diff = _calculate_angle_difference(
+                        state['angle'], new_target_angle
+                    )
+
+                    print(f"[chase.chase_enemy]  当前角度: {state['angle']:.1f}°, 目标: {new_target_angle:.1f}°, 差值: {new_angle_diff:.1f}°",
+                          file=sys.stderr)
+
+                    # 如果角度差超过5度，重新旋转
+                    if abs(new_angle_diff) > 5:
+                        await _turn(angle=new_angle_diff, angular_speed=0.5)
+                        await asyncio.sleep(0.5)
+                        dist_increase_count = 0  # 重置计数
+                    else:
+                        # 角度没问题但还是增大，可能是步长太大，减小步长
+                        print(f"[chase.chase_enemy]  角度已对准但仍偏离，减小步长", file=sys.stderr)
+                        step_distance = min(current_dist / 100.0 * 0.3, 0.2)  # 使用更小的步长
+                        await _move_forward(distance=step_distance, speed=0.2)
+                        await asyncio.sleep(step_distance / 0.2 * 1.5 + 0.3)
+                        step_count += 1
+                        prev_dist = current_dist
+                        continue
+            else:
+                dist_increase_count = 0  # 距离减小，重置计数
+
             # 使用PID控制计算前进距离
             step_distance = _calculate_step_distance(current_dist)
             print(f"[chase.chase_enemy]  前进 {step_distance:.2f} 米 (PID控制)", file=sys.stderr)
@@ -346,6 +386,7 @@ def register_tools(mcp):
 
             subscriber.spin_once()
             step_count += 1
+            prev_dist = current_dist
 
         print(f"[chase.chase_enemy] 追击完成！", file=sys.stderr)
 
