@@ -222,25 +222,35 @@ def draw_detections(screen: pygame.Surface, detections: List[Dict],
 
 
 def main():
-    """测试 YOLO 检测器"""
-    print("[YoloDetector] 测试模式", file=sys.stderr)
+    """YOLO 实时检测 - 极简版"""
+    import argparse
 
-    # 创建检测器（无模型，使用模拟模式）
-    detector = YoloDetector()
+    parser = argparse.ArgumentParser(description="YOLO 实时检测")
+    parser.add_argument("--source", type=str, default=0, help="检测源：0=摄像头, 或图片目录路径")
+    parser.add_argument("--model", type=str, default="best.pt", help="模型路径")
+    parser.add_argument("--conf", type=float, default=0.5, help="置信度阈值")
+    parser.add_argument("--save", action="store_true", help="保存结果")
+    args = parser.parse_args()
 
-    # 测试从文件检测
-    data_dir = os.path.join(os.path.dirname(__file__), "data", "images")
-    if os.path.exists(data_dir):
-        test_images = [f for f in os.listdir(data_dir) if f.endswith('.png')][:3]
+    # 设置离线模式
+    os.environ['YOLO_OFFLINE'] = 'True'
 
-        for img_file in test_images:
-            img_path = os.path.join(data_dir, img_file)
-            print(f"[YoloDetector] 检测: {img_file}", file=sys.stderr)
+    # 加载模型
+    model_path = args.model if os.path.exists(args.model) else "/home/xcj/work/FinalProject/Yolo_Module/best.pt"
+    print(f"[YOLO] 加载模型: {model_path}")
 
-            detections = detector.detect_from_file(img_path)
-            print(f"[YoloDetector] 检测到 {len(detections)} 个目标", file=sys.stderr)
-            for det in detections:
-                print(f"  - {det['id']}: ({det['x']:.1f}, {det['y']:.1f}) conf={det['conf']:.2f}")
+    from ultralytics import YOLO
+    model = YOLO(model_path)
+
+    # 实时检测
+    print(f"[YOLO] 开始检测 (source={args.source}, conf={args.conf})")
+    model.predict(
+        source=args.source,
+        conf=args.conf,
+        save=args.save,
+        show=True,
+        verbose=True
+    )
 
 
 if __name__ == "__main__":

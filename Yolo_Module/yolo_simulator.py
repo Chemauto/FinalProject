@@ -104,9 +104,10 @@ def enemy_to_yolo_label(enemy, img_width, img_height):
 
 
 def generate_yolo_dataset(output_dir, num_samples=100, min_enemies=1, max_enemies=5,
-                          show_bbox=False, save_bbox_viz=True):
+                          show_bbox=False, save_bbox_viz=True,
+                          train_split=0.9):
     """
-    生成 YOLO 训练数据集
+    生成 YOLO 训练数据集（自动分割训练集和验证集）
 
     Args:
         output_dir: 输出目录
@@ -115,16 +116,27 @@ def generate_yolo_dataset(output_dir, num_samples=100, min_enemies=1, max_enemie
         max_enemies: 每张图最多敌人数
         show_bbox: 是否显示边界框（在原始截图中）
         save_bbox_viz: 是否保存带边界框的可视化图片
+        train_split: 训练集比例（默认0.9，即90%训练，10%验证）
     """
-    # 创建输出目录
-    images_dir = os.path.join(output_dir, "images")
-    labels_dir = os.path.join(output_dir, "labels")
-    bbox_viz_dir = os.path.join(output_dir, "bbox_viz")
+    # 创建输出目录（按照 YOLO 格式：train/val 分离）
+    train_images_dir = os.path.join(output_dir, "images", "train")
+    val_images_dir = os.path.join(output_dir, "images", "val")
+    train_labels_dir = os.path.join(output_dir, "labels", "train")
+    val_labels_dir = os.path.join(output_dir, "labels", "val")
 
-    os.makedirs(images_dir, exist_ok=True)
-    os.makedirs(labels_dir, exist_ok=True)
+    os.makedirs(train_images_dir, exist_ok=True)
+    os.makedirs(val_images_dir, exist_ok=True)
+    os.makedirs(train_labels_dir, exist_ok=True)
+    os.makedirs(val_labels_dir, exist_ok=True)
+
+    # 可视化目录（可选）
+    bbox_viz_dir = os.path.join(output_dir, "bbox_viz")
     if save_bbox_viz:
         os.makedirs(bbox_viz_dir, exist_ok=True)
+
+    # 计算训练集和验证集的分界点
+    split_idx = int(num_samples * train_split)
+    print(f"[YOLO Gen] 数据分割: 训练集 {split_idx} 张, 验证集 {num_samples - split_idx} 张")
 
     # 初始化 Pygame
     pygame.init()
@@ -170,12 +182,20 @@ def generate_yolo_dataset(output_dir, num_samples=100, min_enemies=1, max_enemie
         # 生成文件名
         filename = f"sample_{i:05d}"
 
+        # 根据索引判断是训练集还是验证集
+        if i < split_idx:
+            # 训练集
+            img_path = os.path.join(train_images_dir, f"{filename}.png")
+            label_path = os.path.join(train_labels_dir, f"{filename}.txt")
+        else:
+            # 验证集
+            img_path = os.path.join(val_images_dir, f"{filename}.png")
+            label_path = os.path.join(val_labels_dir, f"{filename}.txt")
+
         # 保存截图（原始图，可选是否带框）
-        img_path = os.path.join(images_dir, f"{filename}.png")
         pygame.image.save(screen, img_path)
 
         # 生成 YOLO 标注文件
-        label_path = os.path.join(labels_dir, f"{filename}.txt")
         with open(label_path, 'w') as f:
             for enemy in enemies:
                 label_line = enemy_to_yolo_label(enemy, WIDTH, HEIGHT)
@@ -224,8 +244,10 @@ def generate_yolo_dataset(output_dir, num_samples=100, min_enemies=1, max_enemie
         json.dump(metadata, f, indent=2, ensure_ascii=False)
 
     print(f"[YOLO Gen] 完成！共生成 {num_samples} 个样本")
-    print(f"[YOLO Gen] 图片保存至: {images_dir}")
-    print(f"[YOLO Gen] 标注保存至: {labels_dir}")
+    print(f"[YOLO Gen] 训练集图片: {train_images_dir} ({split_idx} 张)")
+    print(f"[YOLO Gen] 验证集图片: {val_images_dir} ({num_samples - split_idx} 张)")
+    print(f"[YOLO Gen] 训练集标注: {train_labels_dir}")
+    print(f"[YOLO Gen] 验证集标注: {val_labels_dir}")
     if save_bbox_viz:
         print(f"[YOLO Gen] 可视化保存至: {bbox_viz_dir}")
     print(f"[YOLO Gen] 元数据: {metadata_path}")
@@ -268,19 +290,24 @@ def main():
     print_yolo_format_example()
 
     # 配置参数
-    OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "data")
-    NUM_SAMPLES = 100
+    OUTPUT_DIR = "/home/xcj/work/testyolo/YoloTest/datasets/sim_enemy"
+    NUM_SAMPLES = 1000
     MIN_ENEMIES = 1
     MAX_ENEMIES = 5
+    TRAIN_SPLIT = 0.9
 
-    # 生成数据集
+    # 计算分割点
+    split_idx = int(NUM_SAMPLES * TRAIN_SPLIT)
+
+    # 生成数据集（自动分割：900训练 + 100验证）
     metadata = generate_yolo_dataset(
         output_dir=OUTPUT_DIR,
         num_samples=NUM_SAMPLES,
         min_enemies=MIN_ENEMIES,
         max_enemies=MAX_ENEMIES,
         show_bbox=False,  # 原始图不显示边界框
-        save_bbox_viz=True  # 保存带框的可视化图
+        save_bbox_viz=True,  # 保存带框的可视化图
+        train_split=TRAIN_SPLIT  # 90%训练，10%验证
     )
 
     # 打印统计信息
@@ -289,9 +316,52 @@ def main():
     print("=" * 60)
     total_enemies = sum(m["num_enemies"] for m in metadata)
     print(f"总样本数: {len(metadata)}")
+    print(f"  - 训练集: {split_idx} 张")
+    print(f"  - 验证集: {NUM_SAMPLES - split_idx} 张")
     print(f"总目标数: {total_enemies}")
     print(f"平均每张图目标数: {total_enemies / len(metadata):.2f}")
+    print(f"数据集配置文件: {os.path.join(OUTPUT_DIR, 'sim_enemy.yaml')}")
     print("=" * 60)
+
+    # 自动复制 YAML 配置文件到输出目录
+    yaml_source = "/home/xcj/work/testyolo/YoloTest/datasets/sim_enemy/sim_enemy.yaml"
+    yaml_dest = os.path.join(OUTPUT_DIR, "sim_enemy.yaml")
+
+    # 如果源文件不存在，则创建
+    if not os.path.exists(yaml_source):
+        print(f"\n[YOLO Gen] 创建 YAML 配置文件...")
+        yaml_content = f"""# YOLO 训练数据配置 - 仿真器敌人检测数据集
+# 数据集路径
+path: {OUTPUT_DIR}
+
+# 训练和验证图片目录（相对于 path）
+train: images/train  # 训练图片目录（{split_idx}张）
+val: images/val      # 验证图片目录（{num_samples - split_idx}张）
+
+# 测试集目录（可选）
+test:
+
+# 类别数量
+nc: 1
+
+# 类别名称
+names:
+  0: enemy  # 敌人类别
+
+# 数据集说明：
+# - 总样本数: {num_samples} 张（{split_idx}训练 + {num_samples - split_idx}验证）
+# - 图片尺寸: 800 x 600 像素
+# - 敌人形状: 圆形，半径 15 像素
+# - 边界框: 外接正方形 30 x 30 像素
+# - 标注格式: class_id center_x center_y width height (归一化到 [0, 1])
+# - 每张图敌人数: 1-5 个（随机）
+"""
+        with open(yaml_dest, 'w', encoding='utf-8') as f:
+            f.write(yaml_content)
+        print(f"[YOLO Gen] YAML 配置文件已创建: {yaml_dest}")
+    else:
+        print(f"[YOLO Gen] YAML 配置文件已存在: {yaml_source}")
+
 
 
 if __name__ == "__main__":

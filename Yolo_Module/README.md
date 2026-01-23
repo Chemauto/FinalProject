@@ -27,18 +27,112 @@ Yolo_Module/
 
 ## 快速开始
 
-### 1. 生成训练数据
+### 数据集准备（两种方式）
+
+#### 方式1：使用预生成的1000张数据集（推荐）
+
+已生成的数据集位于：`/home/xcj/work/testyolo/YoloTest/datasets/sim_enemy`
+
+**数据集规格：**
+- 总样本数：1000张
+- 训练集：900张（`images/train/`）
+- 验证集：100张（`images/val/`）
+- 图片尺寸：800 x 600 像素
+- 敌人类型：圆形，半径15像素，红色
+- 标注格式：YOLO格式（归一化坐标）
+
+**使用方法：**
+
+训练时使用该数据集的YAML配置文件：
 
 ```bash
-cd /home/robot/work/FinalProject
+from ultralytics import YOLO
+
+# 加载预训练模型
+model = YOLO('yolov8n.pt')  # 或 yolov11n.pt
+
+# 训练（使用外部数据集配置）
+model.train(
+    data='/home/xcj/work/testyolo/YoloTest/datasets/sim_enemy/sim_enemy.yaml',
+    epochs=100,
+    imgsz=640,
+    batch=16
+)
+```
+
+**数据集目录结构：**
+```
+/home/xcj/work/testyolo/YoloTest/datasets/sim_enemy/
+├── sim_enemy.yaml          # 数据集配置文件
+├── images/
+│   ├── train/              # 900张训练图片
+│   │   ├── sample_00000.png
+│   │   └── ...
+│   └── val/                # 100张验证图片
+│       ├── sample_00900.png
+│       └── ...
+└── labels/
+    ├── train/              # 900个训练标注
+    │   ├── sample_00000.txt
+    │   └── ...
+    └── val/                # 100个验证标注
+        ├── sample_00900.txt
+        └── ...
+```
+
+#### 方式2：生成自定义训练数据
+
+```bash
+cd /home/xcj/work/FinalProject
 python3 Yolo_Module/yolo_simulator.py
 ```
 
 这将生成：
-- `data/images/` - 100 张仿真器截图
+- `data/images/` - 默认100张仿真器截图（可修改）
 - `data/labels/` - 对应的 YOLO 格式标注文件
 - `data/bbox_viz/` - 带边界框的可视化图片
 - `data/metadata.json` - 数据集元数据
+
+**自定义生成参数：**
+
+编辑 `yolo_simulator.py` 中的配置：
+```python
+OUTPUT_DIR = "data"         # 输出目录
+NUM_SAMPLES = 1000          # 生成样本数
+MIN_ENEMIES = 1             # 最少敌人数
+MAX_ENEMIES = 5             # 最多敌人数
+```
+
+**手动分割训练集和验证集：**
+
+```bash
+# 将生成的前900张作为训练集，后100张作为验证集
+mkdir -p data/images/train data/images/val
+mkdir -p data/labels/train data/labels/val
+
+# 移动文件（示例脚本）
+mv data/images/sample_00[0-8]*.png data/images/train/
+mv data/images/sample_009*.png data/images/val/
+mv data/labels/sample_00[0-8]*.txt data/labels/train/
+mv data/labels/sample_009*.txt data/labels/val/
+```
+
+然后修改 `data.yaml.template` 中的路径：
+```yaml
+path: /home/xcj/work/FinalProject/Yolo_Module/data
+train: images/train
+val: images/val
+```
+
+### 2. 验证标注
+
+```bash
+# 可视化单张图片
+python3 Yolo_Module/visualize_labels.py --single --show
+
+# 批量可视化（不显示窗口）
+python3 Yolo_Module/visualize_labels.py
+```
 
 ### 2. 验证标注
 
@@ -57,33 +151,38 @@ python3 Yolo_Module/visualize_labels.py
 pip install ultralytics
 ```
 
-**训练命令：**
+**训练命令（使用外部1000张数据集）：**
 ```bash
 from ultralytics import YOLO
 
 # 加载预训练模型
 model = YOLO('yolov8n.pt')  # 或 yolov11n.pt
 
-# 训练
+# 训练（使用外部数据集）
 model.train(
-    data='Yolo_Module/data.yaml',  # 数据配置文件（需要创建）
+    data='/home/xcj/work/testyolo/YoloTest/datasets/sim_enemy/sim_enemy.yaml',
     epochs=100,
     imgsz=640,
     batch=16
 )
 
-# 保存模型
-# 模型会保存在 runs/detect/train/weights/best.pt
+# 模型保存在 runs/detect/train/weights/best.pt
 ```
 
-**创建 data.yaml：**
-```yaml
-path: /home/robot/work/FinalProject/Yolo_Module/data  # 数据集根目录
-train: images  # 训练图片目录（相对于 path）
-val: images    # 验证图片目录（暂时使用相同目录）
+**或使用本地生成的数据集：**
+```bash
+from ultralytics import YOLO
 
-names:
-  0: enemy  # 类别名称
+# 加载预训练模型
+model = YOLO('yolov8n.pt')
+
+# 训练（使用本地数据集，需先复制data.yaml.template为data.yaml）
+model.train(
+    data='Yolo_Module/data.yaml',
+    epochs=100,
+    imgsz=640,
+    batch=16
+)
 ```
 
 ### 4. 使用训练好的模型检测
@@ -292,11 +391,21 @@ pip install python-xlib
 
 ## 下一步
 
-1. 生成训练数据：`python3 Yolo_Module/yolo_simulator.py`
-2. 检查标注质量：`python3 Yolo_Module/visualize_labels.py`
-3. 训练模型：使用 ultralytics 训练
-4. 测试检测：`python3 Yolo_Module/yolo_detector.py`
-5. 集成到系统：修改 Robot_Module 使用 YOLO 检测
+### 使用预生成数据集（推荐）
+
+1. **验证数据集**：检查 `/home/xcj/work/testyolo/YoloTest/datasets/sim_enemy/` 中的图片和标注
+2. **训练模型**：使用 `sim_enemy.yaml` 配置文件训练
+3. **测试检测**：`python3 Yolo_Module/yolo_detector.py`
+4. **集成到系统**：修改 Robot_Module 使用 YOLO 检测
+
+### 使用自生成数据集
+
+1. **生成数据**：`python3 Yolo_Module/yolo_simulator.py`（修改NUM_SAMPLES=1000）
+2. **分割数据集**：手动将900张放入train/，100张放入val/
+3. **检查标注**：`python3 Yolo_Module/visualize_labels.py`
+4. **训练模型**：使用 ultralytics 训练
+5. **测试检测**：`python3 Yolo_Module/yolo_detector.py`
+6. **集成到系统**：修改 Robot_Module 使用 YOLO 检测
 
 ---
 
