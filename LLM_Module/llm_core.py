@@ -73,9 +73,15 @@ class LLMAgent:
             print(f"❌ [规划失败] {e}\n[回退] 将作为单个任务处理")
             return [{"step": 1, "task": user_input, "type": "综合"}]
 
-    def execute_single_task(self, task_description: str, tools: List[Dict], execute_tool_fn: Callable) -> Dict:
+    def execute_single_task(self, task_description: str, tools: List[Dict], execute_tool_fn: Callable, previous_result: Any = None) -> Dict:
         """
         下层LLM：执行单个子任务
+
+        Args:
+            task_description: 任务描述
+            tools: 可用工具列表
+            execute_tool_fn: 工具执行函数
+            previous_result: 上一步的执行结果（如果有）
         """
         import time
         print(f"\n{'─'*50}\n⚙️  [执行中] {task_description}\n{'─'*50}")
@@ -86,14 +92,22 @@ class LLMAgent:
 1. 如果任务描述中包含文件路径（特别是图片路径 .png, .jpg），必须将其作为参数传入
 2. 调用 detect_color_and_act 时，如果任务中有路径，必须设置 image_path 参数
 3. 示例：任务"根据 /home/path/image.png 检测颜色"应该调用 detect_color_and_act(image_path='/home/path/image.png')
+4. **追击敌人需要先获取位置**：如果任务是"追击最近的敌人"，必须使用上一步获取的敌人位置结果
+   - 先调用 get_enemy_positions() 获取位置
+   - 再调用 chase_enemy(enemy_positions) 追击，其中 enemy_positions 是上一步的结果
 
 如果无法识别任务或不属于机器人操作，返回空结果。"""
+
+            # 构建用户消息
+            user_message = f"执行任务：{task_description}"
+            if previous_result is not None:
+                user_message += f"\n\n上一步的结果：{previous_result}"
 
             completion = self.client.chat.completions.create(
                 model=self.model,
                 messages=[
                     {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": f"执行任务：{task_description}"}
+                    {"role": "user", "content": user_message}
                 ],
                 tools=tools,
                 tool_choice="auto",
@@ -138,10 +152,19 @@ class LLMAgent:
 
             print("\n" + "█"*60 + "\n🚀 [开始执行] 按顺序执行子任务\n" + "█"*60)
             results = []
+            previous_result = None
+
             for idx, task in enumerate(tasks, 1):
                 print(f"\n【步骤 {idx}/{len(tasks)}】")
-                result = self.execute_single_task(task["task"], tools, execute_tool_fn)
+                result = self.execute_single_task(task["task"], tools, execute_tool_fn, previous_result)
                 results.append(result)
+
+                # 保存结果供下一步使用
+                if result.get("success") and result.get("result"):
+                    previous_result = result["result"].get("result")
+                else:
+                    previous_result = None
+
                 if not result.get("success"):
                     print(f"\n⚠️  [警告] 步骤 {idx} 失败，但继续执行后续任务")
 

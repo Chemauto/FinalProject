@@ -152,7 +152,7 @@ def main():
     # 获取ROS话题队列
     import sys
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-    from ros_topic_comm import get_shared_queue
+    from ros_topic_comm import get_shared_queue, publish_robot_state
 
     # 初始化 Pygame
     pygame.init()
@@ -201,6 +201,9 @@ def main():
 
             # 更新机器人
             robot.update()
+
+            # 发布机器人状态（位置和角度）
+            publish_robot_state(robot.x, robot.y, robot.angle)
 
             # 绘制
             screen.fill(WHITE)
