@@ -1,380 +1,303 @@
 # Yolo_Module - YOLO 目标检测模块
 
-基于 YOLOv8 的目标检测模块，支持屏幕截图、目标检测和坐标映射。
+基于 YOLO 的敌人检测模块，用于替代仿真器直接获取坐标的方式。
 
-## 📁 模块结构
+## 功能
+
+1. **自动生成训练数据** - 随机撒点截图并生成 YOLO 格式标注
+2. **标注可视化** - 验证标注是否正确
+3. **YOLO 检测** - 使用训练好的模型进行目标检测
+4. **ROS 话题发布** - 将检测结果发布到 `/robot/yolo_enemies` 话题
+
+## 目录结构
 
 ```
 Yolo_Module/
 ├── README.md                  # 本文档
-├── yolo_simulator.py          # YOLO 追击仿真器
-└── test/                      # YOLO 核心模块
-    ├── __init__.py
-    ├── yolo_detector.py       # YOLO 检测器
-    ├── screen_capture.py      # 屏幕截图工具
-    └── coordinate_mapper.py   # 坐标映射器
+├── data/                      # 数据目录
+│   ├── images/               # 原始截图
+│   ├── labels/               # YOLO 标注文件
+│   ├── bbox_viz/             # 带边界框的可视化图片
+│   └── metadata.json         # 数据集元数据
+├── yolo_simulator.py         # 训练数据生成器
+├── visualize_labels.py       # 标注可视化工具
+├── yolo_detector.py          # YOLO 检测器
+└── yolo_publisher.py         # ROS 发布器
 ```
 
-## 🎯 功能特性
+## 快速开始
 
-- **YOLO 目标检测**: 使用 ultralytics YOLOv8 检测图像中的目标
-- **屏幕截图**: 支持全屏截图和区域截图（pyautogui 或 mss）
-- **坐标映射**: 屏幕坐标 ↔ 仿真器坐标双向映射
-- **模块化设计**: 独立的模块，易于集成和扩展
-- **延迟初始化**: YOLO 模型按需加载，减少启动时间
+### 1. 生成训练数据
 
-## 🔧 核心组件
-
-### test/yolo_detector.py - YOLO 检测器
-
-**YoloDetector 类：**
-
-```python
-from Yolo_Module.test import YoloDetector
-
-# 初始化检测器
-detector = YoloDetector(model_name="yolov8n.pt")
-
-# 检测目标
-detections = detector.detect(image_array, conf_threshold=0.25)
-
-# 检测结果格式
-# [{
-#   "center": (x, y),        # 中心坐标
-#   "confidence": 0.85,      # 置信度
-#   "class": "person",       # 类别
-#   "box": (x1, y1, x2, y2)  # 边界框
-# }]
-
-# 只检测人员
-person_detections = detector.detect_person(image_array)
+```bash
+cd /home/robot/work/FinalProject
+python3 Yolo_Module/yolo_simulator.py
 ```
 
-**支持的模型：**
-- `yolov8n.pt` - Nano (最快，推荐实时应用)
-- `yolov8s.pt` - Small
-- `yolov8m.pt` - Medium
-- `yolov8l.pt` - Large
-- `yolov8x.pt` - XLarge (最准确)
+这将生成：
+- `data/images/` - 100 张仿真器截图
+- `data/labels/` - 对应的 YOLO 格式标注文件
+- `data/bbox_viz/` - 带边界框的可视化图片
+- `data/metadata.json` - 数据集元数据
 
-### test/screen_capture.py - 屏幕截图工具
+### 2. 验证标注
 
-**ScreenCapture 类：**
+```bash
+# 可视化单张图片
+python3 Yolo_Module/visualize_labels.py --single --show
 
-```python
-from Yolo_Module.test import ScreenCapture
-
-# 初始化截图工具
-capturer = ScreenCapture()
-
-# 截取全屏
-image = capturer.capture_screen()
-
-# 截取区域
-image = capturer.capture_region(x=100, y=100, width=800, height=600)
-
-# 保存图像
-ScreenCapture.save_image(image_array, "/tmp/screenshot.jpg")
-
-# 保存图像（带时间戳）
-filename = ScreenCapture.save_image_with_timestamp(
-    image_array,
-    directory="/tmp",
-    prefix="capture"
-)
+# 批量可视化（不显示窗口）
+python3 Yolo_Module/visualize_labels.py
 ```
 
-**依赖项：**
-- `pyautogui` 或 `mss` - 屏幕截图
-- `opencv-python` - 图像保存
+### 3. 训练 YOLO 模型
 
-### test/coordinate_mapper.py - 坐标映射器
+**安装依赖：**
+```bash
+pip install ultralytics
+```
 
-**CoordinateMapper 类：**
+**训练命令：**
+```bash
+from ultralytics import YOLO
 
-```python
-from Yolo_Module.test import CoordinateMapper
+# 加载预训练模型
+model = YOLO('yolov8n.pt')  # 或 yolov11n.pt
 
-# 初始化映射器
-mapper = CoordinateMapper(
-    screen_region=(100, 100, 800, 600),  # x, y, width, height
-    simulator_size=(800, 600)            # width, height
+# 训练
+model.train(
+    data='Yolo_Module/data.yaml',  # 数据配置文件（需要创建）
+    epochs=100,
+    imgsz=640,
+    batch=16
 )
 
-# 屏幕坐标 → 仿真器坐标
-sim_x, sim_y = mapper.screen_to_simulator(screen_x=400, screen_y=300)
-
-# 仿真器坐标 → 屏幕坐标
-screen_x, screen_y = mapper.simulator_to_screen(sim_x=400, sim_y=300)
-
-# 绝对屏幕坐标 → 仿真器坐标
-sim_x, sim_y = mapper.absolute_screen_to_simulator(abs_screen_x=500, abs_screen_y=400)
-
-# 动态更新配置
-mapper.set_screen_region((200, 200, 800, 600))
-mapper.set_simulator_size((1024, 768))
+# 保存模型
+# 模型会保存在 runs/detect/train/weights/best.pt
 ```
 
-### yolo_simulator.py - YOLO 追击仿真器
+**创建 data.yaml：**
+```yaml
+path: /home/robot/work/FinalProject/Yolo_Module/data  # 数据集根目录
+train: images  # 训练图片目录（相对于 path）
+val: images    # 验证图片目录（暂时使用相同目录）
 
-**YoloSimulator 类：**
+names:
+  0: enemy  # 类别名称
+```
 
-集成 YOLO 检测、屏幕截图和 2D 仿真器的完整仿真系统。
+### 4. 使用训练好的模型检测
+
+```bash
+# 启动仿真器（终端1）
+python3 Sim_Module/sim2d/simulator.py
+
+# 启动 YOLO 检测发布器（终端2）
+python3 Yolo_Module/yolo_publisher.py --model runs/detect/train/weights/best.pt --rate 1.0
+```
+
+## YOLO 标注格式
+
+YOLO 使用归一化的边界框坐标：
+
+```
+class_id center_x center_y width height
+```
+
+其中所有值都在 [0, 1] 范围内。
+
+### 坐标转换
+
+对于圆形敌人（半径 15 像素）：
+- 边界框是外接正方形 (30x30 像素)
+- `center_x = enemy.x / image_width`
+- `center_y = enemy.y / image_height`
+- `width = (2 * radius) / image_width = 30 / 800`
+- `height = (2 * radius) / image_height = 30 / 600`
+
+### 示例
+
+```
+0 0.500000 0.400000 0.037500 0.050000
+0 0.750000 0.600000 0.037500 0.050000
+```
+
+## 脚本说明
+
+### yolo_simulator.py
+
+自动生成训练数据的脚本。
+
+**配置参数：**
+```python
+OUTPUT_DIR = "data"         # 输出目录
+NUM_SAMPLES = 100           # 生成样本数
+MIN_ENEMIES = 1             # 最少敌人数
+MAX_ENEMIES = 5             # 最多敌人数
+```
+
+**修改参数：**编辑 `main()` 函数中的变量。
+
+### visualize_labels.py
+
+可视化 YOLO 标注的工具。
+
+**参数：**
+- `--single`: 单张图片模式
+- `--show`: 显示窗口
+- `--images`: 图片目录
+- `--labels`: 标注目录
+- `--output`: 输出目录
+
+**示例：**
+```bash
+# 批量可视化并保存
+python3 Yolo_Module/visualize_labels.py --output data/visualized
+
+# 单张可视化并显示
+python3 Yolo_Module/visualize_labels.py --single --show \
+    --images data/images/sample_00000.png \
+    --labels data/labels/sample_00000.txt
+```
+
+### yolo_detector.py
+
+YOLO 检测器类。
+
+**使用方式：**
+```python
+from Yolo_Module.yolo_detector import YoloDetector
+
+# 创建检测器
+detector = YoloDetector(model_path="best.pt", conf_threshold=0.5)
+
+# 从文件检测
+detections = detector.detect_from_file("test.png")
+
+# 从 Pygame 屏幕检测
+detections = detector.detect_from_screenshot(screen)
+
+# 结果格式
+# [{"id": "yolo_0", "x": 400.0, "y": 300.0, "conf": 0.95}, ...]
+```
+
+### yolo_publisher.py
+
+ROS 发布器，截取屏幕并发布检测结果。
+
+**参数：**
+- `--model`: YOLO 模型路径
+- `--conf`: 置信度阈值（默认 0.5）
+- `--rate`: 发布频率 Hz（默认 1.0）
+- `--duration`: 运行时长秒（默认无限）
+
+**示例：**
+```bash
+python3 Yolo_Module/yolo_publisher.py \
+    --model best.pt \
+    --conf 0.7 \
+    --rate 2.0
+```
+
+## ROS 话题
+
+### 发布的话题
+
+| 话题名称 | 消息类型 | 用途 |
+|---------|---------|------|
+| `/robot/yolo_enemies` | String | YOLO 检测的敌人位置 |
+
+### 消息格式
+
+```json
+[
+  {"id": "yolo_0", "x": 400.0, "y": 300.0},
+  {"id": "yolo_1", "x": 600.0, "y": 200.0}
+]
+```
+
+## 集成到现有系统
+
+### 修改 Robot_Module
+
+在 `Robot_Module/module/chase.py` 中添加新的 MCP 工具：
 
 ```python
-from Yolo_Module.yolo_simulator import YoloSimulator
+@mcp.tool()
+def get_enemy_positions_by_yolo():
+    """
+    使用 YOLO 检测获取敌人位置
 
-# 启动仿真器
-simulator = YoloSimulator()
-simulator.run()
+    Returns:
+        JSON 字符串：敌人位置列表
+    """
+    # 订阅 /robot/yolo_enemies 话题
+    # 返回检测结果
+    ...
 ```
 
-**操作说明：**
-- **鼠标左键拖动**: 选择区域进行截图和检测
-- **按 S**: 设置屏幕截图区域
-- **按 C**: 清除所有敌人
-- **按 L**: 切换追击线显示
-- **按 ESC**: 退出
+### 修改追击流程
 
-**工作流程：**
-1. 启动仿真器：`python3 Yolo_Module/yolo_simulator.py`
-2. 按 `S` 设置屏幕截图区域
-3. 在仿真器中拖动鼠标选择区域
-4. 自动使用 YOLO 检测并生成敌人
-5. 通过 ROS2 接口执行追击
+1. 原有流程：仿真器发布 `/robot/enemies`
+2. 新流程：YOLO 检测发布 `/robot/yolo_enemies`
+3. 追击模块可以选择使用哪个数据源
 
-## 🚀 快速开始
+## 常见问题
 
-### 1. 安装依赖
+### Q: YOLO 检测不到敌人？
+
+A: 可能的原因：
+1. 模型未训练或训练不足
+2. 置信度阈值过高
+3. 训练数据与测试场景差异过大
+
+### Q: 检测位置不准确？
+
+A: 改进方法：
+1. 增加训练数据量
+2. 增加数据多样性（不同位置、数量的敌人）
+3. 使用更大的模型（yolov8s, yolov8m）
+4. 调整训练参数
+
+### Q: 如何提高检测速度？
+
+A: 优化方法：
+1. 使用更小的模型（yolov8n, yolov8s）
+2. 降低输入分辨率
+3. 使用 GPU 加速
+4. 降低发布频率
+
+## 依赖
+
+```
+pygame>=2.5.0
+ultralytics>=8.0.0
+rclpy>=1.0.0
+Pillow>=10.0.0
+numpy>=1.24.0
+```
+
+## 安装
 
 ```bash
 # 基础依赖
-pip install ultralytics opencv-python numpy
+pip install -r /home/robot/work/FinalProject/requirements.txt
 
-# 屏幕截图（任选其一）
-pip install pyautogui
-# 或
-pip install mss
+# YOLO 相关
+pip install ultralytics
 
-# Pygame（仿真器）
-pip install pygame
+# 屏幕捕获（如果需要）
+pip install python-xlib
 ```
 
-### 2. 下载 YOLO 模型
+## 下一步
 
-首次运行时，YOLO 会自动下载模型。也可以手动下载：
-
-```bash
-# 使用 YOLO CLI
-yolo detect model=yolov8n.pt
-
-# 或直接下载
-wget https://github.com/ultralytics/assets/releases/download/v0.0.0/yolov8n.pt
-```
-
-### 3. 运行仿真器
-
-```bash
-# 启动 YOLO 追击仿真器
-python3 Yolo_Module/yolo_simulator.py
-
-# 按 S 设置屏幕区域，格式: x y width height
-# 示例: 100 100 800 600
-```
-
-### 4. 测试单个模块
-
-```bash
-# 测试 YOLO 检测器
-python3 Yolo_Module/test/yolo_detector.py
-
-# 测试屏幕截图
-python3 Yolo_Module/test/screen_capture.py
-
-# 测试坐标映射
-python3 Yolo_Module/test/coordinate_mapper.py
-```
-
-## 💡 使用场景
-
-### 场景 1: 检测图像中的目标
-
-```python
-from Yolo_Module.test import YoloDetector, ScreenCapture
-import cv2
-
-# 初始化
-detector = YoloDetector(model_name="yolov8n.pt")
-capturer = ScreenCapture()
-
-# 截图
-image = capturer.capture_region(100, 100, 800, 600)
-
-# 检测
-detections = detector.detect(image)
-
-# 保存结果（绘制边界框）
-for det in detections:
-    x1, y1, x2, y2 = det["box"]
-    cv2.rectangle(image, (int(x1), int(y1)), (int(x2), int(y2)), (0, 255, 0), 2)
-    cv2.putText(image, det["class"], (int(x1), int(y1) - 10),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
-
-cv2.imwrite("/tmp/result.jpg", cv2.cvtColor(image, cv2.COLOR_RGB2BGR))
-```
-
-### 场景 2: 集成到仿真器
-
-```python
-from Yolo_Module.test import YoloDetector, ScreenCapture, CoordinateMapper
-from Yolo_Module.yolo_simulator import YoloSimulator
-
-# 创建仿真器
-simulator = YoloSimulator()
-
-# 仿真器会自动：
-# 1. 监听鼠标拖动选择区域
-# 2. 截取选定区域
-# 3. 使用 YOLO 检测
-# 4. 在检测到的位置生成敌人
-# 5. 通过 ROS2 发布追击命令
-
-simulator.run()
-```
-
-### 场景 3: 与 ROS2 集成
-
-```python
-from Yolo_Module.test import YoloDetector, ScreenCapture, CoordinateMapper
-from ros_topic_comm import get_shared_queue
-
-# 初始化
-detector = YoloDetector()
-capturer = ScreenCapture()
-mapper = CoordinateMapper(screen_region=(100, 100, 800, 600),
-                         simulator_size=(800, 600))
-
-# 获取 ROS 队列
-queue = get_shared_queue()
-
-# 截图并检测
-image = capturer.capture_region(100, 100, 800, 600)
-detections = detector.detect(image)
-
-# 发布追击命令
-for det in detections:
-    screen_x, screen_y = det["center"]
-    sim_x, sim_y = mapper.screen_to_simulator(screen_x, screen_y)
-
-    # 发布敌人位置
-    from ros_topic_comm import set_enemy_positions
-    set_enemy_positions([{"id": 0, "x": sim_x, "y": sim_y}])
-
-    # 发布追击命令
-    queue.put({
-        "action": "chase_enemy",
-        "parameters": {}
-    })
-```
-
-## 🐛 调试技巧
-
-### 1. 查看检测结果
-
-```python
-detections = detector.detect(image)
-for det in detections:
-    print(f"类别: {det['class']}")
-    print(f"置信度: {det['confidence']:.2f}")
-    print(f"中心: ({det['center'][0]:.1f}, {det['center'][1]:.1f})")
-    print(f"边界框: {det['box']}")
-```
-
-### 2. 保存截图调试
-
-```python
-# 仿真器会自动保存截图到 /tmp/yolo_capture_*.jpg
-# 查看截图确认区域是否正确
-ls -l /tmp/yolo_capture_*.jpg
-```
-
-### 3. 调整 YOLO 参数
-
-```python
-# 提高置信度阈值（减少误检）
-detections = detector.detect(image, conf_threshold=0.5)
-
-# 使用更大的模型（提高准确率）
-detector = YoloDetector(model_name="yolov8m.pt")
-```
-
-### 4. 测试坐标映射
-
-```python
-# 测试屏幕坐标到仿真器坐标的映射
-mapper = CoordinateMapper(screen_region=(100, 100, 800, 600),
-                         simulator_size=(800, 600))
-
-# 测试关键点
-test_points = [
-    (0, 0),           # 左上角
-    (400, 300),       # 中心
-    (800, 600),       # 右下角
-]
-
-for sx, sy in test_points:
-    sim_x, sim_y = mapper.screen_to_simulator(sx, sy)
-    print(f"屏幕({sx}, {sy}) → 仿真器({sim_x:.1f}, {sim_y:.1f})")
-```
-
-## 🔧 配置说明
-
-### YOLO 模型选择
-
-| 模型 | 大小 | 速度 | 准确率 | 推荐场景 |
-|------|------|------|--------|----------|
-| yolov8n | 6MB | 最快 | 一般 | 实时应用 |
-| yolov8s | 23MB | 快 | 良好 | 平衡选择 |
-| yolov8m | 52MB | 中等 | 高 | 高精度需求 |
-| yolov8l | 84MB | 慢 | 很高 | 离线处理 |
-| yolov8x | 119MB | 最慢 | 最高 | 最佳精度 |
-
-### 屏幕截图方式
-
-```python
-# 方式 1: pyautogui（推荐）
-pip install pyautogui
-
-# 方式 2: mss（更快）
-pip install mss
-
-# ScreenCapture 会自动选择可用的方式
-```
-
-## 📝 依赖
-
-```
-ultralytics>=8.0.0  # YOLOv8
-opencv-python>=4.8.0  # 图像处理
-numpy>=1.24.0  # 数组运算
-pyautogui>=0.9.0  # 屏幕截图（可选）
-mss>=9.0.0  # 屏幕截图（可选）
-pygame>=2.5.0  # 仿真器
-```
-
-## 🔗 相关模块
-
-- `Test_Module/chase_simulator.py` - 简单的追击仿真器
-- `Sim_Module/sim2d/simulator.py` - 主仿真器
-- `ros_topic_comm.py` - ROS2 通讯模块
-
-## 🎯 性能优化
-
-- **本地运行**: YOLO 推理在本地执行，无需网络
-- **GPU 加速**: 自动检测并使用 CUDA（如果可用）
-- **模型缓存**: 首次加载后缓存模型，减少后续初始化时间
-- **延迟初始化**: 模型按需加载，减少启动时间
+1. 生成训练数据：`python3 Yolo_Module/yolo_simulator.py`
+2. 检查标注质量：`python3 Yolo_Module/visualize_labels.py`
+3. 训练模型：使用 ultralytics 训练
+4. 测试检测：`python3 Yolo_Module/yolo_detector.py`
+5. 集成到系统：修改 Robot_Module 使用 YOLO 检测
 
 ---
 
-**目标检测，智能感知！** 🎯
+**训练愉快！** 🎯
