@@ -8,12 +8,14 @@
 2. **标注可视化** - 验证标注是否正确
 3. **YOLO 检测** - 使用训练好的模型进行目标检测
 4. **ROS 话题发布** - 将检测结果发布到 `/robot/yolo_enemies` 话题
+5. **自动窗口位置检测** - 使用 `xwininfo` 自动获取仿真器窗口位置，无需手动配置
 
 ## 目录结构
 
 ```
 Yolo_Module/
 ├── README.md                  # 本文档
+├── best.pt                    # 训练好的 YOLO 模型
 ├── data/                      # 数据目录
 │   ├── images/               # 原始截图
 │   ├── labels/               # YOLO 标注文件
@@ -21,8 +23,9 @@ Yolo_Module/
 │   └── metadata.json         # 数据集元数据
 ├── yolo_simulator.py         # 训练数据生成器
 ├── visualize_labels.py       # 标注可视化工具
-├── yolo_detector.py          # YOLO 检测器
-└── yolo_publisher.py         # ROS 发布器
+├── yolo_detector.py          # YOLO 检测器（手动刷新）
+├── yolo_publisher.py         # ROS 发布器（实时检测）
+└── simulator_position.py     # 窗口位置检测工具
 ```
 
 ## 快速开始
@@ -187,13 +190,51 @@ model.train(
 
 ### 4. 使用训练好的模型检测
 
+**方式1：手动刷新检测（适合调试）**
+
 ```bash
 # 启动仿真器（终端1）
 python3 Sim_Module/sim2d/simulator.py
 
-# 启动 YOLO 检测发布器（终端2）
-python3 Yolo_Module/yolo_publisher.py --model runs/detect/train/weights/best.pt --rate 1.0
+# 启动 YOLO 检测器（终端2）- 自动检测窗口位置
+python3 Yolo_Module/yolo_detector.py
 ```
+
+操作方式：
+- 程序启动时自动使用 `xwininfo` 检测仿真器窗口位置
+- 按任意键刷新检测
+- 按 `q` 键退出
+
+**方式2：实时检测（推荐）**
+
+```bash
+# 启动仿真器（终端1）
+python3 Sim_Module/sim2d/simulator.py
+
+# 启动 YOLO 发布器（终端2）- 自动检测窗口位置
+python3 Yolo_Module/yolo_publisher.py --rate 1.0
+```
+
+可选参数：
+```bash
+# 指定模型路径
+python3 Yolo_Module/yolo_publisher.py --model best.pt
+
+# 调整置信度阈值（默认0.85）
+python3 Yolo_Module/yolo_publisher.py --conf 0.7
+
+# 调整发布频率（默认1Hz）
+python3 Yolo_Module/yolo_publisher.py --rate 2.0
+
+# 不显示检测窗口（后台运行）
+python3 Yolo_Module/yolo_publisher.py --no-show
+```
+
+**窗口位置自动检测说明：**
+- `yolo_detector.py` 和 `yolo_publisher.py` 启动时自动调用 `xwininfo` 获取仿真器窗口位置
+- 无需手动设置 `MONITOR` 坐标
+- 支持窗口在屏幕任意位置
+- 如果检测失败，使用默认位置 (0, 0)
 
 ## YOLO 标注格式
 
@@ -229,13 +270,26 @@ class_id center_x center_y width height
 
 **配置参数：**
 ```python
-OUTPUT_DIR = "data"         # 输出目录
-NUM_SAMPLES = 100           # 生成样本数
+OUTPUT_DIR = "/home/xcj/work/testyolo/YoloTest/datasets/sim_enemy"
+NUM_SAMPLES = 1000          # 生成样本数
+TRAIN_SPLIT = 0.9           # 训练集比例（900 train + 100 val）
 MIN_ENEMIES = 1             # 最少敌人数
 MAX_ENEMIES = 5             # 最多敌人数
 ```
 
-**修改参数：**编辑 `main()` 函数中的变量。
+**修改参数：**编辑脚本顶部的常量。
+
+**生成的数据集结构：**
+```
+sim_enemy/
+├── sim_enemy.yaml          # 数据集配置（自动生成）
+├── images/
+│   ├── train/              # 训练图片
+│   └── val/                # 验证图片
+└── labels/
+    ├── train/              # 训练标注
+    └── val/                # 验证标注
+```
 
 ### visualize_labels.py
 
@@ -261,41 +315,87 @@ python3 Yolo_Module/visualize_labels.py --single --show \
 
 ### yolo_detector.py
 
-YOLO 检测器类。
+YOLO 检测器 - 手动刷新版（适合调试）。
+
+**功能：**
+- 启动时自动使用 `xwininfo` 检测仿真器窗口位置
+- 按任意键刷新检测
+- 按 `q` 键退出
 
 **使用方式：**
+```bash
+# 启动仿真器后运行
+python3 Yolo_Module/yolo_detector.py
+```
+
+**窗口检测逻辑：**
 ```python
-from Yolo_Module.yolo_detector import YoloDetector
-
-# 创建检测器
-detector = YoloDetector(model_path="best.pt", conf_threshold=0.5)
-
-# 从文件检测
-detections = detector.detect_from_file("test.png")
-
-# 从 Pygame 屏幕检测
-detections = detector.detect_from_screenshot(screen)
-
-# 结果格式
-# [{"id": "yolo_0", "x": 400.0, "y": 300.0, "conf": 0.95}, ...]
+def get_simulator_position():
+    """使用 xwininfo 获取仿真器窗口位置"""
+    result = subprocess.run(
+        ['xwininfo', '-name', '追击功能测试 - 2D Robot Simulator'],
+        capture_output=True, text=True, timeout=5
+    )
+    # 解析输出获取 top, left, width, height
 ```
 
 ### yolo_publisher.py
 
-ROS 发布器，截取屏幕并发布检测结果。
+ROS 发布器 - 实时检测（推荐使用）。
+
+**功能：**
+- 启动时自动使用 `xwininfo` 检测仿真器窗口位置
+- 实时截屏并使用 YOLO 检测敌人
+- 发布检测结果到 `/robot/yolo_enemies` 话题
+- 显示检测窗口（可选）
 
 **参数：**
-- `--model`: YOLO 模型路径
-- `--conf`: 置信度阈值（默认 0.5）
-- `--rate`: 发布频率 Hz（默认 1.0）
-- `--duration`: 运行时长秒（默认无限）
+- `--model`: YOLO 模型路径（默认：`best.pt`）
+- `--conf`: 置信度阈值（默认：0.85）
+- `--rate`: 发布频率 Hz（默认：1.0）
+- `--duration`: 运行时长秒（默认：无限）
+- `--no-show`: 不显示检测窗口
 
 **示例：**
 ```bash
-python3 Yolo_Module/yolo_publisher.py \
-    --model best.pt \
-    --conf 0.7 \
-    --rate 2.0
+# 使用默认参数（推荐）
+python3 Yolo_Module/yolo_publisher.py
+
+# 调整置信度和频率
+python3 Yolo_Module/yolo_publisher.py --conf 0.7 --rate 2.0
+
+# 后台运行（不显示窗口）
+python3 Yolo_Module/yolo_publisher.py --no-show --rate 1.0
+
+# 运行指定时长
+python3 Yolo_Module/yolo_publisher.py --duration 60
+```
+
+**输出示例：**
+```
+[YoloPublisher] ✓ 自动检测到仿真器窗口位置: {'top': 49, 'left': 14, 'width': 800, 'height': 600}
+[YoloPublisher] 已发布 2 个敌人位置: [{'id': 'yolo_0', 'x': 400.0, 'y': 300.0}, ...]
+```
+
+### simulator_position.py
+
+窗口位置检测工具（独立使用）。
+
+**功能：**
+- 使用 `xwininfo` 获取仿真器窗口位置
+- 支持单次检测和实时测试模式
+
+**使用方式：**
+```bash
+# 单次检测（输出坐标）
+python3 Yolo_Module/simulator_position.py
+# 输出: 14,49
+
+# 测试模式（显示详细信息）
+python3 Yolo_Module/simulator_position.py --test
+
+# 显示帮助
+python3 Yolo_Module/simulator_position.py --help
 ```
 
 ## ROS 话题
@@ -347,7 +447,7 @@ def get_enemy_positions_by_yolo():
 
 A: 可能的原因：
 1. 模型未训练或训练不足
-2. 置信度阈值过高
+2. 置信度阈值过高（尝试降低到 0.5 或 0.3）
 3. 训练数据与测试场景差异过大
 
 ### Q: 检测位置不准确？
@@ -365,6 +465,22 @@ A: 优化方法：
 2. 降低输入分辨率
 3. 使用 GPU 加速
 4. 降低发布频率
+
+### Q: 窗口位置检测失败？
+
+A: 解决方法：
+1. 确保仿真器正在运行
+2. 确保仿真器窗口标题为 "追击功能测试 - 2D Robot Simulator"
+3. 检查是否安装了 `xwininfo` 工具：`which xwininfo`
+4. 如果检测失败，程序会使用默认位置 (0, 0)，手动将窗口拖到左上角即可
+
+### Q: 检测区域不正确？
+
+A: 检查步骤：
+1. 运行 `python3 Yolo_Module/simulator_position.py --test` 查看窗口位置
+2. 启动 `yolo_detector.py` 或 `yolo_publisher.py` 时查看输出的窗口位置
+3. 确保检测到的窗口尺寸是 800x600
+4. 如果窗口移动了，重新启动检测程序即可自动获取新位置
 
 ## 依赖
 

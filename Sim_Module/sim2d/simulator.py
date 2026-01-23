@@ -191,13 +191,6 @@ class ChaseSimulator:
         # 显示追击线
         self.show_chase_line = True
 
-        # 窗口位置发布（用于YOLO检测）
-        self.window_info_publisher = self.node.create_publisher(
-            String,
-            '/simulator/window_info',
-            10
-        )
-
         # 打印帮助
         self._print_help()
 
