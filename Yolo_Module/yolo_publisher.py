@@ -13,25 +13,22 @@ YOLO 敌人位置 ROS 发布器
 2. 运行此脚本：python3 Yolo_Module/yolo_publisher.py
 """
 
-import sys
 import os
+os.environ['YOLO_OFFLINE'] = 'True'
+
+import sys
 import json
 import time
-
-# 添加项目路径
-project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, project_root)
-
-import pygame
+import mss
+import numpy as np
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import String
+from ultralytics import YOLO
 
-from yolo_detector import YoloDetector
 
-
-# 屏幕尺寸（与仿真器一致）
-WIDTH, HEIGHT = 800, 600
+# 截屏区域配置
+MONITOR = {"top": 100, "left": 100, "width": 1000, "height": 800}
 
 
 class YoloEnemyPublisher:
@@ -57,69 +54,60 @@ class YoloEnemyPublisher:
             '/robot/yolo_enemies',
             10
         )
-        print("[YoloPublisher] ROS 话题发布器已创建: /robot/yolo_enemies", file=sys.stderr)
+        print(f"[YoloPublisher] ROS 话题发布器已创建: /robot/yolo_enemies")
 
-        # 创建 YOLO 检测器
-        self.detector = YoloDetector(model_path, conf_threshold)
+        # 加载 YOLO 模型
+        model_path = model_path or "/home/xcj/work/FinalProject/Yolo_Module/best.pt"
+        self.model = YOLO(model_path)
+        self.conf_threshold = conf_threshold
+        print(f"[YoloPublisher] YOLO 模型加载: {model_path}")
+
+        # 截屏
+        self.sct = mss.mss()
+        print(f"[YoloPublisher] 检测区域: {MONITOR}")
 
         # 发布频率
         self.publish_rate = publish_rate
         self.publish_interval = 1.0 / publish_rate
-
-        # 屏幕捕获
-        self.screen_size = (WIDTH, HEIGHT)
-
-        print(f"[YoloPublisher] 初始化完成，发布频率: {publish_rate} Hz", file=sys.stderr)
+        print(f"[YoloPublisher] 初始化完成，发布频率: {publish_rate} Hz")
 
     def capture_and_detect(self) -> list:
         """
         捕获屏幕并进行 YOLO 检测
 
         Returns:
-            检测结果列表 [{"id": str, "x": float, "y": float, "conf": float}, ...]
+            检测结果列表 [{"id": str, "x": float, "y": float}, ...]
         """
         try:
-            # 截取屏幕（使用 X11 方式）
-            # 注意：这需要 X11 环境，可能需要设置 DISPLAY 环境变量
-            import subprocess
+            # 截屏
+            img = np.array(self.sct.grab(MONITOR))[:, :, :3]
 
-            # 使用 import 懒加载，避免在没有显示器的环境失败
-            try:
-                from Xlib import display
-                from Xlib.ext import xinput
-                from PIL import Image, ImageDraw
-                import numpy as np
+            # YOLO 检测
+            results = self.model.predict(
+                source=img,
+                conf=self.conf_threshold,
+                verbose=False,
+                device="cpu"
+            )[0]
 
-                # 获取屏幕
-                d = display.Display()
-                screen = d.screen()
-                root = screen.root
+            # 转换检测结果为标准格式
+            detections = []
+            for i, box in enumerate(results.boxes):
+                # 获取边界框中心点坐标
+                x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
+                center_x = float((x1 + x2) / 2)
+                center_y = float((y1 + y2) / 2)
 
-                # 获取屏幕尺寸
-                width = root.get_geometry().width
-                height = root.get_geometry().height
+                detections.append({
+                    "id": f"yolo_{i}",
+                    "x": center_x,
+                    "y": center_y
+                })
 
-                # 截图
-                raw = root.get_image(0, 0, width, height, ZPixmap, 0xffffffff)
-                image = Image.frombytes("RGB", (width, height), raw.data, "raw", "BGRX")
-
-                # 转换为 pygame surface
-                mode = image.mode
-                size = image.size
-                data = image.tobytes()
-                pygame_surface = pygame.image.fromstring(data, size, mode)
-
-                # YOLO 检测
-                detections = self.detector.detect_from_screenshot(pygame_surface)
-
-                return detections
-
-            except ImportError:
-                print("[YoloPublisher] Xlib 不可用，使用模拟数据", file=sys.stderr)
-                return []
+            return detections
 
         except Exception as e:
-            print(f"[YoloPublisher] 屏幕捕获失败: {e}", file=sys.stderr)
+            print(f"[YoloPublisher] 检测失败: {e}")
             return []
 
     def publish_detections(self, detections: list):
@@ -130,25 +118,15 @@ class YoloEnemyPublisher:
             detections: 检测结果列表
         """
         try:
-            # 转换为标准格式（兼容原有敌人位置格式）
-            enemy_positions = [
-                {
-                    "id": det["id"],
-                    "x": det["x"],
-                    "y": det["y"]
-                }
-                for det in detections
-            ]
-
             msg = String()
-            msg.data = json.dumps(enemy_positions, ensure_ascii=False)
+            msg.data = json.dumps(detections, ensure_ascii=False)
             self.publisher.publish(msg)
 
-            if len(enemy_positions) > 0:
-                print(f"[YoloPublisher] 发布 {len(enemy_positions)} 个敌人位置: {enemy_positions}", file=sys.stderr)
+            if len(detections) > 0:
+                print(f"[YoloPublisher] 已发布 {len(detections)} 个敌人位置: {detections}")
 
         except Exception as e:
-            print(f"[YoloPublisher] 发布失败: {e}", file=sys.stderr)
+            print(f"[YoloPublisher] 发布失败: {e}")
 
     def run(self, duration: float = None):
         """
@@ -157,8 +135,8 @@ class YoloEnemyPublisher:
         Args:
             duration: 运行时长（秒），None 表示无限运行
         """
-        print("[YoloPublisher] 开始运行...", file=sys.stderr)
-        print("[YoloPublisher] 按 Ctrl+C 停止", file=sys.stderr)
+        print("[YoloPublisher] 开始运行...")
+        print("[YoloPublisher] 按 Ctrl+C 停止\n")
 
         start_time = time.time()
         last_publish_time = 0
@@ -188,16 +166,16 @@ class YoloEnemyPublisher:
                 time.sleep(0.01)
 
         except KeyboardInterrupt:
-            print("\n[YoloPublisher] 被用户中断", file=sys.stderr)
+            print("\n[YoloPublisher] 被用户中断")
         finally:
             self.shutdown()
 
     def shutdown(self):
         """关闭发布器"""
-        print("[YoloPublisher] 关闭中...", file=sys.stderr)
+        print("[YoloPublisher] 关闭中...")
         self.node.destroy_node()
         rclpy.shutdown()
-        print("[YoloPublisher] 已关闭", file=sys.stderr)
+        print("[YoloPublisher] 已关闭")
 
 
 def main():
