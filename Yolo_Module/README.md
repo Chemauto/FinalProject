@@ -523,6 +523,73 @@ pip install python-xlib
 5. **测试检测**：`python3 Yolo_Module/yolo_detector.py`
 6. **集成到系统**：修改 Robot_Module 使用 YOLO 检测
 
+## YOLO 敌人检测发布器
+
+### 功能说明
+
+集成 `simulator_position.py` 窗口检测功能的 YOLO 敌人实时检测系统。
+
+### 主要特性
+
+- ✅ 集成 `simulator_position.py` 窗口检测
+- ✅ 实时敌人检测（置信度阈值 > 0.9）
+- ✅ 高频检测（5Hz）
+- ✅ 动态窗口位置更新
+- ✅ ROS2 话题发布（`/robot/yolo_enemies`）
+- ✅ 兼容模拟模式（无ROS2环境时）
+
+### 使用方法
+
+```bash
+cd /home/xcj/work/FinalProject/Yolo_Module
+python3 yolo_publisher.py
+```
+
+### 配置参数
+
+```python
+DETECTION_FREQUENCY = 5.0  # Hz
+CONFIDENCE_THRESHOLD = 0.9  # 置信度阈值
+WINDOW_POSITION_UPDATE_INTERVAL = 10.0  # 窗口位置更新间隔（秒）
+```
+
+### 输出格式
+
+发布到 `/robot/yolo_enemies` 话题的 JSON 格式：
+
+```json
+{
+  "detections": [
+    {
+      "id": "yolo_0",
+      "x": 1302.09,
+      "y": 1034.45,
+      "confidence": 0.941
+    }
+  ],
+  "timestamp": 1642857600.123,
+  "window_position": {"left": 691, "top": 527, "width": 828, "height": 666},
+  "detection_count": 168,
+  "confidence_threshold": 0.9
+}
+```
+
+### 依赖要求
+
+- Python 3.12+
+- ultralytics (YOLO)
+- opencv-python
+- mss (屏幕截图)
+- ROS2 (可选，用于话题发布)
+- simulator_position.py (窗口检测)
+
+### 注意事项
+
+- 需要先启动仿真器才能检测到窗口
+- 支持 ROS2 环境和模拟模式
+- 窗口移动时自动重新定位
+- 按 Ctrl+C 停止检测
+
 ---
 
 **训练愉快！** 🎯
