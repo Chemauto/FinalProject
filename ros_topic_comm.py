@@ -547,6 +547,76 @@ def get_enemy_positions():
 
 
 # ==============================================================================
+# YOLO 敌人位置共享（使用ROS2话题）
+# ==============================================================================
+
+_yolo_enemy_positions_subscriber = None
+_cached_yolo_enemy_positions = []
+
+
+class YoloEnemyPositionsSubscriber:
+    """YOLO敌人位置订阅器 - 从 /robot/yolo_enemies 话题获取"""
+    def __init__(self):
+        _ros_init()
+        self.node = Node('yolo_enemy_positions_subscriber')
+        self.subscription = self.node.create_subscription(
+            String,
+            '/robot/yolo_enemies',
+            self._message_callback,
+            10
+        )
+        print("[YoloEnemyPositionsSubscriber] ROS话题订阅器已创建: /robot/yolo_enemies", file=sys.stderr)
+        # 等待发布-订阅连接建立
+        import time
+        time.sleep(0.5)
+        print("[YoloEnemyPositionsSubscriber] 订阅器初始化完成", file=sys.stderr)
+
+    def _message_callback(self, msg):
+        """内部回调"""
+        global _cached_yolo_enemy_positions
+        try:
+            data = json.loads(msg.data)
+            # YOLO 发布的数据格式: {"detections": [...], "timestamp": ..., ...}
+            detections = data.get('detections', [])
+            _cached_yolo_enemy_positions = detections
+            print(f"[YoloEnemyPositionsSubscriber] 已更新缓存: {len(_cached_yolo_enemy_positions)} 个YOLO敌人 {_cached_yolo_enemy_positions}", file=sys.stderr)
+        except Exception as e:
+            print(f"[YoloEnemyPositionsSubscriber] 解析失败: {e}", file=sys.stderr)
+
+    def spin_once(self, timeout_sec=0.001):
+        """处理一次ROS回调"""
+        try:
+            rclpy.spin_once(self.node, timeout_sec=timeout_sec)
+        except Exception:
+            pass
+
+    def shutdown(self):
+        """关闭"""
+        self.node.destroy_node()
+
+
+def get_yolo_enemy_positions_subscriber():
+    """获取YOLO敌人位置订阅器单例"""
+    global _yolo_enemy_positions_subscriber
+    if _yolo_enemy_positions_subscriber is None:
+        _yolo_enemy_positions_subscriber = YoloEnemyPositionsSubscriber()
+    return _yolo_enemy_positions_subscriber
+
+
+def get_yolo_enemy_positions_from_subscriber():
+    """获取YOLO敌人位置（从缓存）"""
+    global _cached_yolo_enemy_positions
+    return _cached_yolo_enemy_positions
+
+
+def get_yolo_enemy_positions():
+    """获取YOLO敌人位置（兼容接口）"""
+    subscriber = get_yolo_enemy_positions_subscriber()
+    subscriber.spin_once()
+    return get_yolo_enemy_positions_from_subscriber()
+
+
+# ==============================================================================
 # 敌人清除命令接口
 # ==============================================================================
 

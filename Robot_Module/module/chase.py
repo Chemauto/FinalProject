@@ -153,48 +153,96 @@ def _calculate_distance(x1: float, y1: float,
 def register_tools(mcp):
     """注册追击相关的工具函数到 MCP 服务器"""
 
+    # @mcp.tool()
+    # async def get_enemy_positions() -> str:
+    #     """获取当前仿真器中的所有敌人位置（使用YOLO检测）
+
+    #     通过YOLO视觉检测获取当前所有敌人的位置信息，用于追击或任务规划。
+
+    #     Returns:
+    #         敌人位置列表JSON字符串，格式为：
+    #         [{"id": "yolo_0", "x": 100, "y": 200}, {"id": "yolo_1", "x": 500, "y": 400}]
+
+    #     Examples:
+    #         get_enemy_positions()
+    #     """
+    #     project_root = Path(__file__).parent.parent.parent
+    #     sys.path.insert(0, str(project_root))
+    #     from ros_topic_comm import get_yolo_enemy_positions as get_positions, get_yolo_enemy_positions_subscriber
+
+    #     # 获取订阅器（首次调用时会初始化ROS连接）
+    #     subscriber = get_yolo_enemy_positions_subscriber()
+    #     print(f"[chase.get_enemy_positions] YOLO订阅器已创建，等待ROS连接建立...", file=sys.stderr)
+
+    #     # 首次初始化等待：给ROS订阅者时间建立连接
+    #     # 注意：订阅器初始化需要额外0.5秒（在 ros_topic_comm.py 中）
+    #     await asyncio.sleep(1.0)
+
+    #     # 强制刷新：多次调用 spin_once 确保接收到最新消息
+    #     print(f"[chase.get_enemy_positions] 开始刷新ROS回调...", file=sys.stderr)
+
+    #     # 积极刷新：多次快速调用 spin_once，持续等待消息
+    #     for i in range(50):  # 增加到50次刷新
+    #         subscriber.spin_once()
+    #         if i % 10 == 9:  # 每10次稍微等待
+    #             await asyncio.sleep(0.2)
+
+    #     # 等待消息处理完成
+    #     await asyncio.sleep(0.5)
+
+    #     # 获取敌人位置
+    #     positions = get_positions()
+
+    #     print(f"[chase.get_enemy_positions] 获取到 {len(positions)} 个YOLO敌人: {positions}", file=sys.stderr)
+    #     return json.dumps(positions, ensure_ascii=False)
+
+
+    # ========================================================================
+    # 以下是原方法（从仿真器获取敌人位置），已注释保留
+    # ========================================================================
     @mcp.tool()
     async def get_enemy_positions() -> str:
-        """获取当前仿真器中的所有敌人位置
-
+        """获取当前仿真器中的所有敌人位置（原始方法）
+    
         从仿真器获取当前所有敌人的位置信息，用于追击或任务规划。
-
+    
         Returns:
             敌人位置列表JSON字符串，格式为：
             [{"id": "1", "x": 100, "y": 200}, {"id": "2", "x": 500, "y": 400}]
-
+    
         Examples:
             get_enemy_positions()
         """
         project_root = Path(__file__).parent.parent.parent
         sys.path.insert(0, str(project_root))
         from ros_topic_comm import get_enemy_positions as get_positions, get_enemy_positions_subscriber
-
+    
         # 获取订阅器（首次调用时会初始化ROS连接）
         subscriber = get_enemy_positions_subscriber()
-        print(f"[chase.get_enemy_positions] 订阅器已创建，等待ROS连接建立...", file=sys.stderr)
-
+        print(f"[chase.get_enemy_positions_from_simulator] 订阅器已创建，等待ROS连接建立...", file=sys.stderr)
+    
         # 首次初始化等待：给ROS订阅者时间建立连接
         # 注意：订阅器初始化需要额外0.5秒（在 ros_topic_comm.py 中）
         await asyncio.sleep(1.0)
-
+    
         # 强制刷新：多次调用 spin_once 确保接收到最新消息
-        print(f"[chase.get_enemy_positions] 开始刷新ROS回调...", file=sys.stderr)
-
+        print(f"[chase.get_enemy_positions_from_simulator] 开始刷新ROS回调...", file=sys.stderr)
+    
         # 积极刷新：多次快速调用 spin_once，持续等待消息
         for i in range(50):  # 增加到50次刷新
             subscriber.spin_once()
             if i % 10 == 9:  # 每10次稍微等待
                 await asyncio.sleep(0.2)
-
+    
         # 等待消息处理完成
         await asyncio.sleep(0.5)
-
+    
         # 获取敌人位置
         positions = get_positions()
-
-        print(f"[chase.get_enemy_positions] 获取到 {len(positions)} 个敌人: {positions}", file=sys.stderr)
+    
+        print(f"[chase.get_enemy_positions_from_simulator] 获取到 {len(positions)} 个敌人: {positions}", file=sys.stderr)
         return json.dumps(positions, ensure_ascii=False)
+    # ========================================================================
 
     @mcp.tool()
     async def chase_enemy(enemy_positions: str) -> str:
