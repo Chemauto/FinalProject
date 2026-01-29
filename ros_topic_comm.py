@@ -617,6 +617,77 @@ def get_yolo_enemy_positions():
 
 
 # ==============================================================================
+# IsaacSim 行走命令（ROS2话题）
+# ==============================================================================
+
+_walk_command_publisher = None
+
+
+class WalkCommandPublisher:
+    """IsaacSim 行走命令发布器 - 用于发送行走命令到 IsaacSim 环境"""
+
+    def __init__(self):
+        _ros_init()
+        self.node = Node('walk_command_publisher')
+        self.publisher = self.node.create_publisher(
+            String,
+            '/robot/walk_cmd',
+            10
+        )
+        print("[WalkCommandPublisher] ROS话题发布器已创建: /robot/walk_cmd", file=sys.stderr)
+        import time
+        time.sleep(0.2)
+
+    def publish(self, duration: float, velocity_x: float, velocity_y: float, angular_velocity: float):
+        """发布行走命令到 IsaacSim
+
+        Args:
+            duration: 行走持续时间（秒）
+            velocity_x: 前进速度（m/s）
+            velocity_y: 横移速度（m/s）
+            angular_velocity: 旋转速度（rad/s）
+        """
+        try:
+            command = {
+                'duration': duration,
+                'velocity_x': velocity_x,
+                'velocity_y': velocity_y,
+                'angular_velocity': angular_velocity
+            }
+            msg = String()
+            msg.data = json.dumps(command, ensure_ascii=False)
+            self.publisher.publish(msg)
+            print(f"[WalkCommandPublisher] 发送行走命令: {command}", file=sys.stderr)
+        except Exception as e:
+            print(f"[WalkCommandPublisher] 发布失败: {e}", file=sys.stderr)
+
+    def shutdown(self):
+        """关闭"""
+        self.node.destroy_node()
+
+
+def get_walk_command_publisher():
+    """获取 IsaacSim 行走命令发布器单例"""
+    global _walk_command_publisher
+    if _walk_command_publisher is None:
+        _walk_command_publisher = WalkCommandPublisher()
+    return _walk_command_publisher
+
+
+def publish_walk_command(duration: float, velocity_x: float, velocity_y: float, angular_velocity: float):
+    """发布 IsaacSim 行走命令（MCP 工具调用）
+
+    Args:
+        duration: 行走持续时间（秒）
+        velocity_x: 前进速度（m/s）
+        velocity_y: 横移速度（m/s）
+        angular_velocity: 旋转速度（rad/s）
+    """
+    publisher = get_walk_command_publisher()
+    publisher.publish(duration, velocity_x, velocity_y, angular_velocity)
+
+
+# ==============================================================================
 # 敌人清除命令接口
 # ==============================================================================
 
