@@ -46,7 +46,38 @@ def execute_tool(function_name: str, function_args: dict) -> dict:
 
     try:
         # 调用异步技能函数
-        result = asyncio.run(skill_func(**function_args))
+        try:
+            # 检查是否已有运行的事件循环
+            loop = asyncio.get_running_loop()
+            # 如果有，使用 asyncio.ensure_future() 或直接 await（需要在异步上下文中）
+            # 但由于 execute_tool 是同步函数，我们需要在循环中调度这个协程
+            import concurrent.futures
+            import threading
+
+            # 在新线程中运行，避免阻塞当前循环
+            result = None
+            exception = None
+
+            def run_in_new_loop():
+                nonlocal result, exception
+                try:
+                    new_loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(new_loop)
+                    result = new_loop.run_until_complete(skill_func(**function_args))
+                    new_loop.close()
+                except Exception as e:
+                    exception = e
+
+            thread = threading.Thread(target=run_in_new_loop)
+            thread.start()
+            thread.join()
+
+            if exception:
+                raise exception
+
+        except RuntimeError:
+            # 没有运行的事件循环，使用 asyncio.run()
+            result = asyncio.run(skill_func(**function_args))
 
         # 估算执行时间
         if function_name in ['move_forward', 'move_backward']:
@@ -62,9 +93,9 @@ def execute_tool(function_name: str, function_args: dict) -> dict:
         else:
             delay = 0
 
-        return {"result": result, "delay": delay}
+        return {"success": True, "result": result, "delay": delay}
     except Exception as e:
-        return {"error": str(e)}
+        return {"success": False, "error": str(e)}
 
 
 def format_robot_config(tools):
@@ -146,8 +177,12 @@ def main():
     # 获取提示词路径
     prompt_path = project_root / "LLM_Module" / "prompts" / "planning_prompt_2d.yaml"
 
-    # 初始化 LLM Agent（先传入路径，避免警告）
-    llm_agent = LLMAgent(api_key=api_key, prompt_path=str(prompt_path))
+    # 初始化 LLM Agent（启用自适应控制）
+    llm_agent = LLMAgent(
+        api_key=api_key,
+        prompt_path=str(prompt_path),
+        enable_adaptive=True  # 启用自适应重新规划
+    )
 
     # 动态加载并填充提示词，覆盖默认的模板
     dynamic_prompt = load_dynamic_prompt(prompt_path, tools)
