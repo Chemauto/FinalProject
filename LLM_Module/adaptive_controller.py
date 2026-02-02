@@ -160,13 +160,39 @@ class AdaptiveController:
         # 获取上一步结果
         previous_result = self._get_previous_result()
 
-        # ==================== 启动后台监控任务 ====================
-        monitoring_task = None
+        # ==================== 启动监控 ====================
+        print("\n" + "─"*60)
+        print("🔍 [监控启动] 两层监控已激活")
+        print("─"*60)
+
+        # 第一层：环境状态检查
         if env_state:
-            # 如果提供了环境状态，启动后台监控
-            monitoring_task = asyncio.create_task(
-                self._monitor_task_execution(task, env_state)
+            print("\n📍 [第一层：环境监控]")
+            env_anomaly = self.execution_monitor.detect_anomaly(
+                current_state=env_state,
+                task={"task": task.task, "type": task.type}
             )
+
+            if env_anomaly:
+                print(f"  ⚠️  检测到异常: {env_anomaly.description}")
+                print(f"  📊 严重程度: {env_anomaly.severity}")
+                print(f"  📋 异常数据: {env_anomaly.data}")
+            else:
+                print("  ✅ 环境状态正常")
+                if "position" in env_state:
+                    pos = env_state["position"]
+                    print(f"  📍 位置: x={pos.get('x', 0):.2f}, y={pos.get('y', 0):.2f}, z={pos.get('z', 0):.2f}")
+                if "sensor_status" in env_state:
+                    sensors = env_state["sensor_status"]
+                    print(f"  🔌 传感器: {', '.join([f'{k}={v}' for k, v in sensors.items()])}")
+        else:
+            print("\n📍 [第一层：环境监控] ⚠️  未提供环境状态")
+            env_anomaly = None
+
+        # 第二层：技能执行监控（在 execute_tool_fn 中进行）
+        print("\n🔧 [第二层：技能监控]")
+        print(f"  📋 执行任务: {task.task}")
+        print(f"  🏷️  任务类型: {task.type}")
         # ============================================================
 
         try:
@@ -178,42 +204,72 @@ class AdaptiveController:
                 previous_result=previous_result
             )
 
-            # ==================== 检查监控到的异常 ====================
-            # 注意：必须在取消任务之前检查，因为取消后无法获取结果
-            anomaly = None
-            if monitoring_task and monitoring_task.done():
-                # 任务已完成（检测到异常）
-                anomaly = monitoring_task.result()
-            elif monitoring_task and not monitoring_task.done():
-                # 任务仍在运行，需要取消
-                monitoring_task.cancel()
-                try:
-                    await monitoring_task
-                except asyncio.CancelledError:
-                    pass  # 正常取消，忽略
+            # ==================== 显示执行结果和监控状态 ====================
+            print("\n" + "─"*60)
+            print("📊 [执行结果]")
+            print("─"*60)
 
-            if anomaly:
-                print(f"⚠️  [监控检测] {anomaly.description}")
-                if result.get("status") == "success":
+            status = result.get("status", "unknown")
+            status_icon = {
+                "success": "✅",
+                "failed": "❌",
+                "requires_replanning": "🔄",
+                "timeout": "⏱️ "
+            }.get(status, "❓")
+
+            print(f"{status_icon} 执行状态: {status}")
+
+            # 显示工具调用信息
+            if "tool_used" in result:
+                print(f"🔧 使用工具: {result['tool_used']}")
+            if "parameters" in result:
+                print(f"📋 参数: {result['parameters']}")
+
+            # 显示执行时间
+            elapsed_time = time.time() - self.execution_monitor.execution_start_time
+            print(f"⏱️  执行时间: {elapsed_time:.2f}秒")
+
+            # 检查是否有环境异常
+            if env_state and env_anomaly is None:
+                # 再次检查环境（可能在执行过程中发生变化）
+                final_env_anomaly = self.execution_monitor.detect_anomaly(
+                    current_state=env_state,
+                    task={"task": task.task, "type": task.type}
+                )
+                if final_env_anomaly:
+                    print(f"\n⚠️  [环境监控] 检测到异常: {final_env_anomaly.description}")
                     result["anomaly_detected"] = True
                     result["anomaly"] = {
-                        "type": anomaly.type.value,
-                        "description": anomaly.description,
-                        "severity": anomaly.severity,
-                        "data": anomaly.data
+                        "type": final_env_anomaly.type.value,
+                        "description": final_env_anomaly.description,
+                        "severity": final_env_anomaly.severity,
+                        "data": final_env_anomaly.data
                     }
+                else:
+                    print("\n✅ [环境监控] 执行过程中环境正常")
+            elif env_anomaly:
+                # 执行前就检测到异常
+                print(f"\n⚠️  [环境监控] 执行前已检测到异常: {env_anomaly.description}")
+                result["anomaly_detected"] = True
+                result["anomaly"] = {
+                    "type": env_anomaly.type.value,
+                    "description": env_anomaly.description,
+                    "severity": env_anomaly.severity,
+                    "data": env_anomaly.data
+                }
+
+            print("─"*60 + "\n")
             # ============================================================
 
             return result
 
         except Exception as e:
-            # 取消监控任务（如果还在运行）
-            if monitoring_task and not monitoring_task.done():
-                monitoring_task.cancel()
-                try:
-                    await monitoring_task
-                except asyncio.CancelledError:
-                    pass  # 正常取消，忽略
+            print("\n" + "─"*60)
+            print("❌ [执行异常]")
+            print("─"*60)
+            print(f"💥 异常类型: {type(e).__name__}")
+            print(f"📝 异常信息: {str(e)}")
+            print("─"*60 + "\n")
 
             return {
                 "status": "failed",

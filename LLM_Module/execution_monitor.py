@@ -1,8 +1,20 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-执行监控器
-实时监控任务执行状态，检测异常，触发重新规划
+环境状态监控器 (Environment State Monitor)
+
+专注于监控机器人环境状态，检测环境层面的异常：
+
+两层监控架构：
+1. 环境状态监控器（本文件）：监控机器人位置、环境变化、传感器状态
+2. 技能执行监控器（Robot_Module/skill_monitor.py）：监控每个 MCP 工具的执行状态
+
+监控类型：
+- 超时检测：任务执行时间超过阈值
+- 卡住检测：机器人位置长时间不变
+- 振荡检测：机器人来回移动
+- 传感器失效：传感器返回错误状态
+- 环境变化：检测环境版本号或标志位变化
 """
 import time
 import asyncio
@@ -30,15 +42,18 @@ class Anomaly:
     data: Optional[Dict[str, Any]] = None
 
 
-class ExecutionMonitor:
+class EnvironmentMonitor:
     """
-    执行监控器
+    环境状态监控器
+
+    专注于监控机器人环境状态，检测环境层面的异常。
 
     职责：
-    1. 实时状态检测
-    2. 异常检测
-    3. 执行反馈
-    4. 环境变化检测
+    1. 实时监控机器人位置和状态
+    2. 检测环境层面的异常（卡住、振荡、环境变化等）
+    3. 提供环境状态反馈给 AdaptiveController
+
+    注意：不监控技能执行状态，技能执行监控由 Robot_Module/skill_monitor.py 负责
     """
 
     def __init__(self,
@@ -46,7 +61,7 @@ class ExecutionMonitor:
                  timeout_threshold: float = 30.0,
                  stuck_threshold: float = 5.0):
         """
-        初始化执行监控器
+        初始化环境监控器
 
         Args:
             monitoring_interval: 监控检查间隔（秒）
@@ -68,12 +83,12 @@ class ExecutionMonitor:
                                 execute_fn: Callable,
                                 get_state_fn: Optional[Callable] = None) -> Dict[str, Any]:
         """
-        监控任务执行
+        监控任务执行（带环境状态检测）
 
         Args:
             task: 要执行的任务
             execute_fn: 执行函数（异步或同步）
-            get_state_fn: 获取当前状态的函数（可选）
+            get_state_fn: 获取当前环境状态的函数（可选）
 
         Returns:
             执行结果
@@ -103,14 +118,14 @@ class ExecutionMonitor:
                        current_state: Dict[str, Any],
                        task: Dict[str, Any]) -> Optional[Anomaly]:
         """
-        检测异常
+        检测环境状态异常
 
         Args:
-            current_state: 当前状态
-            task: 当前任务
+            current_state: 当前环境状态（包含 position, sensor_status, environment_version 等）
+            task: 当前任务信息
 
         Returns:
-            检测到的异常，如果没有异常则返回None
+            检测到的环境异常，如果没有异常则返回None
         """
         current_time = time.time()
 
@@ -366,3 +381,7 @@ class ExecutionMonitor:
             "y": sum_y / count,
             "z": sum_z / count
         }
+
+
+# 保持向后兼容
+ExecutionMonitor = EnvironmentMonitor
