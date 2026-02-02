@@ -50,11 +50,20 @@ class LLMAgent:
         self.base_url = base_url
         self.enable_adaptive = enable_adaptive
 
+        # 获取VLM提示词路径
+        vlm_prompt_path = None
+        if prompt_path:
+            # 假设VLM提示词与规划提示词在同一目录
+            import os
+            prompts_dir = os.path.dirname(prompt_path)
+            vlm_prompt_path = os.path.join(prompts_dir, "vlm_perception.yaml")
+
         # 初始化新的模块化架构
         self.high_level_llm = HighLevelLLM(
             api_key=api_key,
             base_url=base_url,
-            prompt_path=prompt_path
+            prompt_path=prompt_path,
+            vlm_prompt_path=vlm_prompt_path  # 新增：VLM提示词路径
         )
 
         self.low_level_llm = LowLevelLLM(
@@ -118,7 +127,7 @@ class LLMAgent:
             print(f"❌ 错误: 加载Prompt文件失败: {e}")
             return ""
 
-    def plan_tasks(self, user_input: str, tools: List[Dict]) -> List[Dict]:
+    def plan_tasks(self, user_input: str, tools: List[Dict], image_path: str = None) -> List[Dict]:
         """
         上层LLM：将用户输入分解为子任务序列 (兼容方法)
 
@@ -127,6 +136,7 @@ class LLMAgent:
         Args:
             user_input: 用户输入
             tools: 工具列表
+            image_path: 环境图像路径（可选，用于VLM理解）
 
         Returns:
             任务列表
@@ -134,10 +144,11 @@ class LLMAgent:
         # 提取技能名称
         available_skills = [tool.get("function", {}).get("name", "unknown") for tool in tools]
 
-        # 调用新的HighLevelLLM
+        # 调用新的HighLevelLLM（传递 image_path）
         return self.high_level_llm.plan_tasks(
             user_input=user_input,
-            available_skills=available_skills
+            available_skills=available_skills,
+            image_path=image_path  # 新增：VLM 环境理解
         )
 
     def execute_single_task(self,
@@ -185,7 +196,8 @@ class LLMAgent:
     def run_pipeline(self,
                      user_input: str,
                      tools: List[Dict],
-                     execute_tool_fn: Callable) -> List[Dict]:
+                     execute_tool_fn: Callable,
+                     image_path: str = None) -> List[Dict]:
         """
         运行完整的双层LLM流程 (兼容方法)
 
@@ -195,6 +207,7 @@ class LLMAgent:
             user_input: 用户输入
             tools: 可用工具列表
             execute_tool_fn: 工具执行函数
+            image_path: 环境图像路径（可选，用于VLM理解）
 
         Returns:
             执行结果列表
@@ -222,7 +235,8 @@ class LLMAgent:
                     user_input=user_input,
                     tools=tools,
                     execute_tool_fn=execute_tool_fn,
-                    available_skills=available_skills
+                    available_skills=available_skills,
+                    env_state=None  # 环境状态（可扩展）
                 )
             )
 

@@ -231,16 +231,52 @@ def main():
                 print("👋 再见!", file=sys.stderr)
                 break
 
+            # ==================== 提取图片路径 ====================
+            import re
+            image_path = None
+
+            # 匹配图片路径（支持 .png, .jpg, .jpeg）
+            # 格式1: "根据 /path/to/image.png 前进"
+            # 格式2: "看看 /path/to/image.jpg 然后..."
+            # 格式3: "/path/to/image.jpeg"
+            image_patterns = [
+                r'(?:根据|看看|观察|分析|检测)\s*([/\w\-./]+\.(?:png|jpg|jpeg))',
+                r'([/\w\-./]+\.(?:png|jpg|jpeg))\s*(?:然后|并且|，|、)',
+                r'^([/\w\-./]+\.(?:png|jpg|jpeg))$'
+            ]
+
+            for pattern in image_patterns:
+                match = re.search(pattern, user_input)
+                if match:
+                    image_path = match.group(1)
+                    # 从用户输入中移除图片路径部分
+                    user_input = re.sub(pattern, '', user_input).strip()
+                    print(f"🖼️  [检测到图片] {image_path}", file=sys.stderr)
+                    break
+
+            if not image_path:
+                # 检查是否是纯图片路径
+                if re.match(r'^[/\w\-./]+\.(?:png|jpg|jpeg)$', user_input):
+                    image_path = user_input
+                    user_input = "请分析当前环境并给出建议"
+                    print(f"🖼️  [检测到图片] {image_path}", file=sys.stderr)
+            # ===========================================================
+
             # 执行双层 LLM 流程
             results = llm_agent.run_pipeline(
                 user_input=user_input,
                 tools=tools,
-                execute_tool_fn=execute_tool
+                execute_tool_fn=execute_tool,
+                image_path=image_path  # 新增：VLM 环境图像路径
             )
 
             # 显示结果摘要
             if results:
-                success_count = sum(1 for r in results if r.get("success"))
+                # 兼容两种返回格式：
+                # - 非自适应模式: {"success": True, ...}
+                # - 自适应模式: {"status": "success", ...}
+                success_count = sum(1 for r in results
+                                   if r.get("success") is True or r.get("status") == "success")
                 print(f"\n📊 [完成] {success_count}/{len(results)} 个任务成功", file=sys.stderr)
 
         except KeyboardInterrupt:

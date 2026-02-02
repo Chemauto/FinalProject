@@ -111,9 +111,9 @@ def register_all_modules():
     base_tools = register_base_tools(mcp)
     _tool_registry.update(base_tools)
 
-    # 注册视觉感知模块（返回工具函数映射）
-    vision_tools = register_vision_tools(mcp)
-    _tool_registry.update(vision_tools)
+    # # 注册视觉感知模块（返回工具函数映射）
+    # vision_tools = register_vision_tools(mcp)
+    # _tool_registry.update(vision_tools)
 
     # 注册追击模块（返回工具函数映射）
     chase_tools = register_chase_tools(mcp)

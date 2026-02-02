@@ -112,151 +112,33 @@ class ExecutionMonitor:
         Returns:
             检测到的异常，如果没有异常则返回None
         """
-        current_time = time.time()
-
+        # ==================== 后续添加异常检测逻辑 ====================
+        # TODO: 根据实际需求添加以下检测：
+        #
         # 1. 超时检测
-        if self.execution_start_time:
-            elapsed = current_time - self.execution_start_time
-            if elapsed > self.timeout_threshold:
-                return Anomaly(
-                    type=AnomalyType.TIMEOUT,
-                    description=f"任务执行超时（{elapsed:.1f}秒）",
-                    severity="high",
-                    data={"elapsed_time": elapsed}
-                )
-
-        # 2. 卡住检测（需要位置信息）
-        if current_state and "position" in current_state:
-            current_position = current_state["position"]
-
-            if self.last_position is not None:
-                # 检查位置是否变化
-                if self._position_unchanged(current_position, self.last_position):
-                    if self.last_position_update_time:
-                        stuck_duration = current_time - self.last_position_update_time
-                        if stuck_duration > self.stuck_threshold:
-                            return Anomaly(
-                                type=AnomalyType.STUCK,
-                                description=f"机器人卡住（{stuck_duration:.1f}秒未移动）",
-                                severity="medium",
-                                data={"stuck_duration": stuck_duration}
-                            )
-                else:
-                    # 位置已更新
-                    self.last_position_update_time = current_time
-
-                    # 记录位置历史用于振荡检测
-                    self.position_history.append({
-                        "time": current_time,
-                        "position": current_position
-                    })
-
-                    # 3. 振荡检测
-                    if self._detect_oscillation():
-                        return Anomaly(
-                            type=AnomalyType.OSCILLATION,
-                            description="检测到振荡行为（来回移动）",
-                            severity="medium"
-                        )
-
-            self.last_position = current_position
-
-            # 初始化位置更新时间
-            if self.last_position_update_time is None:
-                self.last_position_update_time = current_time
-
+        #    if elapsed > self.timeout_threshold:
+        #        return Anomaly(type=AnomalyType.TIMEOUT, ...)
+        #
+        # 2. 卡住检测（位置长时间不变）
+        #    if position_unchanged_duration > self.stuck_threshold:
+        #        return Anomaly(type=AnomalyType.STUCK, ...)
+        #
+        # 3. 振荡检测（来回移动）
+        #    if oscillation_detected:
+        #        return Anomaly(type=AnomalyType.OSCILLATION, ...)
+        #
         # 4. 传感器失效检测
-        if current_state and "sensor_status" in current_state:
-            sensor_status = current_state["sensor_status"]
-            if sensor_status.get("lidar") == "failed" or sensor_status.get("camera") == "failed":
-                return Anomaly(
-                    type=AnomalyType.SENSOR_FAILURE,
-                    description="传感器失效",
-                    severity="high",
-                    data=sensor_status
-                )
+        #    if sensor_status == "failed":
+        #        return Anomaly(type=AnomalyType.SENSOR_FAILURE, ...)
+        #
+        # 5. 环境变化检测
+        #    if environment_changed:
+        #        return Anomaly(type=AnomalyType.ENVIRONMENT_CHANGE, ...)
+        #
+        # ===============================================================
 
+        # 暂时不检测异常，返回None
         return None
-
-    def _position_unchanged(self, pos1: Dict[str, float], pos2: Dict[str, float], threshold: float = 0.01) -> bool:
-        """
-        检查两个位置是否相同
-
-        Args:
-            pos1: 位置1
-            pos2: 位置2
-            threshold: 变化阈值
-
-        Returns:
-            是否相同
-        """
-        if not pos1 or not pos2:
-            return False
-
-        dx = abs(pos1.get("x", 0) - pos2.get("x", 0))
-        dy = abs(pos1.get("y", 0) - pos2.get("y", 0))
-        dz = abs(pos1.get("z", 0) - pos2.get("z", 0))
-
-        return (dx + dy + dz) < threshold
-
-    def _detect_oscillation(self, window_size: int = 10) -> bool:
-        """
-        检测振荡行为
-
-        Args:
-            window_size: 检测窗口大小
-
-        Returns:
-            是否检测到振荡
-        """
-        if len(self.position_history) < window_size * 2:
-            return False
-
-        # 获取最近的窗口数据
-        recent_positions = self.position_history[-window_size:]
-        older_positions = self.position_history[-window_size*2:-window_size]
-
-        # 计算两个窗口的平均位置
-        recent_avg = self._calculate_average_position(recent_positions)
-        older_avg = self._calculate_average_position(older_positions)
-
-        # 如果平均位置接近，但中间有较大变化，说明在振荡
-        distance = self._calculate_distance(recent_avg, older_avg)
-
-        # 检查位置变化
-        max_variation = 0.0
-        for i in range(1, len(self.position_history)):
-            dist = self._calculate_distance(
-                self.position_history[i]["position"],
-                self.position_history[i-1]["position"]
-            )
-            max_variation = max(max_variation, dist)
-
-        # 如果有较大变化但最终回到原点，认为是振荡
-        return distance < 0.1 and max_variation > 0.5
-
-    def _calculate_average_position(self, position_records: list) -> Dict[str, float]:
-        """计算平均位置"""
-        if not position_records:
-            return {"x": 0, "y": 0, "z": 0}
-
-        sum_x = sum(r["position"].get("x", 0) for r in position_records)
-        sum_y = sum(r["position"].get("y", 0) for r in position_records)
-        sum_z = sum(r["position"].get("z", 0) for r in position_records)
-
-        n = len(position_records)
-        return {
-            "x": sum_x / n,
-            "y": sum_y / n,
-            "z": sum_z / n
-        }
-
-    def _calculate_distance(self, pos1: Dict[str, float], pos2: Dict[str, float]) -> float:
-        """计算两点间距离"""
-        dx = pos1.get("x", 0) - pos2.get("x", 0)
-        dy = pos1.get("y", 0) - pos2.get("y", 0)
-        dz = pos1.get("z", 0) - pos2.get("z", 0)
-        return (dx**2 + dy**2 + dz**2) ** 0.5
 
     def reset(self):
         """重置监控状态"""

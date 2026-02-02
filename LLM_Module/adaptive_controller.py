@@ -139,33 +139,32 @@ class AdaptiveController:
                                       execute_tool_fn: Callable,
                                       env_state: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
-        带监控的任务执行
+        带监控的任务执行（简化版）
 
         Args:
             task: 任务对象
             tools: 工具列表
             execute_tool_fn: 工具执行函数
-            env_state: 环境状态
+            env_state: 环境状态（暂未使用）
 
         Returns:
             执行结果
         """
+        # ==================== 后续添加监控逻辑 ====================
+        # TODO: 后续可以在这里添加：
+        # 1. 后台监控任务 - 在执行时定期检测异常
+        # 2. 实时状态检查 - 检查机器人状态、环境变化等
+        # 3. 异常处理 - 根据检测到的异常类型触发相应处理
+        # ==========================================================
+
         # 重置监控器
         self.execution_monitor.reset()
 
         # 获取上一步结果
         previous_result = self._get_previous_result()
 
-        # 启动监控任务（在后台检测异常）
-        monitoring_task = None
-        if env_state:
-            # 如果提供了环境状态，启动监控
-            monitoring_task = asyncio.create_task(
-                self._monitor_task_execution(task, env_state)
-            )
-
         try:
-            # 执行任务
+            # 直接执行任务（暂不启动后台监控）
             result = self.low_level_llm.execute_task(
                 task_description=task.task,
                 tools=tools,
@@ -173,35 +172,9 @@ class AdaptiveController:
                 previous_result=previous_result
             )
 
-            # 取消监控任务
-            if monitoring_task and not monitoring_task.done():
-                monitoring_task.cancel()
-                try:
-                    await monitoring_task
-                except asyncio.CancelledError:
-                    pass
-
-            # 检查是否有监控到的异常
-            if monitoring_task and monitoring_task.done():
-                anomaly = monitoring_task.result()
-                if anomaly:
-                    print(f"⚠️  [监控检测] {anomaly.description}")
-                    # 将异常信息添加到结果中
-                    if result.get("status") == "success":
-                        result["anomaly_detected"] = True
-                        result["anomaly"] = {
-                            "type": anomaly.type.value,
-                            "description": anomaly.description,
-                            "severity": anomaly.severity
-                        }
-
             return result
 
         except Exception as e:
-            # 取消监控任务
-            if monitoring_task and not monitoring_task.done():
-                monitoring_task.cancel()
-
             return {
                 "status": "failed",
                 "error": str(e),
@@ -212,32 +185,13 @@ class AdaptiveController:
                                       task: Task,
                                       env_state: Dict[str, Any]) -> Optional[Anomaly]:
         """
-        监控任务执行（后台运行）
+        监控任务执行（后台运行）- 暂未使用
 
-        Args:
-            task: 任务对象
-            env_state: 环境状态
-
-        Returns:
-            检测到的异常，如果没有则返回None
+        后续可以启用此方法来实现实时后台监控
         """
-        try:
-            while True:
-                # 定期检测异常
-                anomaly = self.execution_monitor.detect_anomaly(
-                    current_state=env_state,
-                    task={"task": task.task, "type": task.type}
-                )
-
-                if anomaly:
-                    return anomaly
-
-                # 等待下一次检查
-                await asyncio.sleep(self.execution_monitor.monitoring_interval)
-
-        except asyncio.CancelledError:
-            # 任务被取消（正常结束）
-            return None
+        # TODO: 后续添加后台监控逻辑
+        # 目前返回None，不检测异常
+        return None
 
     async def handle_execution_result(self,
                                       task: Task,
@@ -245,7 +199,7 @@ class AdaptiveController:
                                       env_state: Dict[str, Any],
                                       available_skills: List[str]):
         """
-        处理执行结果
+        处理执行结果（简化版）
 
         Args:
             task: 任务对象
@@ -253,28 +207,22 @@ class AdaptiveController:
             env_state: 环境状态
             available_skills: 可用技能列表
         """
+        # ==================== 后续添加异常处理逻辑 ====================
+        # TODO: 后续可以在这里添加：
+        # 1. 异常检测 - 根据执行结果判断是否需要重新规划
+        # 2. 重新规划决策 - 根据异常类型选择重新规划级别
+        # 3. 自动恢复 - 尝试不同的方法完成相同目标
+        # ==========================================================
+
         status = result.get("status", ExecutionStatus.FAILED.value)
 
         if status == ExecutionStatus.SUCCESS.value:
-            # 任务成功，但检查是否检测到异常
-            if result.get("anomaly_detected"):
-                # 监控器检测到异常，需要重新规划
-                anomaly = result.get("anomaly", {})
-                print(f"⚠️  [异常] 任务执行成功但检测到异常: {anomaly.get('description', 'Unknown')}")
-                await self.trigger_replanning(
-                    task=task,
-                    result=result,
-                    env_state=env_state,
-                    available_skills=available_skills,
-                    level=self._determine_replan_level_from_anomaly(anomaly)
-                )
-            else:
-                # 完全成功
-                print(f"✅ [成功] 任务完成: {task.task}")
-                self.task_queue.mark_completed(task, result)
+            # 任务成功
+            print(f"✅ [成功] 任务完成: {task.task}")
+            self.task_queue.mark_completed(task, result)
 
         elif status == ExecutionStatus.REQUIRES_REPLANNING.value:
-            # 需要重新规划
+            # 需要重新规划（低层LLM返回）
             print(f"🔄 [重新规划] 检测到环境变化")
             await self.trigger_replanning(
                 task=task,
@@ -292,15 +240,10 @@ class AdaptiveController:
 
             self.task_queue.mark_failed(task, reason)
 
-            # 检查是否需要重新规划
-            if self._should_replan(task, result):
-                await self.trigger_replanning(
-                    task=task,
-                    result=result,
-                    env_state=env_state,
-                    available_skills=available_skills,
-                    level=self._determine_replan_level(result)
-                )
+            # ==================== 后续添加重试逻辑 ====================
+            # TODO: 后续可以添加失败后的自动重试和重新规划
+            # 目前失败后不自动重新规划，继续执行下一个任务
+            # ==========================================================
 
     async def trigger_replanning(self,
                                  task: Task,
@@ -352,7 +295,9 @@ class AdaptiveController:
 
     def _should_replan(self, task: Task, result: Dict[str, Any]) -> bool:
         """
-        判断是否应该重新规划
+        判断是否应该重新规划（暂未使用）
+
+        后续可以根据任务失败类型、重试次数等判断是否需要重新规划
 
         Args:
             task: 任务对象
@@ -361,24 +306,21 @@ class AdaptiveController:
         Returns:
             是否应该重新规划
         """
-        # 如果是环境变化导致的失败，必须重新规划
-        if result.get("reason") == "environment_changed":
-            return True
+        # ==================== 后续添加重新规划判断逻辑 ====================
+        # TODO: 根据实际需求添加判断逻辑：
+        # 1. 环境变化导致失败 -> return True
+        # 2. 达到最大重试次数 -> return True
+        # 3. 特定错误类型（obstacle, blocked）-> return True
+        # ==========================================================
 
-        # 如果达到最大重试次数，重新规划
-        if not task.can_retry():
-            return True
-
-        # 某些类型的错误需要重新规划
-        error = result.get("error", "")
-        if "obstacle" in error.lower() or "blocked" in error.lower():
-            return True
-
+        # 目前不自动重新规划
         return False
 
     def _determine_replan_level(self, result: Dict[str, Any]) -> ReplanLevel:
         """
-        确定重新规划级别
+        确定重新规划级别（暂未使用）
+
+        后续可以根据错误类型自动选择合适的重新规划级别
 
         Args:
             result: 执行结果
@@ -386,22 +328,22 @@ class AdaptiveController:
         Returns:
             重新规划级别
         """
-        error = result.get("error", "")
+        # ==================== 后续添加级别判断逻辑 ====================
+        # TODO: 根据错误类型选择重新规划级别：
+        # 1. 环境变化 -> FULL_REPLAN
+        # 2. 障碍物 -> SKILL_REPLACEMENT
+        # 3. 超时/卡住 -> PARAMETER_ADJUSTMENT
+        # 4. 振荡 -> TASK_REORDER
+        # ==========================================================
 
-        # 环境变化 -> 完全重新规划
-        if "environment" in error.lower():
-            return ReplanLevel.FULL_REPLAN
-
-        # 障碍物 -> 技能替换
-        if "obstacle" in error.lower():
-            return ReplanLevel.SKILL_REPLACEMENT
-
-        # 其他 -> 参数调整
+        # 目前默认参数调整
         return ReplanLevel.PARAMETER_ADJUSTMENT
 
     def _determine_replan_level_from_anomaly(self, anomaly: Dict[str, Any]) -> ReplanLevel:
         """
-        根据监控器检测到的异常确定重新规划级别
+        根据监控器检测到的异常确定重新规划级别（暂未使用）
+
+        后续可以根据异常类型和严重程度自动选择重新规划级别
 
         Args:
             anomaly: 异常信息字典
@@ -409,33 +351,16 @@ class AdaptiveController:
         Returns:
             重新规划级别
         """
-        anomaly_type = anomaly.get("type", "")
-        severity = anomaly.get("severity", "low")
+        # ==================== 后续添加异常级别映射逻辑 ====================
+        # TODO: 根据异常类型选择重新规划级别：
+        # 1. environment_change/sensor_failure -> FULL_REPLAN
+        # 2. timeout -> PARAMETER_ADJUSTMENT
+        # 3. stuck (high severity) -> SKILL_REPLACEMENT
+        # 4. stuck (low severity) -> PARAMETER_ADJUSTMENT
+        # 5. oscillation -> TASK_REORDER
+        # ==========================================================
 
-        # 环境变化 -> 完全重新规划
-        if anomaly_type == "environment_change":
-            return ReplanLevel.FULL_REPLAN
-
-        # 传感器失效 -> 完全重新规划
-        if anomaly_type == "sensor_failure":
-            return ReplanLevel.FULL_REPLAN
-
-        # 超时 -> 参数调整
-        if anomaly_type == "timeout":
-            return ReplanLevel.PARAMETER_ADJUSTMENT
-
-        # 卡住 -> 技能替换
-        if anomaly_type == "stuck":
-            if severity == "high":
-                return ReplanLevel.SKILL_REPLACEMENT
-            else:
-                return ReplanLevel.PARAMETER_ADJUSTMENT
-
-        # 振荡 -> 任务重排
-        if anomaly_type == "oscillation":
-            return ReplanLevel.TASK_REORDER
-
-        # 默认 -> 参数调整
+        # 目前默认参数调整
         return ReplanLevel.PARAMETER_ADJUSTMENT
 
     def _get_previous_result(self) -> Optional[Any]:
