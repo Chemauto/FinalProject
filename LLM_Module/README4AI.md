@@ -1,6 +1,6 @@
-# LLM Module - 详细技术文档
+# LLM Module - 详细技术文档 (v3.0.0)
 
-本文档详细介绍 LLM_Module 的架构设计、API 使用方法和扩展指南。
+本文档详细介绍 LLM_Module v3.0.0 的架构设计、API 使用方法和扩展指南。
 
 ## 📋 目录
 
@@ -9,6 +9,7 @@
 - [完整API参考](#完整api参考)
 - [使用示例](#使用示例)
 - [扩展指南](#扩展指南)
+- [VLM 集成](#vlm-集成)
 
 ---
 
@@ -16,25 +17,35 @@
 
 ### 设计理念
 
-LLM_Module 实现了一个**双层 LLM 智能体架构**，模拟人类的认知过程：
+LLM_Module v3.0.0 实现了一个**支持视觉理解的双层 LLM 智能体架构**，模拟人类的认知过程：
 
-1. **高层思考（High-Level LLM）**：像"大脑"一样理解全局，制定计划
-2. **低层执行（Low-Level LLM）**：像"小脑"一样执行具体动作
-3. **监控反馈（Execution Monitor）**：像"感知系统"一样监控状态
-4. **自适应调整（Adaptive Controller）**：像"反思机制"一样应对变化
+1. **视觉感知（VLM Core）**：像"眼睛"一样理解环境图像
+2. **高层思考（High-Level LLM）**：像"大脑"一样理解全局，制定计划
+3. **低层执行（Low-Level LLM）**：像"小脑"一样执行具体动作
+4. **监控反馈（Execution Monitor）**：像"感知系统"一样监控状态
+5. **自适应调整（Adaptive Controller）**：像"反思机制"一样应对变化
 
 ### 核心架构图
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│                    用户输入 (自然语言)                         │
-│                    "追击最近的敌人"                          │
+│              用户输入 (自然语言 + 可选图片)                    │
+│              "根据图片前进" + image.png                       │
+└────────────────────────┬─────────────────────────────────────┘
+                         ↓
+┌──────────────────────────────────────────────────────────────┐
+│  VLM Core (视觉感知模块) ✨ v3.0 新增                         │
+│  ┌────────────────────────────────────────────────────┐      │
+│  │ 输入: 环境图像 (image_path)                         │      │
+│  │ 处理: Ollama/API → 分析环境 → 生成描述              │      │
+│  │ 输出: "机器人视觉感知到：画面中央有红色方块..."      │      │
+│  └────────────────────────────────────────────────────┘      │
 └────────────────────────┬─────────────────────────────────────┘
                          ↓
 ┌──────────────────────────────────────────────────────────────┐
 │  High-Level LLM (规划器)                                     │
 │  ┌────────────────────────────────────────────────────┐      │
-│  │ 输入: 用户指令 + 可用技能列表                        │      │
+│  │ 输入: 用户指令 + VLM环境理解 + 可用技能列表          │      │
 │  │ 处理: 理解意图 → 分解任务 → 生成序列                │      │
 │  │ 输出: [Task1, Task2, Task3, ...]                   │      │
 │  └────────────────────────────────────────────────────┘      │
@@ -59,8 +70,8 @@ LLM_Module 实现了一个**双层 LLM 智能体架构**，模拟人类的认知
 │ │ - 振荡检测          │ │  │ └──────────────────────┘ │
 │ │ - 传感器失效        │ │  │                          │
 │ └─────────────────────┘ │  │     ↓                   │
-└──────────┬──────────────┘  │     │ Tool: chase_enemy   │
-           │                 │     │ Params: {...}        │
+└──────────┬──────────────┘  │     │ Tool: move_forward  │
+           │                 │     │ Params: {dist: 1.0} │
            │ 检测到异常?     │                          │
            ↓                 └──────────┬───────────────┘
     ┌──────────────────────────────────┘
@@ -82,1097 +93,619 @@ LLM_Module 实现了一个**双层 LLM 智能体架构**，模拟人类的认知
                   Robot_Module (技能调用)
 ```
 
+### v3.0 新特性
+
+| 特性 | 说明 | 状态 |
+|------|------|------|
+| **VLM 独立模块** | `vlm_core.py` 专门处理视觉理解 | ✅ 完成 |
+| **本地 Ollama 支持** | 使用 `qwen3-vl:4b` 本地模型 | ✅ 完成 |
+| **默认图片支持** | 默认使用 `red.png` 作为测试图片 | ✅ 完成 |
+| **灵活配置** | 支持本地 Ollama 和远程 API | ✅ 完成 |
+| **向后兼容** | 旧代码无需修改即可使用 | ✅ 完成 |
+
 ---
 
 ## 模块详解
 
-### 1. high_level_llm.py - 高层 LLM 规划器
+### 1. vlm_core.py - VLM 核心模块 ✨ 新增
 
-**职责**：理解用户意图，结合可用技能，生成分解的任务序列
+**职责**：专门处理视觉语言模型相关功能，提供环境理解能力
 
-**核心方法**：
-
-```python
-class HighLevelLLM:
-    def __init__(self, api_key: str, base_url: str, model: str, prompt_path: str):
-        """初始化高层LLM"""
-        self.client = OpenAI(api_key=api_key, base_url=base_url)
-        self.model = model
-        self.prompt_template = self._load_prompt_template(prompt_path)
-
-    def plan_tasks(self, user_input: str, available_skills: List[str],
-                   env_state: Optional[Dict] = None) -> List[Dict]:
-        """
-        生成任务序列
-
-        Args:
-            user_input: 用户自然语言指令，如 "追击敌人"
-            available_skills: 可用技能列表，如 ["get_enemy_positions", "chase_enemy"]
-            env_state: 当前环境状态（可选），如 {"position": {"x": 100, "y": 200}}
-
-        Returns:
-            任务列表，格式:
-            [
-                {"step": 1, "task": "获取敌人位置", "type": "感知"},
-                {"step": 2, "task": "追击最近的敌人", "type": "追击"}
-            ]
-        """
-        # 1. 构建提示词（包含可用技能）
-        prompt = self._build_prompt(user_input, available_skills, env_state)
-
-        # 2. 调用LLM生成JSON格式的任务序列
-        completion = self.client.chat.completions.create(
-            model=self.model,
-            messages=[
-                {"role": "system", "content": "你是任务规划助手"},
-                {"role": "user", "content": prompt}
-            ]
-        )
-
-        # 3. 解析JSON响应
-        plan = json.loads(completion.choices[0].message.content)
-        tasks = plan.get("tasks", [])
-
-        return tasks
-
-    def replan_tasks(self, failed_task: Dict, env_state: Dict,
-                     failure_reason: str, original_user_input: str,
-                     available_skills: List[str]) -> List[Dict]:
-        """
-        失败后重新规划
-
-        使用场景：
-        - 任务执行失败
-        - 环境发生变化
-        - 检测到异常
-
-        策略：
-        - 分析失败原因
-        - 评估环境状态
-        - 生成替代方案
-        """
-```
-
-**提示词模板**：
-
-```yaml
-# prompts/planning_prompt_2d.yaml
-system_prompt: |
-  你是一个机器人任务规划助手。
-
-  机器人配置:
-  {robot_config}
-
-  可用技能:
-  {available_skills}
-
-  注意:
-  - 输出必须是有效的JSON格式
-  - 将复杂指令分解为简单任务
-  - 只使用可用技能列表中的技能
-
-prompt: |
-  用户输入: {user_input}
-
-  请将上述指令分解为子任务序列。
-
-  输出格式（JSON）：
-  {
-    "tasks": [
-      {"step": 1, "task": "子任务描述1", "type": "动作类型"},
-      {"step": 2, "task": "子任务描述2", "type": "动作类型"}
-    ],
-    "summary": "整体任务概述"
-  }
-```
-
----
-
-### 2. low_level_llm.py - 低层 LLM 执行器
-
-**职责**：将具体任务映射到工具调用，生成参数并执行
+**关键特性**：
+- ✅ 支持本地 Ollama（推荐）：`qwen3-vl:4b`
+- ✅ 支持远程 API（可选）：`qwen-vl-plus`
+- ✅ 默认图片：`/home/xcj/work/FinalProject/VLM_Module/assets/red.png`
+- ✅ 独立的提示词管理
+- ✅ 懒加载客户端
 
 **核心方法**：
 
 ```python
-class LowLevelLLM:
-    def __init__(self, api_key: str, base_url: str, model: str):
-        """初始化低层LLM"""
-        self.client = OpenAI(api_key=api_key, base_url=base_url)
-        self.model = model
+class VLMCore:
+    def __init__(self,
+                 vlm_prompt_path: Optional[str] = None,
+                 default_image: str = "/home/xcj/work/FinalProject/VLM_Module/assets/red.png",
+                 use_ollama: bool = True,
+                 ollama_model: str = "qwen3-vl:4b",
+                 ollama_host: str = "http://localhost:11434",
+                 api_key: Optional[str] = None,
+                 api_model: str = "qwen-vl-plus"):
+        """初始化 VLM 核心"""
 
-    def execute_task(self, task_description: str, tools: List[Dict],
-                     execute_tool_fn: Callable, previous_result: Any = None,
-                     perception_data: Optional[Dict] = None) -> Dict:
-        """
-        执行单个任务
-
-        Args:
-            task_description: 任务描述，如 "追击最近的敌人"
-            tools: 工具列表（OpenAI function calling格式）
-            execute_tool_fn: 工具执行函数
-            previous_result: 上一步的执行结果
-            perception_data: 感知数据（用于环境变化检测）
-
-        Returns:
-            执行结果:
-            {
-                "status": "success",  # success/failed/requires_replanning
-                "action": "chase_enemy",
-                "task": "追击最近的敌人",
-                "result": {...}
-            }
-        """
-        # 1. 构建系统提示词
-        system_prompt = self._build_system_prompt(task_description, previous_result)
-
-        # 2. 调用LLM（使用function calling）
-        completion = self.client.chat.completions.create(
-            model=self.model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"执行任务: {task_description}"}
-            ],
-            tools=tools,  # OpenAI function calling
-            tool_choice="auto"
-        )
-
-        # 3. 提取工具调用
-        tool_calls = completion.choices[0].message.tool_calls
-        if not tool_calls:
-            return {"status": "failed", "error": "No tool called"}
-
-        tool_call = tool_calls[0]
-        function_name = tool_call.function.name
-        function_args = json.loads(tool_call.function.arguments)
-
-        # 4. 执行工具
-        result = execute_tool_fn(function_name, function_args)
-
-        # 5. 返回结果
-        return {
-            "status": "success",
-            "action": function_name,
-            "task": task_description,
-            "result": result
-        }
-```
-
-**系统提示词示例**：
-
-```python
-system_prompt = f"""
-你是机器人执行控制器，负责将任务转换为工具调用。
-
-【当前任务】
-{task_description}
-
-【上一步结果】
-{previous_result or '无'}
-
-【可用工具】
-{tools}
-
-【执行规则】
-1. 理解任务描述，选择最合适的工具
-2. 根据任务和上一步结果，生成工具参数
-3. 如果任务涉及"追击"，必须先调用 get_enemy_positions() 获取位置
-4. 将位置传递给 chase_enemy(positions=...)
-
-【重要】
-- 如果上一步结果是敌人位置JSON，直接使用
-- 不要重复调用 get_enemy_positions()
-- 确保 chase_enemy 的参数是有效的JSON字符串
-"""
-```
-
----
-
-### 3. task_queue.py - 任务队列管理
-
-**职责**：管理任务状态，支持重试机制，动态插入任务
-
-**核心类和方法**：
-
-```python
-class TaskStatus(Enum):
-    """任务状态"""
-    PENDING = "pending"          # 待执行
-    IN_PROGRESS = "in_progress"  # 执行中
-    COMPLETED = "completed"      # 已完成
-    FAILED = "failed"            # 失败
-    SKIPPED = "skipped"          # 已跳过
-
-@dataclass
-class Task:
-    """任务数据类"""
-    step: int                    # 步骤编号
-    task: str                    # 任务描述
-    type: str                    # 任务类型
-    status: TaskStatus = TaskStatus.PENDING
-    retry_count: int = 0         # 当前重试次数
-    max_retries: int = 3         # 最大重试次数
-    result: Optional[Dict] = None # 执行结果
-
-    def can_retry(self) -> bool:
-        """是否可以重试"""
-        return self.retry_count < self.max_retries
-
-class TaskQueue:
-    """任务队列"""
-
-    def set_tasks(self, tasks_data: List[Dict]):
-        """
-        设置初始任务列表
-
-        Args:
-            tasks_data: 任务数据列表，格式:
-                [
-                    {"step": 1, "task": "获取敌人位置", "type": "感知"},
-                    {"step": 2, "task": "追击最近的敌人", "type": "追击"}
-                ]
-        """
-        self.tasks = [Task(**data) for data in tasks_data]
-
-    def get_next_task(self) -> Optional[Task]:
-        """获取下一个待执行的任务"""
-        for task in self.tasks:
-            if task.status == TaskStatus.PENDING:
-                task.status = TaskStatus.IN_PROGRESS
-                return task
-        return None
-
-    def mark_completed(self, task: Task, result: Dict):
-        """标记任务为已完成"""
-        task.status = TaskStatus.COMPLETED
-        task.result = result
-
-    def mark_failed(self, task: Task, error: str):
-        """标记任务为失败"""
-        task.retry_count += 1
-        if task.can_retry():
-            task.status = TaskStatus.PENDING  # 可以重试，重置为待执行
-        else:
-            task.status = TaskStatus.FAILED    # 达到最大重试次数，彻底失败
-
-    def insert_tasks(self, tasks_data: List[Dict], at_front: bool = True):
-        """
-        动态插入新任务（用于重新规划）
-
-        Args:
-            tasks_data: 新任务列表
-            at_front: 是否插入到队列前端（优先执行）
-        """
-        new_tasks = [Task(**data) for data in tasks_data]
-
-        # 重新编号后续任务
-        for task in self.tasks:
-            task.step += len(new_tasks)
-
-        if at_front:
-            self.tasks = new_tasks + self.tasks
-        else:
-            self.tasks.extend(new_tasks)
-
-    def get_progress(self) -> Dict:
-        """
-        获取进度信息
-
-        Returns:
-            {
-                "total": 5,
-                "completed": 3,
-                "failed": 0,
-                "pending": 2,
-                "progress_percent": 60.0
-            }
-        """
+    def analyze_environment(self, image_path: Optional[str] = None) -> Optional[str]:
+        """分析环境图像"""
 ```
 
 **使用示例**：
 
 ```python
-# 创建任务队列
-queue = TaskQueue()
+from LLM_Module.vlm_core import VLMCore
 
-# 设置任务
-queue.set_tasks([
-    {"step": 1, "task": "获取敌人位置", "type": "感知"},
-    {"step": 2, "task": "追击最近的敌人", "type": "追击"}
-])
+# 本地 Ollama 模式（推荐）
+vlm = VLMCore(use_ollama=True)
+result = vlm.analyze_environment("/path/to/image.png")
+print(result)
+# 输出: "机器人视觉感知到：画面中央偏下位置有一个红色正方形物体..."
 
-# 执行循环
-while not queue.is_empty():
-    task = queue.get_next_task()
-    result = execute_task(task)
-
-    if result["success"]:
-        queue.mark_completed(task, result)
-    else:
-        queue.mark_failed(task, result["error"])
-        if not task.can_retry():
-            # 重试失败，触发重新规划
-            new_tasks = replan(...)
-            queue.insert_tasks(new_tasks, at_front=True)
+# 远程 API 模式
+vlm_api = VLMCore(use_ollama=False, api_key="your_key")
+result = vlm_api.analyze_environment("/path/to/image.png")
 ```
 
----
+### 2. high_level_llm.py - 高层 LLM 规划器
 
-### 4. execution_monitor.py - 执行监控器
+**职责**：理解用户意图，结合 VLM 环境理解和可用技能，生成分解的任务序列
 
-**职责**：实时监控任务执行，检测异常，触发重新规划
+**v3.0 变更**：
+- ✅ 接收 `VLMCore` 实例作为参数
+- ✅ 在 `plan_tasks()` 中自动调用 VLM 分析图片
+- ✅ 将 VLM 理解结果加入 prompt
 
-**核心类和方法**：
+**核心方法**：
+
+```python
+class HighLevelLLM:
+    def __init__(self,
+                 api_key: str,
+                 base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                 model: str = "qwen3-32b",
+                 prompt_path: str = None,
+                 vlm_core: Optional['VLMCore'] = None):  # ← 新增
+        """初始化高层LLM"""
+
+    def plan_tasks(self,
+                   user_input: str,
+                   available_skills: List[str],
+                   env_state: Optional[Dict[str, Any]] = None,
+                   image_path: Optional[str] = None) -> List[Dict[str, Any]]:  # ← 新增参数
+        """根据用户输入和环境状态生成任务序列"""
+```
+
+**工作流程**：
+
+```python
+# 1. 如果提供了 image_path 且 vlm_core 已初始化
+if image_path and self.vlm_core:
+    vlm_result = self.vlm_core.analyze_environment(image_path)
+    vlm_understanding = f"【环境观察】\n{vlm_result}"
+
+# 2. 将 VLM 理解加入用户输入
+user_input_section = f"{vlm_understanding}\n\n【用户指令】\n{user_input}"
+
+# 3. 调用文本 LLM 生成任务序列
+tasks = llm_call(user_input_section, available_skills)
+```
+
+### 3. low_level_llm.py - 低层 LLM 执行控制器
+
+**职责**：执行单个子任务，选择合适的工具并生成参数
+
+**核心方法**：
+
+```python
+class LowLevelLLM:
+    def execute_task(self,
+                    task_description: str,
+                    tools: List[Dict],
+                    execute_tool_fn: Callable,
+                    previous_result: Any = None) -> Dict:
+        """执行单个子任务"""
+```
+
+**执行流程**：
+
+```
+任务描述 → 选择工具 → 生成参数 → 调用执行函数 → 返回结果
+```
+
+### 4. task_queue.py - 任务队列管理
+
+**职责**：管理任务状态，支持重试和动态插入
+
+**任务状态**：
+
+```python
+class TaskStatus(Enum):
+    PENDING = "pending"           # 等待执行
+    IN_PROGRESS = "in_progress"   # 执行中
+    COMPLETED = "completed"       # 已完成
+    FAILED = "failed"            # 失败
+    CANCELLED = "cancelled"       # 已取消
+```
+
+**核心方法**：
+
+```python
+class TaskQueue:
+    def add_task(self, task: Task) -> int:
+        """添加任务到队列"""
+
+    def get_next_task(self) -> Optional[Task]:
+        """获取下一个待执行任务"""
+
+    def mark_task_completed(self, task_id: int, result: Any):
+        """标记任务为已完成"""
+
+    def mark_task_failed(self, task_id: int, error: str):
+        """标记任务为失败"""
+```
+
+### 5. execution_monitor.py - 执行监控器
+
+**职责**：检测任务执行过程中的异常情况
+
+**监控类型**：
 
 ```python
 class AnomalyType(Enum):
-    """异常类型"""
-    TIMEOUT = "timeout"                      # 超时
-    STUCK = "stuck"                          # 卡住
-    OSCILLATION = "oscillation"              # 振荡
-    ENVIRONMENT_CHANGE = "environment_change" # 环境变化
-    SENSOR_FAILURE = "sensor_failure"        # 传感器失效
-    UNKNOWN = "unknown"
-
-@dataclass
-class Anomaly:
-    """异常数据"""
-    type: AnomalyType
-    description: str
-    severity: str  # low, medium, high
-    data: Optional[Dict] = None
-
-class ExecutionMonitor:
-    """执行监控器"""
-
-    def __init__(self,
-                 monitoring_interval: float = 0.1,    # 监控间隔（秒）
-                 timeout_threshold: float = 30.0,     # 超时阈值（秒）
-                 stuck_threshold: float = 5.0):       # 卡住阈值（秒）
-        """初始化监控器"""
-
-    def detect_anomaly(self, current_state: Dict, task: Dict) -> Optional[Anomaly]:
-        """
-        检测异常
-
-        TODO: 需要添加以下检测逻辑：
-
-        1. 超时检测
-        ```python
-        if elapsed_time > self.timeout_threshold:
-            return Anomaly(
-                type=AnomalyType.TIMEOUT,
-                description=f"任务执行超时（{elapsed_time:.1f}秒）",
-                severity="high"
-            )
-        ```
-
-        2. 卡住检测（位置不变）
-        ```python
-        if position_unchanged_duration > self.stuck_threshold:
-            return Anomaly(
-                type=AnomalyType.STUCK,
-                description=f"机器人卡住（{duration:.1f}秒未移动）",
-                severity="medium"
-            )
-        ```
-
-        3. 振荡检测（来回移动）
-        ```python
-        if is_oscillating(position_history):
-            return Anomaly(
-                type=AnomalyType.OSCILLATION,
-                description="检测到振荡行为",
-                severity="medium"
-            )
-        ```
-
-        4. 传感器失效
-        ```python
-        if sensor_status == "failed":
-            return Anomaly(
-                type=AnomalyType.SENSOR_FAILURE,
-                description="传感器失效",
-                severity="high"
-            )
-        ```
-
-        5. 环境变化
-        ```python
-        if environment_changed(current_state, previous_state):
-            return Anomaly(
-                type=AnomalyType.ENVIRONMENT_CHANGE,
-                description="检测到环境变化",
-                severity="high"
-            )
-        ```
-        """
-        # 当前框架：暂不检测异常，返回None
-        return None
-
-    def reset(self):
-        """重置监控状态"""
-        self.execution_start_time = None
-        self.last_position = None
-        self.position_history = []
+    TIMEOUT = "timeout"           # 超时
+    STUCK = "stuck"               # 卡住
+    OSCILLATION = "oscillation"   # 振荡
+    SENSOR_FAILURE = "sensor_failure"  # 传感器失效
+    ENV_CHANGE = "env_change"     # 环境变化
 ```
 
----
-
-### 5. adaptive_controller.py - 自适应控制器
-
-**职责**：协调规划、执行、监控，实现自适应重规划
-
-**核心流程**：
+**核心方法**：
 
 ```python
-class AdaptiveController:
-    """自适应控制器"""
-
-    def __init__(self, high_level_llm, low_level_llm, execution_monitor):
-        """初始化控制器"""
-        self.high_level_llm = high_level_llm
-        self.low_level_llm = low_level_llm
-        self.execution_monitor = execution_monitor
-        self.task_queue = TaskQueue()
-        self.replan_count = 0
-        self.max_replans = 3  # 最大重新规划次数
-
-    async def run(self, user_input: str, tools: List[Dict],
-                  execute_tool_fn: Callable, available_skills: List[str],
-                  env_state: Optional[Dict] = None) -> List[Dict]:
-        """
-        运行完整的自适应控制流程
-
-        流程：
-        1. 初始规划 → 生成任务序列
-        2. 执行循环：
-           a. 取出任务
-           b. 监控执行（后台检测异常）
-           c. 处理结果（成功/失败/异常）
-           d. 如果需要，触发重新规划
-        3. 返回所有结果
-        """
-        # 阶段1: 初始规划
-        tasks = self.high_level_llm.plan_tasks(
-            user_input=user_input,
-            available_skills=available_skills,
-            env_state=env_state
-        )
-        self.task_queue.set_tasks(tasks)
-
-        # 阶段2: 执行循环
-        results = []
-        while not self.task_queue.is_empty() and self.replan_count < self.max_replans:
-            task = self.task_queue.get_next_task()
-
-            # 执行任务（带监控）
-            result = await self.execute_with_monitoring(
-                task=task,
-                tools=tools,
-                execute_tool_fn=execute_tool_fn,
-                env_state=env_state
-            )
-            results.append(result)
-
-            # 处理结果（可能触发重新规划）
-            await self.handle_execution_result(
-                task=task,
-                result=result,
-                env_state=env_state,
-                available_skills=available_skills
-            )
-
-        return results
-
-    async def execute_with_monitoring(self, task, tools, execute_tool_fn, env_state):
-        """
-        带监控的任务执行
-
-        TODO: 后续添加后台监控逻辑
-
-        当前实现：直接执行任务，暂不启动后台监控
-        """
-        self.execution_monitor.reset()
-
-        # 直接执行任务
-        result = self.low_level_llm.execute_task(
-            task_description=task.task,
-            tools=tools,
-            execute_tool_fn=execute_tool_fn,
-            previous_result=self._get_previous_result()
-        )
-
-        return result
-
-    async def handle_execution_result(self, task, result, env_state, available_skills):
-        """
-        处理执行结果
-
-        决策逻辑：
-        1. 成功 → 标记完成
-        2. 失败 → 检查是否需要重新规划
-        3. 检测到异常 → 触发重新规划
-
-        TODO: 后续添加自动重试和重新规划逻辑
-        """
-        status = result.get("status")
-
-        if status == "success":
-            self.task_queue.mark_completed(task, result)
-
-        elif status == "requires_replanning":
-            # 低层LLM检测到环境变化
-            await self.trigger_replanning(
-                task=task,
-                result=result,
-                env_state=env_state,
-                available_skills=available_skills,
-                level=ReplanLevel.FULL_REPLAN
-            )
-
-        else:
-            # 任务失败
-            self.task_queue.mark_failed(task, result.get("error"))
-
-    async def trigger_replanning(self, task, result, env_state, available_skills, level):
-        """
-        触发重新规划
-
-        根据级别选择策略：
-        - Level 1 (PARAMETER_ADJUSTMENT): 调整参数
-        - Level 2 (SKILL_REPLACEMENT): 替换技能
-        - Level 3 (TASK_REORDER): 重排任务
-        - Level 4 (FULL_REPLAN): 完全重新规划
-        """
-        self.replan_count += 1
-        print(f"🔄 [重新规划] 第 {self.replan_count} 次 (级别: {level.name})")
-
-        # 调用高层LLM重新规划
-        new_tasks = self.high_level_llm.replan_tasks(
-            failed_task={"task": task.task, "type": task.type},
-            env_state=env_state,
-            failure_reason=result.get("error", "Unknown"),
-            original_user_input=self.original_user_input,
-            available_skills=available_skills
-        )
-
-        if new_tasks:
-            self.task_queue.insert_tasks(new_tasks, at_front=True)
+class ExecutionMonitor:
+    def detect_anomaly(self,
+                      execution_context: Dict[str, Any]) -> Optional[AnomalyType]:
+        """检测执行异常"""
 ```
 
-**重新规划级别说明**：
+### 6. adaptive_controller.py - 自适应控制器
+
+**职责**：协调高层和低层 LLM，根据执行反馈自适应调整
+
+**重新规划级别**：
 
 ```python
 class ReplanLevel(Enum):
-    """重新规划级别"""
-    PARAMETER_ADJUSTMENT = 1  # 参数调整
-    SKILL_REPLACEMENT = 2     # 技能替换
-    TASK_REORDER = 3          # 任务重排
-    FULL_REPLAN = 4           # 完全重新规划
+    PARAMETER_ADJUST = "parameter_adjust"   # 参数调整
+    SKILL_REPLACE = "skill_replace"         # 技能替换
+    TASK_REORDER = "task_reorder"           # 任务重排
+    FULL_REPLAN = "full_replan"             # 完全重新规划
 ```
 
-**级别选择策略**：
+**核心方法**：
 
-| 异常类型 | 级别 | 说明 | 示例 |
-|---------|------|------|------|
-| 超时 | Level 1 | 调整参数（增大速度） | `move_forward(speed=0.3)` → `move_forward(speed=0.5)` |
-| 轻度卡住 | Level 1 | 调整参数 | `turn(angle=90)` → `turn(angle=95)` |
-| 严重卡住 | Level 2 | 技能替换 | `move_forward` → `move_backward` (后退解除卡住) |
-| 障碍物 | Level 2 | 技能替换 | `move_forward` → `turn` + `move_forward` |
-| 振荡 | Level 3 | 任务重排 | 任务A→B → 任务B→A |
-| 环境变化 | Level 4 | 完全重新规划 | "追击敌人" → "搜索敌人"→"追击" |
-| 传感器失效 | Level 4 | 完全重新规划 | 改用其他传感器或方法 |
+```python
+class AdaptiveController:
+    async def run(self,
+                  user_input: str,
+                  tools: List[Dict],
+                  execute_tool_fn: Callable,
+                  available_skills: List[str],
+                  env_state: Dict[str, Any]) -> List[Dict]:
+        """运行自适应控制流程"""
+```
 
----
+### 7. llm_core.py - 主入口（适配层）
 
-### 6. llm_core.py - LLMAgent 兼容层
+**职责**：整合所有模块，提供向后兼容的接口
 
-**职责**：提供向后兼容的接口，内部使用新的模块化架构
+**v3.0 变更**：
+- ✅ 自动初始化 `VLMCore`
+- ✅ 传递 `VLMCore` 给 `HighLevelLLM`
+- ✅ 保持向后兼容
 
 **核心类**：
 
 ```python
 class LLMAgent:
-    """LLM Agent（兼容层）"""
-
-    def __init__(self, api_key: str, base_url: str, prompt_path: str,
+    def __init__(self,
+                 api_key: str,
+                 base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                 model: str = "qwen3-32b",
+                 prompt_path: str = None,
+                 enable_vlm: bool = True,           # ← 新增：是否启用 VLM
+                 vlm_prompt_path: str = None,       # ← 新增：VLM 提示词
                  enable_adaptive: bool = False):
-        """
-        初始化LLM Agent
-
-        Args:
-            enable_adaptive: 是否启用自适应控制
-        """
-        # 创建新的模块化架构
-        self.high_level_llm = HighLevelLLM(api_key, base_url, prompt_path)
-        self.low_level_llm = LowLevelLLM(api_key, base_url)
-
-        if enable_adaptive:
-            from .execution_monitor import ExecutionMonitor
-            from .adaptive_controller import AdaptiveController
-
-            self.adaptive_controller = AdaptiveController(
-                high_level_llm=self.high_level_llm,
-                low_level_llm=self.low_level_llm,
-                execution_monitor=ExecutionMonitor()
-            )
-        else:
-            self.adaptive_controller = None
-
-    def run_pipeline(self, user_input: str, tools: List[Dict],
-                    execute_tool_fn: Callable) -> List[Dict]:
-        """
-        运行双层LLM流程
-
-        根据是否启用自适应，选择不同的执行路径：
-        - enable_adaptive=True: 使用 AdaptiveController（异步）
-        - enable_adaptive=False: 使用同步流程（向后兼容）
-        """
-        if self.enable_adaptive and self.adaptive_controller:
-            # 使用异步自适应控制器
-            loop = asyncio.get_event_loop()
-            results = loop.run_until_complete(
-                self.adaptive_controller.run(
-                    user_input=user_input,
-                    tools=tools,
-                    execute_tool_fn=execute_tool_fn,
-                    available_skills=[...]
-                )
-            )
-            return results
-        else:
-            # 使用同步流程（向后兼容）
-            tasks = self.plan_tasks(user_input, tools)
-            results = []
-            for task in tasks:
-                result = self.execute_single_task(task["task"], tools, execute_tool_fn)
-                results.append(result)
-            return results
+        """初始化LLM代理"""
 ```
 
 ---
 
 ## 完整API参考
 
-### HighLevelLLM
+### VLMCore API
+
+#### `__init__`
 
 ```python
-class HighLevelLLM:
-    def __init__(self, api_key: str, base_url: str, model: str, prompt_path: str)
-
-    def plan_tasks(self, user_input: str, available_skills: List[str],
-                   env_state: Optional[Dict] = None) -> List[Dict]:
-        """生成任务序列"""
-
-    def replan_tasks(self, failed_task: Dict, env_state: Dict,
-                     failure_reason: str, original_user_input: str,
-                     available_skills: List[str]) -> List[Dict]:
-        """任务失败时重新规划"""
-
-    def validate_plan(self, tasks: List[Dict]) -> bool:
-        """验证生成的任务计划是否有效"""
+VLMCore(
+    vlm_prompt_path: Optional[str] = None,
+    default_image: str = "/home/xcj/work/FinalProject/VLM_Module/assets/red.png",
+    use_ollama: bool = True,
+    ollama_model: str = "qwen3-vl:4b",
+    ollama_host: str = "http://localhost:11434",
+    api_key: Optional[str] = None,
+    api_model: str = "qwen-vl-plus"
+)
 ```
 
-### LowLevelLLM
+**参数说明**：
+- `vlm_prompt_path`: VLM 提示词文件路径（可选）
+- `default_image`: 默认图片路径
+- `use_ollama`: 是否使用本地 Ollama
+- `ollama_model`: Ollama 模型名称
+- `ollama_host`: Ollama 服务地址
+- `api_key`: 远程 API 密钥
+- `api_model`: 远程 API 模型名称
+
+#### `analyze_environment`
 
 ```python
-class LowLevelLLM:
-    def __init__(self, api_key: str, base_url: str, model: str)
+def analyze_environment(self, image_path: Optional[str] = None) -> Optional[str]:
+    """分析环境图像
 
-    def execute_task(self, task_description: str, tools: List[Dict],
-                     execute_tool_fn: Callable, previous_result: Any = None,
-                     perception_data: Optional[Dict] = None) -> Dict:
-        """执行单个任务"""
+    Args:
+        image_path: 图像文件路径（可选，默认使用 red.png）
+
+    Returns:
+        环境理解文本，失败时返回 None
+    """
 ```
 
-### TaskQueue
-
+**返回示例**：
 ```python
-class TaskQueue:
-    def set_tasks(self, tasks_data: List[Dict])
-    def get_next_task(self) -> Optional[Task]
-    def mark_completed(self, task: Task, result: Dict)
-    def mark_failed(self, task: Task, error: str)
-    def insert_tasks(self, tasks_data: List[Dict], at_front: bool = True)
-    def is_empty(self) -> bool
-    def get_progress(self) -> Dict
-    def print_summary(self)
+"机器人视觉感知到：画面中央偏下位置有一个红色正方形物体，位于白色平面上，距离机器人约50厘米。背景为纯白色，无其他障碍物。通道畅通，可安全移动。"
 ```
 
-### ExecutionMonitor
+### HighLevelLLM API
+
+#### `plan_tasks`
 
 ```python
-class ExecutionMonitor:
-    def __init__(self, monitoring_interval: float = 0.1,
-                 timeout_threshold: float = 30.0,
-                 stuck_threshold: float = 5.0)
+def plan_tasks(self,
+               user_input: str,
+               available_skills: List[str],
+               env_state: Optional[Dict[str, Any]] = None,
+               image_path: Optional[str] = None) -> List[Dict[str, Any]]:
+    """根据用户输入和环境状态生成任务序列
 
-    def detect_anomaly(self, current_state: Dict, task: Dict) -> Optional[Anomaly]:
-        """检测异常"""
+    Args:
+        user_input: 用户自然语言指令
+        available_skills: 可用技能列表
+        env_state: 当前环境状态（可选）
+        image_path: 环境图像路径（可选，用于VLM理解）
 
-    def reset(self):
-        """重置监控状态"""
+    Returns:
+        任务序列列表，格式：[{"step": 1, "task": "...", "type": "..."}, ...]
+    """
 ```
 
-### AdaptiveController
+**返回示例**：
+```python
+[
+    {"step": 1, "task": "向红色方块前进1米", "type": "移动"},
+    {"step": 2, "task": "停止", "type": "停止"}
+]
+```
+
+### LLMAgent API
+
+#### `run_pipeline`
 
 ```python
-class AdaptiveController:
-    def __init__(self, high_level_llm: HighLevelLLM,
-                 low_level_llm: LowLevelLLM,
-                 execution_monitor: Optional[ExecutionMonitor] = None)
+def run_pipeline(self,
+                 user_input: str,
+                 tools: List[Dict],
+                 execute_tool_fn: Callable,
+                 image_path: str = None) -> List[Dict]:
+    """运行完整的双层LLM流程
 
-    async def run(self, user_input: str, tools: List[Dict],
-                  execute_tool_fn: Callable, available_skills: List[str],
-                  env_state: Optional[Dict] = None) -> List[Dict]:
-        """运行自适应控制循环"""
+    Args:
+        user_input: 用户输入
+        tools: 可用工具列表
+        execute_tool_fn: 工具执行函数
+        image_path: 环境图像路径（可选，用于VLM理解）
+
+    Returns:
+        执行结果列表
+    """
 ```
 
 ---
 
 ## 使用示例
 
-### 示例1：基础使用（非自适应模式）
+### 示例 1：基础使用（带 VLM）
 
 ```python
 from LLM_Module import LLMAgent
 
-# 创建Agent
+# 初始化（默认启用 VLM）
 agent = LLMAgent(
     api_key="your_api_key",
     prompt_path="LLM_Module/prompts/planning_prompt_2d.yaml"
 )
 
-# 定义工具
-tools = [
-    {
-        "type": "function",
-        "function": {
-            "name": "move_forward",
-            "description": "向前移动指定距离",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "distance": {"type": "number"},
-                    "speed": {"type": "number"}
-                }
-            }
-        }
-    },
-    # ... 更多工具
-]
-
-# 定义执行函数
-def execute_tool(function_name: str, parameters: dict):
-    """执行工具调用"""
-    if function_name == "move_forward":
-        return {"result": f"已前进{parameters['distance']}米", "delay": 3.0}
-    # ... 其他工具
-
-# 运行
+# 运行任务（带图片）
 results = agent.run_pipeline(
-    user_input="前进1米然后左转90度",
-    tools=tools,
-    execute_tool_fn=execute_tool
+    user_input="根据图片前进",
+    tools=[
+        {"function": {"name": "move_forward"}},
+        {"function": {"name": "turn"}}
+    ],
+    execute_tool_fn=lambda name, params: execute_tool(name, **params),
+    image_path="/path/to/image.png"
 )
 
 # 结果
 for result in results:
-    print(f"任务: {result['task']}")
-    print(f"状态: {result['success']}")
-    print(f"结果: {result.get('result')}")
+    if result["success"]:
+        print(f"✅ {result['task']}: {result['result']}")
+    else:
+        print(f"❌ {result['task']}: {result['error']}")
 ```
 
-### 示例2：启用自适应模式
+### 示例 2：独立使用 VLM
 
 ```python
-from LLM_Module import LLMAgent
-import asyncio
+from LLM_Module.vlm_core import VLMCore
 
-# 创建Agent（启用自适应）
+# 初始化 VLM
+vlm = VLMCore(
+    use_ollama=True,
+    ollama_model="qwen3-vl:4b"
+)
+
+# 分析默认图片
+result1 = vlm.analyze_environment()
+print(result1)
+
+# 分析指定图片
+result2 = vlm.analyze_environment("/path/to/green.png")
+print(result2)
+```
+
+### 示例 3：手动组合模块
+
+```python
+from LLM_Module.vlm_core import VLMCore
+from LLM_Module.high_level_llm import HighLevelLLM
+
+# 创建自定义 VLM
+vlm = VLMCore(
+    use_ollama=True,
+    ollama_model="qwen3-vl:4b",
+    default_image="/custom/path/default.png"
+)
+
+# 创建 High-Level LLM
+high_llm = HighLevelLLM(
+    api_key="your_api_key",
+    vlm_core=vlm
+)
+
+# 规划任务
+tasks = high_llm.plan_tasks(
+    user_input="前进1米",
+    available_skills=["move_forward", "turn"],
+    image_path="/path/to/image.png"
+)
+
+for task in tasks:
+    print(f"{task['step']}. {task['task']} ({task['type']})")
+```
+
+### 示例 4：禁用 VLM
+
+```python
+# 不使用 VLM（纯文本规划）
+agent = LLMAgent(
+    api_key="your_api_key",
+    enable_vlm=False
+)
+
+# 只能使用文本输入
+results = agent.run_pipeline(
+    user_input="前进1米",
+    tools=tools,
+    execute_tool_fn=execute_tool
+    # 没有 image_path 参数
+)
+```
+
+### 示例 5：启用自适应控制
+
+```python
 agent = LLMAgent(
     api_key="your_api_key",
     prompt_path="LLM_Module/prompts/planning_prompt_2d.yaml",
-    enable_adaptive=True  # ← 启用自适应
+    enable_adaptive=True  # 启用自适应
 )
 
-# 提供环境状态
-env_state = {
-    "position": {"x": 100, "y": 200},
-    "sensor_status": {"lidar": "ok", "camera": "ok"}
-}
-
-# 运行（异步）
+# 自适应模式会在任务失败时自动重新规划
 results = agent.run_pipeline(
     user_input="追击敌人",
     tools=tools,
     execute_tool_fn=execute_tool
 )
-
-# 如果检测到异常，会自动重新规划
-# 如果任务失败，会自动重试或重新规划
-```
-
-### 示例3：使用新架构（完全控制）
-
-```python
-from LLM_Module import AdaptiveController, HighLevelLLM, LowLevelLLM, ExecutionMonitor
-import asyncio
-
-# 初始化组件
-high_level = HighLevelLLM(
-    api_key="your_api_key",
-    prompt_path="LLM_Module/prompts/planning_prompt_2d.yaml"
-)
-
-low_level = LowLevelLLM(api_key="your_api_key")
-
-monitor = ExecutionMonitor(
-    monitoring_interval=0.1,
-    timeout_threshold=30.0,
-    stuck_threshold=5.0
-)
-
-# 创建控制器
-controller = AdaptiveController(
-    high_level_llm=high_level,
-    low_level_llm=low_level,
-    execution_monitor=monitor
-)
-
-# 运行（异步）
-results = asyncio.run(
-    controller.run(
-        user_input="追击敌人",
-        tools=tools,
-        execute_tool_fn=execute_tool,
-        available_skills=["get_enemy_positions", "chase_enemy"],
-        env_state={"position": {"x": 100, "y": 200}}
-    )
-)
-```
-
-### 示例4：单独使用模块
-
-```python
-from LLM_Module import HighLevelLLM, TaskQueue
-
-# 高层规划
-high_level = HighLevelLLM(api_key="...", prompt_path="...")
-
-tasks = high_level.plan_tasks(
-    user_input="追击敌人",
-    available_skills=["get_enemy_positions", "chase_enemy"],
-    env_state={"position": {"x": 100, "y": 200}}
-)
-
-# 任务队列管理
-queue = TaskQueue()
-queue.set_tasks(tasks)
-
-# 执行循环
-while not queue.is_empty():
-    task = queue.get_next_task()
-    result = execute_task(task)
-
-    if result["success"]:
-        queue.mark_completed(task, result)
-    else:
-        queue.mark_failed(task, result["error"])
-
-    # 查看进度
-    progress = queue.get_progress()
-    print(f"进度: {progress['completed']}/{progress['total']}")
 ```
 
 ---
 
 ## 扩展指南
 
-### 1. 添加新的异常检测
+### 添加新的监控类型
 
-在 `execution_monitor.py` 的 `detect_anomaly()` 方法中添加：
+在 `execution_monitor.py` 中添加：
 
 ```python
-def detect_anomaly(self, current_state: Dict, task: Dict) -> Optional[Anomaly]:
-    """检测异常"""
+def detect_anomaly(self, execution_context: Dict[str, Any]) -> Optional[AnomalyType]:
+    # 现有检测逻辑...
 
-    # 示例1: 超时检测
-    if self.execution_start_time:
-        elapsed = time.time() - self.execution_start_time
-        if elapsed > self.timeout_threshold:
-            return Anomaly(
-                type=AnomalyType.TIMEOUT,
-                description=f"任务超时（{elapsed:.1f}秒）",
-                severity="high"
-            )
-
-    # 示例2: 卡住检测
-    if current_state and "position" in current_state:
-        current_position = current_state["position"]
-        if self.last_position:
-            distance = self._calculate_distance(current_position, self.last_position)
-            if distance < 0.01:  # 位置几乎不变
-                stuck_duration = time.time() - self.last_position_update_time
-                if stuck_duration > self.stuck_threshold:
-                    return Anomaly(
-                        type=AnomalyType.STUCK,
-                        description=f"卡住（{stuck_duration:.1f}秒）",
-                        severity="medium"
-                    )
-
-    # ... 添加更多检测逻辑
-
-    return None
+    # 添加新的检测类型
+    if self._check_custom_condition(execution_context):
+        return AnomalyType.CUSTOM  # 需要在 AnomalyType 中添加
 ```
 
-### 2. 自定义重新规划策略
+### 自定义 VLM 提示词
 
-在 `adaptive_controller.py` 中修改级别选择逻辑：
+创建自定义提示词文件 `custom_vlm_prompt.yaml`：
 
-```python
-def _determine_replan_level(self, result: Dict) -> ReplanLevel:
-    """根据错误类型选择重新规划级别"""
+```yaml
+system_prompt: |
+  你是一个专业的机器人视觉导航助手。
 
-    error = result.get("error", "").lower()
-
-    # 自定义策略
-    if "timeout" in error:
-        return ReplanLevel.PARAMETER_ADJUSTMENT  # 调整参数
-    elif "obstacle" in error:
-        return ReplanLevel.SKILL_REPLACEMENT    # 替换技能
-    elif "environment" in error:
-        return ReplanLevel.FULL_REPLAN          # 完全重新规划
-    else:
-        return ReplanLevel.PARAMETER_ADJUSTMENT
+prompt: |
+  请分析图像并提供导航建议：
+  1. 识别目标物体
+  2. 计算距离和方向
+  3. 评估路径可行性
+  4. 给出具体行动建议
 ```
 
-### 3. 集成VLM感知
-
-在 `low_level_llm.py` 中添加VLM支持：
+使用自定义提示词：
 
 ```python
-def execute_task(self, task_description: str, tools: List[Dict],
-                 execute_tool_fn: Callable, previous_result: Any = None,
-                 perception_data: Optional[Dict] = None):
-    """执行任务"""
-
-    # 如果提供了感知数据，检查环境变化
-    if perception_data and perception_data.get("environment_changed"):
-        return {
-            "status": "requires_replanning",
-            "reason": "environment_changed",
-            "task": task_description
-        }
-
-    # 正常执行...
+vlm = VLMCore(
+    vlm_prompt_path="custom_vlm_prompt.yaml"
+)
 ```
 
-### 4. 添加新的重新规划级别
+### 切换 VLM 模型
 
 ```python
-class ReplanLevel(Enum):
-    PARAMETER_ADJUSTMENT = 1
-    SKILL_REPLACEMENT = 2
-    TASK_REORDER = 3
-    FULL_REPLAN = 4
-    # 添加新级别
-    HUMAN_INTERVENTION = 5  # 请求人工干预
+# 使用更强的远程模型
+vlm = VLMCore(
+    use_ollama=False,
+    api_key="your_api_key",
+    api_model="qwen-vl-max"  # 更强的模型
+)
 ```
 
 ---
 
-## 最佳实践
+## VLM 集成
 
-### 1. 提示词设计
+### VLM 架构
 
-- 明确指定输出格式（JSON）
-- 提供清晰的示例
-- 说明可用技能的限制
-- 包含错误处理指导
+```
+VLMCore (vlm_core.py)
+    ├─ 本地 Ollama 模式
+    │   └─ qwen3-vl:4b（推荐）
+    └─ 远程 API 模式
+        └─ qwen-vl-plus / qwen-vl-max
+```
 
-### 2. 错误处理
+### 配置选项
 
-- 所有LLM调用都包装在 try-except 中
-- 提供有意义的错误信息
-- 实现回退机制（如默认行为）
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `use_ollama` | `True` | 是否使用本地 Ollama |
+| `ollama_model` | `"qwen3-vl:4b"` | Ollama 模型名称 |
+| `ollama_host` | `"localhost:11434"` | Ollama 服务地址 |
+| `default_image` | `/home/xcj/work/FinalProject/VLM_Module/assets/red.png` | 默认图片 |
+| `api_model` | `"qwen-vl-plus"` | API 模型名称 |
 
-### 3. 性能优化
+### 环境准备
 
-- 缓存LLM客户端连接
-- 异步执行工具调用
-- 避免不必要的LLM调用
+**本地 Ollama 模式**：
 
-### 4. 调试技巧
+```bash
+# 安装 Ollama
+curl -fsSL https://ollama.com/install.sh | sh
 
-- 打印中间结果
-- 验证JSON格式
-- 检查工具参数
+# 启动服务
+ollama serve
+
+# 运行模型
+ollama run qwen3-vl:4b
+```
+
+**远程 API 模式**：
+
+```python
+# 设置 API Key
+import os
+os.environ['Test_API_KEY'] = 'your_api_key'
+
+# 使用远程 API
+vlm = VLMCore(use_ollama=False)
+```
+
+### 故障排除
+
+**Q: VLM 客户端初始化失败？**
+
+```bash
+# 检查 Ollama 是否运行
+ps aux | grep ollama
+
+# 重启 Ollama
+ollama serve
+
+# 检查模型是否已下载
+ollama list | grep qwen3-vl
+
+# 重新下载模型
+ollama pull qwen3-vl:4b
+```
+
+**Q: 环境理解结果不准确？**
+
+1. 调整 VLM 提示词
+2. 尝试使用更强的模型
+3. 提供更清晰的图片
 
 ---
 
-## 常见问题
+## 版本历史
 
-### Q1: 如何调试LLM生成的JSON？
+### v3.0.0 (2025-02-02) - ✨ VLM 集成版本
 
-```python
-try:
-    plan = json.loads(response_text)
-except json.JSONDecodeError as e:
-    print(f"JSON解析失败: {e}")
-    print(f"原始响应: {response_text}")
-    # 使用默认计划或回退策略
-```
+**新增**：
+- ✅ `vlm_core.py` - 独立 VLM 模块
+- ✅ `prompts/vlm_perception.yaml` - VLM 提示词
+- ✅ 支持本地 Ollama（qwen3-vl:4b）
+- ✅ 支持远程 API（qwen-vl-plus）
+- ✅ 默认图片支持（red.png）
 
-### Q2: 如何处理工具参数错误？
+**修改**：
+- ✅ `llm_core.py` - 重写为适配层
+- ✅ `high_level_llm.py` - 接收 VLM 实例
 
-```python
-def execute_tool(function_name: str, parameters: dict):
-    try:
-        result = skill_func(**parameters)
-        return {"success": True, "result": result}
-    except TypeError as e:
-        # 参数错误，让LLM重新生成
-        return {"success": False, "error": str(e)}
-```
+**废弃**：
+- ⚠️ `llm_core_old.py` - 旧版本备份
 
-### Q3: 如何避免无限重新规划？
+### v2.1.0 (2025-01-XX)
 
-```python
-# 设置最大重新规划次数
-self.max_replans = 3
+- ✅ 简化监控器，移除具体检测逻辑（待后续添加）
+- ✅ 简化自适应控制器，保留框架
+- ✅ 修复统计逻辑兼容性问题
 
-# 在执行循环中检查
-while not queue.is_empty() and self.replan_count < self.max_replans:
-    # ...
-```
+### v2.0.0 (2025-01-XX)
+
+- ✅ 模块化架构重构
+- ✅ 双层 LLM 分离
+- ✅ 任务队列管理
+- ✅ 执行监控框架
+- ✅ 自适应控制框架
 
 ---
 
-## 总结
-
-LLM_Module 提供了一个完整的双层 LLM 智能体框架：
-
-✅ **已实现**：
-- 任务分解（High-Level LLM）
-- 任务执行（Low-Level LLM）
-- 任务队列管理
-- 执行监控框架
-- 自适应控制框架
-
-⚠️ **待完善**：
-- 具体的异常检测逻辑
-- 后台监控任务启动
-- 自动重试和重新规划触发
-- VLM集成
-
-🎯 **设计目标**：
-- 职责分离（规划 vs 执行）
-- 向后兼容（旧代码无需修改）
-- 可扩展（预留扩展接口）
-- 模块化（独立可测试）
-
----
-
-**详细文档，深入理解！** 🧠
+**详细文档，助力开发！** 🚀

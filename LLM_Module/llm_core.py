@@ -1,41 +1,44 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-LLM Core - 双层LLM架构核心模块 (兼容层)
+LLM Core - LLM模块核心入口（适配层）
 
-包含任务规划和任务执行的通用逻辑
-内部使用新的模块化架构（HighLevelLLM + LowLevelLLM + AdaptiveController）
+提供向后兼容的接口，内部使用新的模块化架构：
+- HighLevelLLM: 任务规划
+- LowLevelLLM: 执行控制
+- VLMCore: 视觉理解（可选）
+- AdaptiveController: 自适应控制（可选）
 """
 import os
-import sys
-import json
-import yaml
-from openai import OpenAI
-from typing import Callable, Dict, List, Any
+from typing import Callable, List, Dict, Any
 
 # 导入新的模块化架构
 from .high_level_llm import HighLevelLLM
 from .low_level_llm import LowLevelLLM, ExecutionStatus
 from .task_queue import TaskQueue, Task, TaskStatus
 from .adaptive_controller import AdaptiveController
+from .vlm_core import VLMCore
 
 
 class LLMAgent:
     """
-    双层LLM代理 (兼容层)
+    LLM代理（主入口）
 
-    这是旧版本的LLMAgent类，现在内部使用新的模块化架构：
-    - HighLevelLLM: 任务规划
-    - LowLevelLLM: 执行控制
-    - AdaptiveController: 自适应控制（可选）
+    整合所有 LLM 相关功能，提供简单的接口供外部调用。
 
-    保持向后兼容，现有代码无需修改即可使用新功能。
+    功能：
+    1. 任务规划（High-Level LLM + VLM）
+    2. 任务执行（Low-Level LLM）
+    3. 自适应控制（可选）
     """
 
     def __init__(self,
                  api_key: str,
                  base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                 model: str = "qwen3-32b",
                  prompt_path: str = None,
+                 enable_vlm: bool = True,
+                 vlm_prompt_path: str = None,
                  enable_adaptive: bool = False):
         """
         初始化LLM代理
@@ -43,48 +46,62 @@ class LLMAgent:
         Args:
             api_key: API密钥
             base_url: API基础URL
+            model: 文本LLM模型名称
             prompt_path: 规划提示词文件路径
-            enable_adaptive: 是否启用自适应控制（重新规划功能）
+            enable_vlm: 是否启用VLM环境理解（默认True）
+            vlm_prompt_path: VLM提示词文件路径（可选）
+            enable_adaptive: 是否启用自适应控制（默认False）
         """
         self.api_key = api_key
         self.base_url = base_url
+        self.enable_vlm = enable_vlm
         self.enable_adaptive = enable_adaptive
 
-        # 获取VLM提示词路径
-        vlm_prompt_path = None
-        if prompt_path:
-            # 假设VLM提示词与规划提示词在同一目录
-            import os
-            prompts_dir = os.path.dirname(prompt_path)
-            vlm_prompt_path = os.path.join(prompts_dir, "vlm_perception.yaml")
+        # ==================== 初始化 VLM ====================
+        self.vlm_core = None
+        if enable_vlm:
+            # 如果未指定 vlm_prompt_path，自动查找
+            if not vlm_prompt_path and prompt_path:
+                prompts_dir = os.path.dirname(prompt_path)
+                vlm_prompt_path = os.path.join(prompts_dir, "vlm_perception.yaml")
 
-        # 初始化新的模块化架构
+            self.vlm_core = VLMCore(
+                vlm_prompt_path=vlm_prompt_path,
+                use_ollama=True,  # 默认使用本地 Ollama
+                ollama_model="qwen3-vl:4b"
+            )
+        # ===================================================
+
+        # ==================== 初始化 High-Level LLM ====================
         self.high_level_llm = HighLevelLLM(
             api_key=api_key,
             base_url=base_url,
+            model=model,
             prompt_path=prompt_path,
-            vlm_prompt_path=vlm_prompt_path  # 新增：VLM提示词路径
+            vlm_core=self.vlm_core  # 传入 VLM 实例
         )
+        # ================================================================
 
+        # ==================== 初始化 Low-Level LLM ====================
         self.low_level_llm = LowLevelLLM(
             api_key=api_key,
             base_url=base_url
         )
+        # ================================================================
 
-        # 可选：初始化自适应控制器
+        # ==================== 初始化自适应控制器 ====================
+        self.adaptive_controller = None
         if enable_adaptive:
             from .execution_monitor import ExecutionMonitor
-            from .adaptive_controller import AdaptiveController
 
             self.adaptive_controller = AdaptiveController(
                 high_level_llm=self.high_level_llm,
                 low_level_llm=self.low_level_llm,
                 execution_monitor=ExecutionMonitor()
             )
-        else:
-            self.adaptive_controller = None
+        # ================================================================
 
-        # 兼容旧代码：保存prompt_path
+        # 兼容旧代码
         self.prompt_path = prompt_path
         self._planning_prompt_template = None
 
@@ -109,29 +126,9 @@ class LLMAgent:
         self.high_level_llm.prompt_template = value
         self._planning_prompt_template = value
 
-    def load_prompt(self, prompt_path: str) -> str:
-        """
-        从YAML文件加载规划Prompt (兼容方法)
-
-        已弃用：请直接使用HighLevelLLM类
-        """
-        if not prompt_path or not os.path.exists(prompt_path):
-            print("⚠️ 警告: Prompt文件路径未提供或不存在，将使用默认的内置Prompt。")
-            return "你是一个机器人任务规划助手。请将用户的复杂指令分解为简单的子任务。用户输入：{user_input}"
-
-        try:
-            with open(prompt_path, 'r', encoding='utf-8') as f:
-                data = yaml.safe_load(f)
-                return data.get("prompt", "")
-        except Exception as e:
-            print(f"❌ 错误: 加载Prompt文件失败: {e}")
-            return ""
-
     def plan_tasks(self, user_input: str, tools: List[Dict], image_path: str = None) -> List[Dict]:
         """
-        上层LLM：将用户输入分解为子任务序列 (兼容方法)
-
-        已弃用：请直接使用HighLevelLLM.plan_tasks()
+        上层LLM：将用户输入分解为子任务序列
 
         Args:
             user_input: 用户输入
@@ -144,11 +141,11 @@ class LLMAgent:
         # 提取技能名称
         available_skills = [tool.get("function", {}).get("name", "unknown") for tool in tools]
 
-        # 调用新的HighLevelLLM（传递 image_path）
+        # 调用 HighLevelLLM（传递 image_path）
         return self.high_level_llm.plan_tasks(
             user_input=user_input,
             available_skills=available_skills,
-            image_path=image_path  # 新增：VLM 环境理解
+            image_path=image_path
         )
 
     def execute_single_task(self,
@@ -157,9 +154,7 @@ class LLMAgent:
                             execute_tool_fn: Callable,
                             previous_result: Any = None) -> Dict:
         """
-        下层LLM：执行单个子任务 (兼容方法)
-
-        已弃用：请直接使用LowLevelLLM.execute_task()
+        下层LLM：执行单个子任务
 
         Args:
             task_description: 任务描述
@@ -170,7 +165,7 @@ class LLMAgent:
         Returns:
             执行结果
         """
-        # 调用新的LowLevelLLM
+        # 调用 LowLevelLLM
         result = self.low_level_llm.execute_task(
             task_description=task_description,
             tools=tools,
@@ -199,9 +194,9 @@ class LLMAgent:
                      execute_tool_fn: Callable,
                      image_path: str = None) -> List[Dict]:
         """
-        运行完整的双层LLM流程 (兼容方法)
+        运行完整的双层LLM流程
 
-        新功能：如果enable_adaptive=True，将使用自适应控制器
+        新功能：如果 enable_adaptive=True，将使用自适应控制器
 
         Args:
             user_input: 用户输入
@@ -216,7 +211,7 @@ class LLMAgent:
         print(f"📥 [用户输入] {user_input}")
         print("█"*60)
 
-        # 如果启用自适应控制，使用新的AdaptiveController
+        # 如果启用自适应控制，使用 AdaptiveController
         if self.enable_adaptive and self.adaptive_controller:
             import asyncio
 
@@ -244,7 +239,7 @@ class LLMAgent:
 
         # 否则，使用旧的同步流程（向后兼容）
         try:
-            tasks = self.plan_tasks(user_input, tools)
+            tasks = self.plan_tasks(user_input, tools, image_path)
 
             if not tasks:
                 return []
@@ -290,7 +285,9 @@ class LLMAgent:
 # 便捷函数（向后兼容）
 def create_llm_agent(api_key: str,
                      base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                     model: str = "qwen3-32b",
                      prompt_path: str = None,
+                     enable_vlm: bool = True,
                      enable_adaptive: bool = False) -> LLMAgent:
     """
     创建LLM代理实例
@@ -298,8 +295,10 @@ def create_llm_agent(api_key: str,
     Args:
         api_key: API密钥
         base_url: API基础URL
+        model: 文本LLM模型名称
         prompt_path: 规划提示词文件路径
-        enable_adaptive: 是否启用自适应控制（重新规划功能）
+        enable_vlm: 是否启用VLM环境理解
+        enable_adaptive: 是否启用自适应控制
 
     Returns:
         LLMAgent实例
@@ -307,6 +306,8 @@ def create_llm_agent(api_key: str,
     return LLMAgent(
         api_key=api_key,
         base_url=base_url,
+        model=model,
         prompt_path=prompt_path,
+        enable_vlm=enable_vlm,
         enable_adaptive=enable_adaptive
     )
