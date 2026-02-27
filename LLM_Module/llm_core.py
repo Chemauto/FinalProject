@@ -84,7 +84,8 @@ class LLMAgent:
         # ==================== 初始化 Low-Level LLM ====================
         self.low_level_llm = LowLevelLLM(
             api_key=api_key,
-            base_url=base_url
+            base_url=base_url,
+            model=model
         )
         # ================================================================
 

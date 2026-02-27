@@ -8,6 +8,7 @@ import os
 import sys
 import asyncio
 import time
+import json
 from pathlib import Path
 
 # 取消代理设置（避免 OpenAI 客户端使用错误的代理）
@@ -37,9 +38,15 @@ from Robot_Module.skill import (
     register_all_modules
 )
 
+# 环境版本控制（仅在环境签名变化时递增，避免每帧都触发重规划）
+_env_version_counter = 0
+_last_env_signature = None
+
 
 def build_env_state_snapshot() -> dict:
     """采样环境状态，作为 input2/sensor_frame 的基础数据。"""
+    global _env_version_counter, _last_env_signature
+
     snapshot = {
         "timestamp": time.time(),
         "sensor_status": {
@@ -53,7 +60,7 @@ def build_env_state_snapshot() -> dict:
             "pose": {"x": 0.0, "y": 0.0, "yaw": 0.0},
             "battery": 1.0
         },
-        "environment_version": int(time.time())
+        "environment_version": _env_version_counter
     }
 
     try:
@@ -76,7 +83,38 @@ def build_env_state_snapshot() -> dict:
 
         snapshot["camera"]["objects"] = enemies
         snapshot["radar"]["obstacles"] = yolo_enemies
-        snapshot["environment_version"] = int(snapshot["timestamp"])
+
+        # 只基于“外部环境对象”构造版本签名，避免机器人自身位姿变化触发重规划
+        enemy_sig = tuple(
+            sorted(
+                (
+                    str(item.get("id", "")),
+                    round(float(item.get("x", 0.0)), 2),
+                    round(float(item.get("y", 0.0)), 2),
+                )
+                for item in enemies
+                if isinstance(item, dict)
+            )
+        )
+        obstacle_sig = tuple(
+            sorted(
+                (
+                    str(item.get("id", item.get("label", ""))),
+                    round(float(item.get("x", 0.0)), 2),
+                    round(float(item.get("y", 0.0)), 2),
+                )
+                for item in yolo_enemies
+                if isinstance(item, dict)
+            )
+        )
+        current_sig = (enemy_sig, obstacle_sig)
+        if _last_env_signature is None:
+            _last_env_signature = current_sig
+        elif current_sig != _last_env_signature:
+            _env_version_counter += 1
+            _last_env_signature = current_sig
+
+        snapshot["environment_version"] = _env_version_counter
 
     except Exception as exc:
         snapshot["sensor_status"]["robot_state"] = "degraded"
@@ -223,10 +261,12 @@ def main():
 
     # 获取提示词路径
     prompt_path = project_root / "LLM_Module" / "prompts" / "planning_prompt_2d.yaml"
+    llm_model = os.getenv("LLM_MODEL", "qwen3-32b")
 
     # 初始化 LLM Agent（启用自适应控制）
     llm_agent = LLMAgent(
         api_key=api_key,
+        model=llm_model,
         prompt_path=str(prompt_path),
         enable_adaptive=True  # 启用自适应重新规划
     )
@@ -262,6 +302,10 @@ def main():
     print("提示: 确保已在另一个窗口启动仿真器", file=sys.stderr)
     print("  python3 Sim_Module/sim2d/simulator.py", file=sys.stderr)
     print("", file=sys.stderr)
+    print("直连工具模式（不调用LLM）:", file=sys.stderr)
+    print("  /tool get_isaac_config", file=sys.stderr)
+    print('  /tool move_isaac {"direction":"forward","distance":1.0}', file=sys.stderr)
+    print("", file=sys.stderr)
     print("输入 'quit' 或 'exit' 退出", file=sys.stderr)
     print("="*60, file=sys.stderr)
 
@@ -277,6 +321,35 @@ def main():
             if user_input.lower() in ['quit', 'exit', 'q']:
                 print("👋 再见!", file=sys.stderr)
                 break
+
+            # ==================== 直连工具模式（绕过LLM） ====================
+            # 用法：
+            #   /tool get_isaac_config
+            #   /tool move_isaac {"direction":"forward","distance":1.0}
+            if user_input.startswith("/tool "):
+                raw = user_input[len("/tool "):].strip()
+                if not raw:
+                    print("❌ 用法: /tool <tool_name> [json_args]", file=sys.stderr)
+                    continue
+
+                if " " in raw:
+                    tool_name, args_text = raw.split(" ", 1)
+                    args_text = args_text.strip()
+                    try:
+                        tool_args = json.loads(args_text) if args_text else {}
+                        if not isinstance(tool_args, dict):
+                            raise ValueError("json_args 必须是对象")
+                    except Exception as exc:
+                        print(f"❌ JSON参数解析失败: {exc}", file=sys.stderr)
+                        continue
+                else:
+                    tool_name, tool_args = raw, {}
+
+                direct_result = execute_tool(tool_name, tool_args)
+                print(f"\n🔧 [直连工具结果] {tool_name}", file=sys.stderr)
+                print(json.dumps(direct_result, ensure_ascii=False, indent=2), file=sys.stderr)
+                continue
+            # ================================================================
 
             # ==================== 提取图片路径 ====================
             import re

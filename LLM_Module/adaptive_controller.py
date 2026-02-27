@@ -91,9 +91,8 @@ class TaskQueue:
                 return task
 
             if task.status == "failed":
-                if task.can_retry():
-                    task.status = "in_progress"
-                    return task
+                # 失败任务默认不自动重试，只有外部显式调用 retry_task 后，
+                # 状态会变成 "retry" 并进入上面的分支。
                 self.current_index += 1
                 continue
 
@@ -307,6 +306,13 @@ class AdaptiveController:
                 self.task_queue.mark_failed(task, reason)
                 print(f"❌ [失败] {task.task} | {reason}")
 
+                # API额度/权限类错误是外部资源错误，继续重试或重规划通常没有意义。
+                if self._is_fatal_external_error(reason):
+                    print("⛔ [终止] 检测到外部配额/权限错误，跳过重试与重规划")
+                    p = self.task_queue.get_progress()
+                    print(f"📊 [进度] {p['completed']}/{p['total']} ({p['progress_percent']:.1f}%)")
+                    continue
+
             if decision.need_replan:
                 await self._trigger_replanning(task, result, current_env, available_skills, decision)
             elif status != ExecutionStatus.SUCCESS.value and task.can_retry():
@@ -393,3 +399,14 @@ class AdaptiveController:
             if task.status == "completed" and task.result:
                 return task.result.get("result")
         return None
+
+    def _is_fatal_external_error(self, reason: str) -> bool:
+        text = str(reason).lower()
+        keywords = [
+            "allocationquota.freetieronly",
+            "permissiondeniederror",
+            "http/1.1 403",
+            "403 forbidden",
+            "insufficient_quota",
+        ]
+        return any(k in text for k in keywords)

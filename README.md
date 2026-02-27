@@ -1,146 +1,148 @@
 # FinalProject
 
-一个面向“语音指令 + 环境感知 + 技能库”的双层 LLM 机器人任务系统。
-当前版本优先支持仿真闭环，并为后续迁移到 Unitree GO2 预留接口。
+面向交互导航的双层 LLM 系统（当前重点：IsaacLab 行走策略联调，后续迁移 GO2 实机）。
 
-## 1. 项目目标
+## 1. 当前能力
 
-- 接收用户指令（可来自 ASR）
-- 融合环境感知（相机/雷达/机器人状态，可接 VLM 描述）
-- 基于技能库自动规划并执行任务
-- 在执行失败或环境变化时进行简化重规划
+- 支持双层 LLM 流程：高层任务分解 + 低层工具调用
+- 支持简化自适应执行：失败重试、重规划触发
+- 已接入 IsaacLab 行走工具：`move_isaac` / `get_isaac_config`
+- 支持“直连工具模式”绕过 LLM（用于 API 配额不足时调试）
 
-## 2. 当前框架（精简版）
+## 2. 项目框架
 
 ```text
-User/ASR
-  -> Interactive_Module/interactive.py
-  -> LLM_Module/llm_core.py (LLMAgent)
-      -> high_level_llm.py      # 任务分解/重规划生成
-      -> low_level_llm.py       # 单步工具选择与参数生成
-      -> adaptive_controller.py # 执行闭环 + 评价 + 重规划
-      -> vlm_core.py            # 视觉理解（可选）
-  -> Robot_Module/skill.py
-      -> Robot_Module/module/*  # 原子技能实现
-  -> Sim_Module/sim2d/simulator.py (当前默认执行环境)
+Interactive_Module/interactive.py
+  ├─ 读取用户输入（文本）
+  ├─ 采样环境状态（build_env_state_snapshot）
+  ├─ /tool 直连工具模式（绕过 LLM）
+  └─ 调用 LLMAgent.run_pipeline(...)
+
+LLM_Module/
+  ├─ llm_core.py            # 统一入口 LLMAgent
+  ├─ high_level_llm.py      # 任务规划 / 重规划生成
+  ├─ low_level_llm.py       # 工具选择与参数生成
+  ├─ adaptive_controller.py # 执行循环 + 简化评估 + 重规划
+  ├─ vlm_core.py            # 图像理解（可选）
+  └─ prompts/               # 规划与VLM提示词
+
+Robot_Module/
+  ├─ skill.py               # MCP工具注册中心
+  └─ module/walkisaacsim.py # IsaacLab UDP控制工具
+
+Sim_Module/sim2d/
+  └─ simulator.py           # 2D仿真器（可选）
 ```
 
 ## 3. 输入到输出的数据流
 
 ### 3.1 输入
 
-- `input1`（指令输入）
-  - 来源：控制台文本（后续可替换 ASR）
-  - 示例：`"去目标点并避开障碍"`
+- `input1`：用户指令文本（后续可替换 ASR）
+- `input2`：环境状态快照（位置、障碍、环境版本）
+- `input3`：技能工具列表（从 `skill.py` 动态注册）
 
-- `input2`（环境输入）
-  - 来源：`build_env_state_snapshot()`
-  - 典型字段：
-    - `position`: 机器人位姿
-    - `environment_version`: 环境版本（用于判断变化）
-    - `camera.objects` / `radar.obstacles`
+### 3.2 流程
 
-- `input3`（技能输入）
-  - 来源：`Robot_Module/skill.py` 动态注册的工具定义
-  - 内容：技能名、参数 schema、描述
-
-### 3.2 处理流程
-
-1. `interactive.py` 收集用户指令与环境快照
-2. `LLMAgent.run_pipeline()` 整合输入并启动流程
-3. `HighLevelLLM.plan_tasks()` 生成任务序列（可参考 VLM 描述）
-4. `AdaptiveController` 逐步调度任务执行
-5. `LowLevelLLM.execute_task()` 选择工具并调用具体技能
-6. 执行反馈进入评价器（失败率/卡住/环境变化）
-7. 若需要重规划：`HighLevelLLM.replan_tasks()` 生成新任务并插入
-8. 返回执行结果列表（成功/失败/重规划后的结果）
+1. `interactive.py` 获取用户输入
+2. 组装环境快照 `build_env_state_snapshot()`
+3. `LLMAgent.run_pipeline()` 启动执行
+4. `HighLevelLLM` 生成任务序列
+5. `AdaptiveController` 逐步执行任务
+6. `LowLevelLLM` 选择工具（如 `move_isaac`）并调用
+7. 根据反馈判断是否重规划
+8. 输出 `results`（每步状态、动作、结果、错误）
 
 ### 3.3 输出
 
-- 主输出：任务执行结果 `results`
-  - 每步包含：`status/action/task/result/error`
-- 日志输出：
-  - 规划结果
-  - 当前步骤进度
-  - 是否触发重规划与原因
+- 结构化执行结果列表：`status/action/task/result/error`
+- 终端日志：规划、进度、重规划原因
 
-## 4. 核心模块说明
+## 4. 模块作用
 
-### 4.1 LLM_Module
-
-- `llm_core.py`
-  - 外部统一入口 `LLMAgent`
-  - 负责初始化并串联高层、低层、自适应控制器和 VLM
-
-- `high_level_llm.py`
-  - 将用户目标分解为可执行子任务序列
-  - 当执行异常时，根据失败原因和环境上下文重新规划
-
-- `low_level_llm.py`
-  - 对当前子任务进行工具决策（function calling）
-  - 生成技能参数并调用执行函数
-
-- `adaptive_controller.py`
-  - 维护执行循环与任务队列
-  - 基于执行反馈做简化评估
-  - 触发局部/全局重规划并继续执行
-
-- `vlm_core.py`
-  - 可选视觉理解模块
-  - 支持本地 Ollama 或兼容 OpenAI API 的图像理解
-
-- `prompts/`
-  - 存放规划与视觉理解提示词模板
-
-### 4.2 Interactive_Module
-
-- `interactive.py`
+- `Interactive_Module/interactive.py`
   - 命令行入口
-  - 注册技能、读取用户输入、提取图片路径、组装环境状态
-  - 调用 `LLMAgent.run_pipeline()` 执行完整流程
+  - 支持两种执行方式：
+    - `LLM模式`：自然语言 -> 规划 -> 工具调用
+    - `直连工具模式`：`/tool ...` 直接调用技能
 
-### 4.3 Robot_Module
+- `LLM_Module/llm_core.py`
+  - 统一初始化高层/低层/自适应/VLM
+  - 暴露 `run_pipeline()`
 
-- `skill.py`
-  - 技能注册中心（MCP 工具导出）
-  - 提供工具定义给 LLM 进行调用
+- `LLM_Module/high_level_llm.py`
+  - 把用户目标拆成子任务
+  - 支持失败后的重规划任务生成
 
-- `module/`
-  - 具体原子技能实现（移动、追击、视觉等）
-  - 当前以仿真链路为主，后续可替换为 GO2 实机控制实现
+- `LLM_Module/low_level_llm.py`
+  - 对子任务做 function calling 决策
+  - 选择具体工具与参数
 
-### 4.4 Sim_Module
+- `LLM_Module/adaptive_controller.py`
+  - 任务队列执行
+  - 简化评估（失败率/环境变化）
+  - 重试与重规划
 
-- `sim2d/simulator.py`
-  - 当前默认仿真环境
-  - 承接动作命令并反馈机器人状态
+- `Robot_Module/skill.py`
+  - 注册并暴露 MCP 工具给 LLM
 
-### 4.5 ros_topic_comm.py
+- `Robot_Module/module/walkisaacsim.py`
+  - 通过 UDP 向 IsaacLab 发送速度命令
+  - 承接 `move_isaac/get_isaac_config`
 
-- 提供模块间状态与动作通信封装
-- 当前承担仿真通信，也可作为后续实机通信适配层入口
+## 5. 环境变量
 
-## 5. 运行方式（当前）
+建议在 `.env` 设置：
 
 ```bash
-pip install -r requirements.txt
-export Test_API_KEY=your_key
-
-# 终端1：启动仿真器
-python3 Sim_Module/sim2d/simulator.py
-
-# 终端2：启动交互
-python3 Interactive_Module/interactive.py
+Test_API_KEY=your_api_key
+LLM_MODEL=qwen3-14b
 ```
 
-## 6. 当前状态与下一步
+说明：
+- `LLM_MODEL` 控制高层与低层文本模型
+- `qwen3-vl:4b` 是 VLM 的本地 Ollama 模型，不同于文本模型
 
-- 当前可用：仿真端双层 LLM + 简化重规划闭环
-- 正在推进：按 `TODO.md` 完成仿真评估后迁移 GO2
+## 6. IsaacLab 联调（当前主路径）
 
-建议阅读顺序：
-1. `TODO.md`
-2. `Interactive_Module/interactive.py`
-3. `LLM_Module/llm_core.py`
-4. `LLM_Module/adaptive_controller.py`
-5. `Robot_Module/skill.py`
+### 6.1 启动 IsaacLab（加载你的行走策略）
+
+```bash
+cd /home/xcj/work/IsaacLab/IsaacLabBisShe
+python scripts/rsl_rl/play.py \
+  --task Template-Velocity-Go2-Walk-Flat-Ros-v0 \
+  --checkpoint /home/xcj/work/IsaacLab/IsaacLabBisShe/ModelBackup/WalkPolicy/WalkFlatNew.pt
+```
+
+### 6.2 启动交互端
+
+```bash
+cd /home/xcj/FinalProject/Interactive_Module
+python interactive.py
+```
+
+### 6.3 测试方式
+
+- 直连工具（推荐先测）
+```text
+/tool get_isaac_config
+/tool move_isaac {"direction":"left","distance":1.0}
+```
+
+- LLM 自然语言
+```text
+左移1米
+右转90度
+```
+
+## 7. 已知问题与说明
+
+- 若出现 403 `AllocationQuota.FreeTierOnly`：表示云端模型配额不足，不是代码逻辑错误。
+- 配额不足时，优先使用 `/tool ...` 直连工具模式继续联调。
+- `environment_version` 已改为“仅环境签名变化时递增”，避免机器人移动引发误重规划。
+
+## 8. 下一步
+
+- 在 IsaacLab 扩展 `push_object / climb_step` 技能
+- 完成三类场景评测（Box obstruction/usage/integrated）
+- 迁移执行后端到 GO2 实机接口（保持同一工具API）
