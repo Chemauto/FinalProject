@@ -12,35 +12,40 @@
 
 ## B. 近期目标（仿真先收敛）
 
-- [ ] 让 LLM 在 IsaacLab 场景下稳定调用 `move_isaac`
-- [ ] 完成最小场景评测：前进/侧移/旋转组合动作
-- [ ] 加入可复现日志与结果表（成功率、时长、失败原因）
+- [x] 让 LLM 在 IsaacLab 场景下稳定调用 `move_isaac`
+- [x] 完成最小场景评测：前进/侧移/旋转组合动作
+- [x] 加入可复现日志与结果表（成功率、时长、失败原因）
+
+完成说明：
+- 已完成 `/tool` 与自然语言双路径联调
+- 已验证左移/前进/旋转动作可执行
+- 已观察并修复环境版本误触发重规划问题
 
 ---
 
 ## C. 阶段1：IsaacLab 行走闭环（本周）
 
 ### C1. 运行环境
-- [ ] 启动 IsaacLab 任务 `Template-Velocity-Go2-Walk-Flat-Ros-v0`
-- [ ] 确认 UDP 端口 `5555` 正常收命令
-- [ ] 确认 `/tool get_isaac_config` 返回正常
+- [x] 启动 IsaacLab 任务 `Template-Velocity-Go2-Walk-Flat-Ros-v0`
+- [x] 确认 UDP 端口 `5555` 正常收命令
+- [x] 确认 `/tool get_isaac_config` 返回正常
 
 验收标准：
 - 直连模式连续执行 10 次不报错
 
 ### C2. 动作联调
-- [ ] `/tool move_isaac {"direction":"forward","distance":1.0}`
-- [ ] `/tool move_isaac {"direction":"left","distance":1.0}`
-- [ ] `/tool move_isaac {"direction":"rotate_right","distance":90}`
-- [ ] 组合动作（前进+转向+侧移）
+- [x] `/tool move_isaac {"direction":"forward","distance":1.0}`
+- [x] `/tool move_isaac {"direction":"left","distance":1.0}`
+- [x] `/tool move_isaac {"direction":"rotate_right","distance":90}`
+- [x] 组合动作（前进+转向+侧移）
 
 验收标准：
 - 动作方向、距离/角度与预期一致
 
 ### C3. LLM 调度联调
-- [ ] 自然语言触发：`左移1米` / `前进1米` / `右转90度`
-- [ ] 观察低层是否稳定选择 `move_isaac`
-- [ ] 避免无效重规划（环境版本不应每步变化）
+- [x] 自然语言触发：`左移1米` / `前进1米` / `右转90度`
+- [x] 观察低层是否稳定选择 `move_isaac`
+- [x] 避免无效重规划（环境版本不应每步变化）
 
 验收标准：
 - 5 条简单指令中，工具选择正确率 >= 90%
