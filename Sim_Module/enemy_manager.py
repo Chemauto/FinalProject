@@ -8,6 +8,7 @@
 
 import random
 import math
+import sys
 from typing import Dict, List, Optional
 from dataclasses import dataclass, field
 
@@ -291,7 +292,3 @@ class EnemyManager:
             font = pygame.font.Font(None, 24)
             text = font.render(f"{dist_m:.1f}m", True, (80, 80, 80))
             screen.blit(text, (mid_x + 5, mid_y))
-
-
-# 导入sys
-import sys

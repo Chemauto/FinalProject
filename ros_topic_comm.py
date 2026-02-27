@@ -712,29 +712,3 @@ def remove_enemy(enemy_id):
     publisher = get_enemy_remove_publisher()
     publisher.publish(enemy_id)
 
-
-if __name__ == "__main__":
-    import sys
-
-    # 测试发布器
-    print("测试ROS话题通讯...", file=sys.stderr)
-
-    queue = get_shared_queue()
-
-    # 测试发布
-    test_action = {'action': 'test', 'parameters': {'value': 123}}
-    queue.put(test_action)
-    print(f"发送测试命令: {test_action}", file=sys.stderr)
-
-    # 等待用户输入以查看订阅器效果
-    print("\n在另一个终端运行订阅器测试", file=sys.stderr)
-    print("按Ctrl+C退出", file=sys.stderr)
-
-    try:
-        import time
-        while True:
-            queue.spin_once()
-            time.sleep(0.1)
-    except KeyboardInterrupt:
-        queue.shutdown()
-        print("\n测试结束", file=sys.stderr)

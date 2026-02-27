@@ -19,8 +19,6 @@ if sys.platform == 'win32':
 
 # --- Constants ---
 WIDTH, HEIGHT = 800, 600
-WHITE = (255, 255, 255)
-BLACK = (0, 0, 0)
 GRID_COLOR = (220, 220, 220)
 GRID_SPACING = 50
 ROBOT_BODY_COLOR = (60, 120, 180)

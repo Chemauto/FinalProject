@@ -108,20 +108,20 @@ def register_all_modules():
     print("=" * 60, file=sys.stderr)
 
     # 注册底盘控制模块（返回工具函数映射）
-    # base_tools = register_base_tools(mcp)
-    # _tool_registry.update(base_tools)
+    base_tools = register_base_tools(mcp)
+    _tool_registry.update(base_tools)
 
     # # 注册视觉感知模块（返回工具函数映射）
     # vision_tools = register_vision_tools(mcp)
     # _tool_registry.update(vision_tools)
 
     # 注册追击模块（返回工具函数映射）
-    # chase_tools = register_chase_tools(mcp)
-    # _tool_registry.update(chase_tools)
+    chase_tools = register_chase_tools(mcp)
+    _tool_registry.update(chase_tools)
 
     # # 注册 IsaacSim 行走模块（返回工具函数映射）
-    walk_tools = register_walk_tools(mcp)
-    _tool_registry.update(walk_tools)
+    # walk_tools = register_walk_tools(mcp)
+    # _tool_registry.update(walk_tools)
 
     # 示例模块
     # example_tools = register_example_tools(mcp)

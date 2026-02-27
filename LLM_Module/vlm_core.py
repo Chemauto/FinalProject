@@ -12,7 +12,6 @@ VLM Core - 视觉语言模型核心模块
 
 import os
 import sys
-from pathlib import Path
 from typing import Optional
 
 
@@ -263,40 +262,3 @@ def create_vlm_core(
         api_model=api_model
     )
 
-
-# 测试代码
-if __name__ == "__main__":
-    import sys
-
-    print("="*60)
-    print("VLM Core 模块测试")
-    print("="*60)
-
-    # 初始化 VLM Core
-    vlm = VLMCore(
-        vlm_prompt_path=None,  # 使用默认提示词
-        use_ollama=True,
-        ollama_model="qwen3-vl:4b"
-    )
-
-    # 测试默认图片
-    print("\n测试1: 使用默认图片")
-    result1 = vlm.analyze_environment()
-    if result1:
-        print("✅ 结果1:")
-        print(result1)
-    else:
-        print("❌ 失败")
-
-    # 测试指定图片
-    print("\n测试2: 使用绿色图片")
-    result2 = vlm.analyze_environment("/home/xcj/work/FinalProject/VLM_Module/assets/green.png")
-    if result2:
-        print("✅ 结果2:")
-        print(result2)
-    else:
-        print("❌ 失败")
-
-    print("\n" + "="*60)
-    print("测试完成")
-    print("="*60)

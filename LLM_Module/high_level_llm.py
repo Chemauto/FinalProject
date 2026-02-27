@@ -10,7 +10,6 @@ import yaml
 import json
 from openai import OpenAI
 from typing import List, Dict, Any, Optional
-from pathlib import Path
 
 
 class HighLevelLLM:
@@ -378,23 +377,3 @@ class HighLevelLLM:
             print(f"\n❌ [重新规划失败] {e}", file=sys.stderr)
             print(f"[回退] 返回空任务列表", file=sys.stderr)
             return []
-
-    def validate_plan(self, tasks: List[Dict[str, Any]]) -> bool:
-        """
-        验证生成的任务计划是否有效
-
-        Args:
-            tasks: 任务列表
-
-        Returns:
-            是否有效
-        """
-        if not tasks:
-            return False
-
-        # 检查基本结构
-        for task in tasks:
-            if "step" not in task or "task" not in task:
-                return False
-
-        return True
