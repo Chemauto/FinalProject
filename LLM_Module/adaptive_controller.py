@@ -1,500 +1,395 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-自适应控制器
-协调高层规划、低层执行和重新规划
+简化版自适应控制器
+
+仅依赖 high_level_llm / low_level_llm，内部实现任务队列与评价器，
+用于保留核心功能：执行、反馈评估、重规划。
 """
 import asyncio
-from typing import Dict, List, Any, Optional, Callable
+import time
+from dataclasses import dataclass, field
 from enum import Enum
+from typing import Any, Callable, Deque, Dict, List, Optional, Tuple
+from collections import deque
 
 from .high_level_llm import HighLevelLLM
-from .low_level_llm import LowLevelLLM, ExecutionStatus
-from .task_queue import TaskQueue, Task, TaskStatus
-from .execution_monitor import ExecutionMonitor, Anomaly, AnomalyType
-from .task_monitor import save_queue_state
+from .low_level_llm import ExecutionStatus, LowLevelLLM
 
 
 class ReplanLevel(Enum):
-    """重新规划级别"""
-    PARAMETER_ADJUSTMENT = 1  # 参数调整（不改变任务）
-    SKILL_REPLACEMENT = 2     # 技能替换（相同目标，不同方法）
-    TASK_REORDER = 3          # 任务重排（调整顺序）
-    FULL_REPLAN = 4           # 完全重新规划
+    PARAMETER_ADJUSTMENT = 1
+    SKILL_REPLACEMENT = 2
+    TASK_REORDER = 3
+    FULL_REPLAN = 4
+
+
+@dataclass
+class ReplanDecision:
+    need_replan: bool = False
+    scope: str = "none"
+    reason: str = ""
+    replace_node_ids: List[str] = field(default_factory=list)
+    confidence: float = 0.0
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "need_replan": self.need_replan,
+            "scope": self.scope,
+            "reason": self.reason,
+            "replace_node_ids": self.replace_node_ids,
+            "confidence": self.confidence,
+        }
+
+
+@dataclass
+class Task:
+    step: int
+    task: str
+    type: str
+    retry_count: int = 0
+    max_retries: int = 2
+    status: str = "pending"
+    result: Optional[Dict[str, Any]] = None
+    error: Optional[str] = None
+
+    def can_retry(self) -> bool:
+        return self.retry_count < self.max_retries
+
+
+class TaskQueue:
+    def __init__(self):
+        self.tasks: List[Task] = []
+        self.current_index = 0
+        self.completed_count = 0
+        self.failed_count = 0
+
+    def set_tasks(self, tasks_data: List[Dict[str, Any]]):
+        self.tasks = [
+            Task(
+                step=t.get("step", i + 1),
+                task=t.get("task", ""),
+                type=t.get("type", "综合"),
+            )
+            for i, t in enumerate(tasks_data)
+        ]
+        self.current_index = 0
+        self.completed_count = 0
+        self.failed_count = 0
+        print(f"📋 [任务队列] 已加载 {len(self.tasks)} 个任务")
+
+    def get_next_task(self) -> Optional[Task]:
+        while self.current_index < len(self.tasks):
+            task = self.tasks[self.current_index]
+
+            if task.status == "completed":
+                self.current_index += 1
+                continue
+
+            if task.status in {"pending", "retry"}:
+                task.status = "in_progress"
+                return task
+
+            if task.status == "failed":
+                if task.can_retry():
+                    task.status = "in_progress"
+                    return task
+                self.current_index += 1
+                continue
+
+            self.current_index += 1
+
+        return None
+
+    def mark_completed(self, task: Task, result: Dict[str, Any]):
+        task.status = "completed"
+        task.result = result
+        self.completed_count += 1
+        self.current_index += 1
+
+    def mark_failed(self, task: Task, error: str):
+        task.status = "failed"
+        task.error = error
+        self.failed_count += 1
+
+    def retry_task(self, task: Task):
+        if task.can_retry():
+            task.retry_count += 1
+            task.status = "retry"
+
+    def insert_tasks(self, tasks_data: List[Dict[str, Any]], at_front: bool = True):
+        new_tasks = [
+            Task(
+                step=t.get("step", 1),
+                task=t.get("task", ""),
+                type=t.get("type", "综合"),
+            )
+            for t in tasks_data
+        ]
+
+        if not new_tasks:
+            return
+
+        if at_front:
+            idx = self.current_index
+            self.tasks[idx:idx] = new_tasks
+            self._renumber()
+        else:
+            self.tasks.extend(new_tasks)
+            self._renumber()
+
+    def _renumber(self):
+        for i, task in enumerate(self.tasks, 1):
+            task.step = i
+
+    def is_empty(self) -> bool:
+        return self.current_index >= len(self.tasks)
+
+    def get_progress(self) -> Dict[str, Any]:
+        total = len(self.tasks)
+        return {
+            "total": total,
+            "completed": self.completed_count,
+            "failed": self.failed_count,
+            "progress_percent": (self.completed_count / total * 100) if total else 100.0,
+        }
+
+    def print_summary(self):
+        p = self.get_progress()
+        print("\n" + "=" * 60)
+        print("📊 [任务队列摘要]")
+        print(f"  总任务数: {p['total']}")
+        print(f"  已完成: {p['completed']}")
+        print(f"  失败: {p['failed']}")
+        print(f"  进度: {p['progress_percent']:.1f}%")
+        print("=" * 60)
+
+
+class Evaluator:
+    """简化评价器：根据失败率、环境版本变化、卡住状态触发重规划。"""
+
+    def __init__(self, failure_window: int = 4):
+        self._status_window: Deque[str] = deque(maxlen=failure_window)
+        self._last_env_version: Optional[int] = None
+        self._pos_window: Deque[Tuple[float, float, float]] = deque(maxlen=6)
+
+    def evaluate(self, task_id: str, result: Dict[str, Any], env_state: Dict[str, Any]) -> ReplanDecision:
+        status = result.get("status", "failed")
+        self._status_window.append(status)
+        self._update_position(env_state)
+
+        if status == ExecutionStatus.REQUIRES_REPLANNING.value:
+            return ReplanDecision(True, "full", "low_level_requires_replanning", [task_id], 0.95)
+
+        if self._environment_changed(env_state):
+            return ReplanDecision(True, "branch", "environment_version_changed", [task_id], 0.9)
+
+        if self._stuck():
+            return ReplanDecision(True, "branch", "robot_stuck", [task_id], 0.85)
+
+        if status == ExecutionStatus.FAILED.value:
+            failed = sum(1 for x in self._status_window if x == ExecutionStatus.FAILED.value)
+            if failed / len(self._status_window) >= 0.5:
+                return ReplanDecision(True, "branch", "high_failure_ratio", [task_id], 0.8)
+
+        return ReplanDecision(False, "none", "stable", [], 0.6)
+
+    def _environment_changed(self, env_state: Dict[str, Any]) -> bool:
+        version = env_state.get("environment_version")
+        if version is None:
+            return False
+        if self._last_env_version is None:
+            self._last_env_version = int(version)
+            return False
+        changed = int(version) != self._last_env_version
+        self._last_env_version = int(version)
+        return changed
+
+    def _update_position(self, env_state: Dict[str, Any]):
+        pos = env_state.get("position", {})
+        if not isinstance(pos, dict):
+            pos = {}
+        self._pos_window.append((
+            float(pos.get("x", 0.0)),
+            float(pos.get("y", 0.0)),
+            float(pos.get("z", 0.0)),
+        ))
+
+    def _stuck(self) -> bool:
+        if len(self._pos_window) < 6:
+            return False
+        start = self._pos_window[0]
+        end = self._pos_window[-1]
+        d = ((end[0] - start[0]) ** 2 + (end[1] - start[1]) ** 2 + (end[2] - start[2]) ** 2) ** 0.5
+        return d < 0.02
 
 
 class AdaptiveController:
-    """
-    自适应控制器
-
-    协调高层规划、低层执行和重新规划：
-    1. 初始规划
-    2. 执行循环
-    3. 异常检测
-    4. 自适应重新规划
-    """
-
-    def __init__(self,
-                 high_level_llm: HighLevelLLM,
-                 low_level_llm: LowLevelLLM,
-                 execution_monitor: Optional[ExecutionMonitor] = None):
-        """
-        初始化自适应控制器
-
-        Args:
-            high_level_llm: 高层LLM实例
-            low_level_llm: 低层LLM实例
-            execution_monitor: 执行监控器实例（可选）
-        """
+    def __init__(
+        self,
+        high_level_llm: HighLevelLLM,
+        low_level_llm: LowLevelLLM,
+        execution_hz: float = 10.0,
+        max_replans: int = 3,
+    ):
         self.high_level_llm = high_level_llm
         self.low_level_llm = low_level_llm
-        self.execution_monitor = execution_monitor or ExecutionMonitor()
         self.task_queue = TaskQueue()
+        self.evaluator = Evaluator()
 
-        # 统计信息
-        self.original_user_input = ""
+        self.execution_interval = 1.0 / max(execution_hz, 1e-6)
+        self.max_replans = max_replans
         self.replan_count = 0
-        self.max_replans = 3
+        self.original_user_input = ""
 
-    async def run(self,
-                  user_input: str,
-                  tools: List[Dict],
-                  execute_tool_fn: Callable,
-                  available_skills: List[str],
-                  env_state: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
-        """
-        运行自适应控制循环
+    async def run(
+        self,
+        user_input: str,
+        tools: List[Dict[str, Any]],
+        execute_tool_fn: Callable,
+        available_skills: List[str],
+        env_state: Optional[Dict[str, Any]] = None,
+        env_state_provider: Optional[Callable[[], Dict[str, Any]]] = None,
+        input1: Optional[Dict[str, Any]] = None,
+        input2: Optional[Dict[str, Any]] = None,
+        input3: Optional[Dict[str, Any]] = None,
+        image_path: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        self.replan_count = 0
+        self.original_user_input = (input1 or {}).get("text", user_input) if isinstance(input1, dict) else user_input
 
-        Args:
-            user_input: 用户自然语言指令
-            tools: 可用工具列表（OpenAI function calling格式）
-            execute_tool_fn: 工具执行函数
-            available_skills: 可用技能名称列表
-            env_state: 初始环境状态
+        current_env = self._resolve_env_state(env_state, env_state_provider, input2)
 
-        Returns:
-            执行结果列表
-        """
-        print("\n" + "█"*60)
-        print(f"📥 [自适应控制器] 用户输入: {user_input}")
-        print("█"*60)
+        print("\n" + "█" * 60)
+        print(f"📥 [自适应控制器] 用户输入: {self.original_user_input}")
+        print("█" * 60)
 
-        self.original_user_input = user_input
-
-        # 1. 初始规划
-        print("\n🔵 [阶段1] 初始任务规划")
         tasks = self.high_level_llm.plan_tasks(
-            user_input=user_input,
+            user_input=self.original_user_input,
             available_skills=available_skills,
-            env_state=env_state
+            env_state=self._build_planning_context(current_env, input2, input3),
+            image_path=image_path,
         )
-
         if not tasks:
-            print("❌ [错误] 未能生成任务规划")
             return []
 
         self.task_queue.set_tasks(tasks)
-
-        # 2. 执行循环
-        print("\n🔵 [阶段2] 执行任务序列")
-        results = []
+        results: List[Dict[str, Any]] = []
 
         while not self.task_queue.is_empty() and self.replan_count < self.max_replans:
+            loop_start = time.monotonic()
             task = self.task_queue.get_next_task()
-
             if task is None:
                 break
 
             print(f"\n【步骤 {task.step}/{len(self.task_queue.tasks)}】")
+            previous_result = self._get_previous_result()
 
-            # ==================== 保存状态供监控器读取 ====================
-            save_queue_state(self.task_queue)
-            # ============================================================
-
-            # 执行任务
-            result = await self.execute_with_monitoring(
-                task=task,
-                tools=tools,
-                execute_tool_fn=execute_tool_fn,
-                env_state=env_state
+            result = await asyncio.to_thread(
+                self.low_level_llm.execute_task,
+                task.task,
+                tools,
+                execute_tool_fn,
+                previous_result,
+                current_env,
             )
-
             results.append(result)
 
-            # 3. 处理结果
-            await self.handle_execution_result(task, result, env_state, available_skills)
+            current_env = self._resolve_env_state(env_state, env_state_provider, input2)
+            decision = self.evaluator.evaluate(str(task.step), result, current_env)
 
-            # 更新进度
-            progress = self.task_queue.get_progress()
-            print(f"\n📊 [进度] {progress['completed']}/{progress['total']} "
-                  f"({progress['progress_percent']:.1f}%)")
+            status = result.get("status", ExecutionStatus.FAILED.value)
+            if status == ExecutionStatus.SUCCESS.value:
+                self.task_queue.mark_completed(task, result)
+                print(f"✅ [成功] {task.task}")
+            else:
+                reason = result.get("error", "Unknown error")
+                self.task_queue.mark_failed(task, reason)
+                print(f"❌ [失败] {task.task} | {reason}")
 
-            # ==================== 更新状态供监控器读取 ====================
-            save_queue_state(self.task_queue)
-            # ============================================================
+            if decision.need_replan:
+                await self._trigger_replanning(task, result, current_env, available_skills, decision)
+            elif status != ExecutionStatus.SUCCESS.value and task.can_retry():
+                self.task_queue.retry_task(task)
 
-        # 4. 完成
-        print("\n" + "█"*60)
+            p = self.task_queue.get_progress()
+            print(f"📊 [进度] {p['completed']}/{p['total']} ({p['progress_percent']:.1f}%)")
+
+            elapsed = time.monotonic() - loop_start
+            if elapsed < self.execution_interval:
+                await asyncio.sleep(self.execution_interval - elapsed)
+
+        print("\n" + "█" * 60)
         print("✅ [执行完成] 任务总结")
-        print("█"*60)
-
-        # ==================== 最后一次状态保存 ====================
-        save_queue_state(self.task_queue)
-        # ============================================================
-
+        print("█" * 60)
         self.task_queue.print_summary()
-
         return results
 
-    async def execute_with_monitoring(self,
-                                      task: Task,
-                                      tools: List[Dict],
-                                      execute_tool_fn: Callable,
-                                      env_state: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        """
-        带监控的任务执行
-
-        Args:
-            task: 任务对象
-            tools: 工具列表
-            execute_tool_fn: 工具执行函数
-            env_state: 环境状态
-
-        Returns:
-            执行结果
-        """
-        # 重置监控器
-        self.execution_monitor.reset()
-
-        # 记录执行开始时间
-        import time
-        self.execution_monitor.execution_start_time = time.time()
-
-        # 获取上一步结果
-        previous_result = self._get_previous_result()
-
-        # 启动后台监控任务
-        monitoring_task = None
-        if env_state:
-            monitoring_task = asyncio.create_task(
-                self._monitor_task_execution(task, env_state)
-            )
-
-        try:
-            # 执行任务
-            result = self.low_level_llm.execute_task(
-                task_description=task.task,
-                tools=tools,
-                execute_tool_fn=execute_tool_fn,
-                previous_result=previous_result
-            )
-
-            # 检查监控到的异常
-            anomaly = None
-            if monitoring_task and monitoring_task.done():
-                anomaly = monitoring_task.result()
-            elif monitoring_task and not monitoring_task.done():
-                monitoring_task.cancel()
-                try:
-                    await monitoring_task
-                except asyncio.CancelledError:
-                    pass
-
-            if anomaly:
-                print(f"⚠️  [监控检测] {anomaly.description}")
-                if result.get("status") == "success":
-                    result["anomaly_detected"] = True
-                    result["anomaly"] = {
-                        "type": anomaly.type.value,
-                        "description": anomaly.description,
-                        "severity": anomaly.severity,
-                        "data": anomaly.data
-                    }
-
-            return result
-
-        except Exception as e:
-            if monitoring_task and not monitoring_task.done():
-                monitoring_task.cancel()
-                try:
-                    await monitoring_task
-                except asyncio.CancelledError:
-                    pass
-
-            return {
-                "status": "failed",
-                "error": str(e),
-                "task": task.task
-            }
-
-    async def _monitor_task_execution(self,
-                                      task: Task,
-                                      env_state: Dict[str, Any]) -> Optional[Anomaly]:
-        """
-        监控任务执行（后台运行）
-
-        Args:
-            task: 任务对象
-            env_state: 环境状态
-
-        Returns:
-            检测到的异常，如果没有异常则返回None
-        """
-        try:
-            while True:
-                # 定期检测异常
-                anomaly = self.execution_monitor.detect_anomaly(
-                    current_state=env_state,
-                    task={"task": task.task, "type": task.type}
-                )
-
-                if anomaly:
-                    return anomaly
-
-                # 等待下一次检查
-                await asyncio.sleep(self.execution_monitor.monitoring_interval)
-
-        except asyncio.CancelledError:
-            # 任务被取消（正常结束）
-            return None
-
-    async def handle_execution_result(self,
-                                      task: Task,
-                                      result: Dict[str, Any],
-                                      env_state: Dict[str, Any],
-                                      available_skills: List[str]):
-        """
-        处理执行结果
-
-        Args:
-            task: 任务对象
-            result: 执行结果
-            env_state: 环境状态
-            available_skills: 可用技能列表
-        """
-        status = result.get("status", ExecutionStatus.FAILED.value)
-
-        if status == ExecutionStatus.SUCCESS.value:
-            # ==================== 检查是否有异常 ====================
-            if result.get("anomaly_detected"):
-                # 监控器检测到异常，需要重新规划
-                anomaly = result.get("anomaly", {})
-                print(f"⚠️  [异常] 任务执行成功但检测到异常: {anomaly.get('description', 'Unknown')}")
-
-                await self.trigger_replanning(
-                    task=task,
-                    result=result,
-                    env_state=env_state,
-                    available_skills=available_skills,
-                    level=self._determine_replan_level_from_anomaly(anomaly)
-                )
-            else:
-                # ==================== 完全成功 ====================
-                print(f"✅ [成功] 任务完成: {task.task}")
-                self.task_queue.mark_completed(task, result)
-            # ==========================================================
-
-        elif status == ExecutionStatus.REQUIRES_REPLANNING.value:
-            # 需要重新规划（低层LLM返回）
-            print(f"🔄 [重新规划] 检测到环境变化")
-            await self.trigger_replanning(
-                task=task,
-                result=result,
-                env_state=env_state,
-                available_skills=available_skills,
-                level=ReplanLevel.FULL_REPLAN
-            )
-
-        else:
-            # 任务失败
-            reason = result.get("error", "Unknown error")
-            print(f"❌ [失败] 任务失败: {task.task}")
-            print(f"   原因: {reason}")
-
-            self.task_queue.mark_failed(task, reason)
-
-            # ==================== 判断是否需要重新规划 ====================
-            if self._should_replan(task, result):
-                print(f"🔄 [决策] 失败需要重新规划")
-                await self.trigger_replanning(
-                    task=task,
-                    result=result,
-                    env_state=env_state,
-                    available_skills=available_skills,
-                    level=self._determine_replan_level(result)
-                )
-            # ==========================================================
-
-    async def trigger_replanning(self,
-                                 task: Task,
-                                 result: Dict[str, Any],
-                                 env_state: Dict[str, Any],
-                                 available_skills: List[str],
-                                 level: ReplanLevel):
-        """
-        触发重新规划
-
-        Args:
-            task: 失败的任务
-            result: 执行结果
-            env_state: 环境状态
-            available_skills: 可用技能列表
-            level: 重新规划级别
-        """
+    async def _trigger_replanning(
+        self,
+        task: Task,
+        result: Dict[str, Any],
+        env_state: Dict[str, Any],
+        available_skills: List[str],
+        decision: ReplanDecision,
+    ):
         self.replan_count += 1
-
         if self.replan_count > self.max_replans:
-            print(f"⚠️  [警告] 已达到最大重新规划次数 ({self.max_replans})，停止重新规划")
             return
 
-        print(f"\n🔄 [重新规划] 第 {self.replan_count} 次 (级别: {level.name})")
-
-        # 调用高层LLM重新规划
-        failure_reason = result.get("error", "Unknown error")
+        level = self._map_level(decision)
+        print(f"🔄 [重新规划] 第 {self.replan_count} 次 ({level.name}) | {decision.reason}")
 
         new_tasks = self.high_level_llm.replan_tasks(
-            failed_task={
-                "step": task.step,
-                "task": task.task,
-                "type": task.type
-            },
-            env_state=env_state,
-            failure_reason=failure_reason,
+            failed_task={"step": task.step, "task": task.task, "type": task.type},
+            env_state={"env": env_state, "decision": decision.to_dict()},
+            failure_reason=result.get("error", decision.reason),
             original_user_input=self.original_user_input,
-            available_skills=available_skills
+            available_skills=available_skills,
         )
 
         if new_tasks:
-            # 插入新任务到队列
             self.task_queue.insert_tasks(new_tasks, at_front=True)
-            print(f"✅ [重新规划] 已添加 {len(new_tasks)} 个新任务")
-        else:
-            print(f"⚠️  [重新规划] 未能生成新任务，将尝试重试原任务")
-            if task.can_retry():
-                self.task_queue.retry_task(task)
+            print(f"✅ [重新规划] 新增 {len(new_tasks)} 个任务")
 
-    def _should_replan(self, task: Task, result: Dict[str, Any]) -> bool:
-        """
-        判断是否应该重新规划
-
-        Args:
-            task: 任务对象
-            result: 执行结果
-
-        Returns:
-            是否应该重新规划
-        """
-        # 1. 如果达到最大重试次数，必须重新规划
-        if not task.can_retry():
-            return True
-
-        # 2. 某些类型的错误需要重新规划
-        error = result.get("error", "").lower()
-
-        # 环境相关错误
-        if "environment" in error:
-            return True
-
-        # 障碍物错误
-        if "obstacle" in error or "blocked" in error:
-            return True
-
-        # 目标丢失
-        if "target" in error and ("lost" in error or "not found" in error):
-            return True
-
-        # 其他情况不重新规划（使用重试机制）
-        return False
-
-    def _determine_replan_level(self, result: Dict[str, Any]) -> ReplanLevel:
-        """
-        确定重新规划级别
-
-        Args:
-            result: 执行结果
-
-        Returns:
-            重新规划级别
-        """
-        error = result.get("error", "").lower()
-
-        # 环境变化 -> 完全重新规划
-        if "environment" in error:
+    def _map_level(self, decision: ReplanDecision) -> ReplanLevel:
+        if decision.scope == "full":
             return ReplanLevel.FULL_REPLAN
-
-        # 障碍物 -> 技能替换
-        if "obstacle" in error or "blocked" in error:
+        if decision.reason in {"high_failure_ratio", "robot_stuck"}:
             return ReplanLevel.SKILL_REPLACEMENT
-
-        # 超时 -> 参数调整
-        if "timeout" in error:
-            return ReplanLevel.PARAMETER_ADJUSTMENT
-
-        # 卡住 -> 技能替换
-        if "stuck" in error:
-            return ReplanLevel.SKILL_REPLACEMENT
-
-        # 振荡 -> 任务重排
-        if "oscillation" in error:
-            return ReplanLevel.TASK_REORDER
-
-        # 默认参数调整
         return ReplanLevel.PARAMETER_ADJUSTMENT
 
-    def _determine_replan_level_from_anomaly(self, anomaly: Dict[str, Any]) -> ReplanLevel:
-        """
-        根据监控器检测到的异常确定重新规划级别
+    def _resolve_env_state(
+        self,
+        base_env: Optional[Dict[str, Any]],
+        env_state_provider: Optional[Callable[[], Dict[str, Any]]],
+        input2: Optional[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        env = dict(base_env or {})
+        if env_state_provider:
+            try:
+                env.update(env_state_provider() or {})
+            except Exception:
+                pass
+        if isinstance(input2, dict):
+            env.update(input2)
+        return env
 
-        Args:
-            anomaly: 异常信息字典
-
-        Returns:
-            重新规划级别
-        """
-        anomaly_type = anomaly.get("type", "")
-        severity = anomaly.get("severity", "medium")
-
-        # 环境变化 -> 完全重新规划
-        if anomaly_type == "environment_change":
-            return ReplanLevel.FULL_REPLAN
-
-        # 传感器失效 -> 完全重新规划
-        if anomaly_type == "sensor_failure":
-            return ReplanLevel.FULL_REPLAN
-
-        # 超时 -> 参数调整
-        if anomaly_type == "timeout":
-            return ReplanLevel.PARAMETER_ADJUSTMENT
-
-        # 卡住 -> 根据严重程度决定
-        if anomaly_type == "stuck":
-            if severity == "high":
-                return ReplanLevel.SKILL_REPLACEMENT
-            else:
-                return ReplanLevel.PARAMETER_ADJUSTMENT
-
-        # 振荡 -> 任务重排
-        if anomaly_type == "oscillation":
-            return ReplanLevel.TASK_REORDER
-
-        # 默认参数调整
-        return ReplanLevel.PARAMETER_ADJUSTMENT
+    def _build_planning_context(
+        self,
+        env_state: Dict[str, Any],
+        input2: Optional[Dict[str, Any]],
+        input3: Optional[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        context = dict(env_state)
+        if isinstance(input2, dict):
+            context["input2"] = input2
+        if isinstance(input3, dict):
+            context["input3"] = input3
+        return context
 
     def _get_previous_result(self) -> Optional[Any]:
-        """
-        获取上一步的执行结果
-
-        Returns:
-            上一步的结果，如果没有则返回None
-        """
-        # 获取最后一个已完成的任务结果
         for task in reversed(self.task_queue.tasks):
-            if task.status == TaskStatus.COMPLETED and task.result:
+            if task.status == "completed" and task.result:
                 return task.result.get("result")
         return None
-
-    def reset(self):
-        """重置控制器状态"""
-        self.task_queue = TaskQueue()
-        self.replan_count = 0
-        self.execution_monitor.reset()

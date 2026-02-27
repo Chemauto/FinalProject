@@ -7,6 +7,7 @@ Interactive Interface - 交互界面
 import os
 import sys
 import asyncio
+import time
 from pathlib import Path
 
 # 取消代理设置（避免 OpenAI 客户端使用错误的代理）
@@ -37,6 +38,53 @@ from Robot_Module.skill import (
 )
 
 
+def build_env_state_snapshot() -> dict:
+    """采样环境状态，作为 input2/sensor_frame 的基础数据。"""
+    snapshot = {
+        "timestamp": time.time(),
+        "sensor_status": {
+            "camera": "ok",
+            "radar": "ok",
+            "robot_state": "ok"
+        },
+        "camera": {"objects": []},
+        "radar": {"obstacles": []},
+        "robot_state": {
+            "pose": {"x": 0.0, "y": 0.0, "yaw": 0.0},
+            "battery": 1.0
+        },
+        "environment_version": int(time.time())
+    }
+
+    try:
+        from ros_topic_comm import get_enemy_positions, get_robot_state, get_yolo_enemy_positions
+
+        robot_state = get_robot_state() or {}
+        snapshot["robot_state"]["pose"] = {
+            "x": float(robot_state.get("x", 0.0)),
+            "y": float(robot_state.get("y", 0.0)),
+            "yaw": float(robot_state.get("angle", 0.0))
+        }
+        snapshot["position"] = {
+            "x": snapshot["robot_state"]["pose"]["x"],
+            "y": snapshot["robot_state"]["pose"]["y"],
+            "z": 0.0
+        }
+
+        enemies = get_enemy_positions() or []
+        yolo_enemies = get_yolo_enemy_positions() or []
+
+        snapshot["camera"]["objects"] = enemies
+        snapshot["radar"]["obstacles"] = yolo_enemies
+        snapshot["environment_version"] = int(snapshot["timestamp"])
+
+    except Exception as exc:
+        snapshot["sensor_status"]["robot_state"] = "degraded"
+        snapshot["sensor_error"] = str(exc)
+
+    return snapshot
+
+
 def execute_tool(function_name: str, function_args: dict) -> dict:
     """执行 Robot_Module 中的工具函数"""
     skill_func = get_skill_function(function_name)
@@ -48,10 +96,9 @@ def execute_tool(function_name: str, function_args: dict) -> dict:
         # 调用异步技能函数
         try:
             # 检查是否已有运行的事件循环
-            loop = asyncio.get_running_loop()
+            asyncio.get_running_loop()
             # 如果有，使用 asyncio.ensure_future() 或直接 await（需要在异步上下文中）
             # 但由于 execute_tool 是同步函数，我们需要在循环中调度这个协程
-            import concurrent.futures
             import threading
 
             # 在新线程中运行，避免阻塞当前循环
@@ -213,7 +260,7 @@ def main():
 
     print("-"*60, file=sys.stderr)
     print("提示: 确保已在另一个窗口启动仿真器", file=sys.stderr)
-    print("  python3 Sim_Module/2d/simulator.py", file=sys.stderr)
+    print("  python3 Sim_Module/sim2d/simulator.py", file=sys.stderr)
     print("", file=sys.stderr)
     print("输入 'quit' 或 'exit' 退出", file=sys.stderr)
     print("="*60, file=sys.stderr)
@@ -267,7 +314,8 @@ def main():
                 user_input=user_input,
                 tools=tools,
                 execute_tool_fn=execute_tool,
-                image_path=image_path  # 新增：VLM 环境图像路径
+                image_path=image_path,  # 新增：VLM 环境图像路径
+                env_state_provider=build_env_state_snapshot
             )
 
             # 显示结果摘要

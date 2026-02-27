@@ -15,7 +15,6 @@ from typing import Callable, List, Dict, Any
 # 导入新的模块化架构
 from .high_level_llm import HighLevelLLM
 from .low_level_llm import LowLevelLLM, ExecutionStatus
-from .task_queue import TaskQueue, Task, TaskStatus
 from .adaptive_controller import AdaptiveController
 from .vlm_core import VLMCore
 
@@ -92,12 +91,9 @@ class LLMAgent:
         # ==================== 初始化自适应控制器 ====================
         self.adaptive_controller = None
         if enable_adaptive:
-            from .execution_monitor import ExecutionMonitor
-
             self.adaptive_controller = AdaptiveController(
                 high_level_llm=self.high_level_llm,
-                low_level_llm=self.low_level_llm,
-                execution_monitor=ExecutionMonitor()
+                low_level_llm=self.low_level_llm
             )
         # ================================================================
 
@@ -192,7 +188,8 @@ class LLMAgent:
                      user_input: str,
                      tools: List[Dict],
                      execute_tool_fn: Callable,
-                     image_path: str = None) -> List[Dict]:
+                     image_path: str = None,
+                     env_state_provider: Callable[[], Dict[str, Any]] = None) -> List[Dict]:
         """
         运行完整的双层LLM流程
 
@@ -218,6 +215,29 @@ class LLMAgent:
             # 提取技能名称
             available_skills = [tool.get("function", {}).get("name", "unknown") for tool in tools]
 
+            input1 = {"text": user_input, "lang": "zh", "source": "console"}
+            input3 = {
+                "skills": [
+                    {
+                        "name": tool.get("function", {}).get("name", "unknown"),
+                        "args_schema": tool.get("function", {}).get("parameters", {}).get("properties", {}),
+                        "description": tool.get("function", {}).get("description", "")
+                    }
+                    for tool in tools
+                ]
+            }
+            input2 = {}
+            if env_state_provider:
+                try:
+                    snapshot = env_state_provider() or {}
+                    input2 = {
+                        "sensor_frame": snapshot,
+                        "environment_version": int(snapshot.get("environment_version", 0) or 0),
+                        "vlm_summary": ""
+                    }
+                except Exception:
+                    input2 = {}
+
             # 运行异步控制器
             try:
                 loop = asyncio.get_event_loop()
@@ -231,7 +251,12 @@ class LLMAgent:
                     tools=tools,
                     execute_tool_fn=execute_tool_fn,
                     available_skills=available_skills,
-                    env_state=None  # 环境状态（可扩展）
+                    env_state=None,
+                    env_state_provider=env_state_provider,
+                    input1=input1,
+                    input2=input2,
+                    input3=input3,
+                    image_path=image_path,
                 )
             )
 
