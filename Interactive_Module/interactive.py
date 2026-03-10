@@ -35,6 +35,9 @@ from Robot_Module.skill import (
     get_tool_definitions,
     register_all_modules
 )
+from VLM_Module.vlm_core import VLMCore
+
+ENABLE_VLM_CONTEXT = True
 
 
 def execute_tool(function_name: str, function_args: dict) -> dict:
@@ -122,6 +125,7 @@ def load_dynamic_prompt(prompt_path, tools):
     prompt = prompt_template.format(
         robot_config=robot_config,
         available_skills=available_skills,
+        visual_context="{visual_context}",
         user_input="{user_input}"  # 保留占位符
     )
 
@@ -145,6 +149,17 @@ def build_llm_agent():
     return llm_agent, tools
 
 
+def build_vlm_core():
+    """按开关初始化 VLM。"""
+    if not ENABLE_VLM_CONTEXT:
+        return None
+    try:
+        return VLMCore()
+    except Exception as error:
+        print(f"[VLM] 初始化失败，已跳过: {error}", file=sys.stderr)
+        return None
+
+
 def show_welcome(llm_agent, tools, title="LLM Interactive Interface", input_hint="输入 'quit' 或 'exit' 退出"):
     """打印欢迎信息。"""
     print("="*60, file=sys.stderr)
@@ -152,6 +167,7 @@ def show_welcome(llm_agent, tools, title="LLM Interactive Interface", input_hint
     print("="*60, file=sys.stderr)
     print(f"API: {llm_agent.client.base_url}", file=sys.stderr)
     print(f"Model: {llm_agent.model}", file=sys.stderr)
+    print(f"VLM上下文: {'开启' if ENABLE_VLM_CONTEXT else '关闭'}", file=sys.stderr)
     print(f"可用工具: {len(tools)} 个", file=sys.stderr)
     print("-"*60, file=sys.stderr)
 
@@ -176,7 +192,7 @@ def show_welcome(llm_agent, tools, title="LLM Interactive Interface", input_hint
     print("="*60, file=sys.stderr)
 
 
-def process_user_input(user_input: str, llm_agent, tools) -> bool:
+def process_user_input(user_input: str, llm_agent, tools, vlm_core=None) -> bool:
     """处理一条用户输入。返回 False 表示退出。"""
     if not user_input:
         return True
@@ -185,10 +201,19 @@ def process_user_input(user_input: str, llm_agent, tools) -> bool:
         print("👋 再见!", file=sys.stderr)
         return False
 
+    visual_context = None
+    if vlm_core is not None:
+        try:
+            visual_context = vlm_core.describe()
+            print(f"[VLM] 当前视觉描述: {visual_context}", file=sys.stderr)
+        except Exception as error:
+            print(f"[VLM] 视觉描述失败，继续仅使用文字输入: {error}", file=sys.stderr)
+
     results = llm_agent.run_pipeline(
         user_input=user_input,
         tools=tools,
-        execute_tool_fn=execute_tool
+        execute_tool_fn=execute_tool,
+        visual_context=visual_context,
     )
 
     if results:
@@ -200,13 +225,14 @@ def process_user_input(user_input: str, llm_agent, tools) -> bool:
 def main():
     """主函数"""
     llm_agent, tools = build_llm_agent()
+    vlm_core = build_vlm_core()
     show_welcome(llm_agent, tools)
 
     # 主循环
     while True:
         try:
             user_input = input("\n💬 请输入指令: ").strip()
-            if not process_user_input(user_input, llm_agent, tools):
+            if not process_user_input(user_input, llm_agent, tools, vlm_core):
                 break
         except KeyboardInterrupt:
             print("\n\n👋 再见!", file=sys.stderr)

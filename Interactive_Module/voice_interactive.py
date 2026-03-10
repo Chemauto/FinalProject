@@ -8,7 +8,7 @@ import os
 import sys
 
 from asr_core import ASRCore
-from interactive import build_llm_agent, process_user_input, show_welcome
+from interactive import build_llm_agent, build_vlm_core, process_user_input, show_welcome
 
 
 def main():
@@ -18,6 +18,7 @@ def main():
         sys.exit(1)
 
     llm_agent, tools = build_llm_agent()
+    vlm_core = build_vlm_core()
     asr = ASRCore(api_key=api_key)
     show_welcome(
         llm_agent,
@@ -33,7 +34,7 @@ def main():
                 print("👋 再见!", file=sys.stderr)
                 break
             user_input = asr.listen_and_transcribe()
-            if not process_user_input(user_input, llm_agent, tools):
+            if not process_user_input(user_input, llm_agent, tools, vlm_core):
                 break
         except KeyboardInterrupt:
             print("\n\n👋 再见!", file=sys.stderr)

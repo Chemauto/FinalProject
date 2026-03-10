@@ -5,6 +5,7 @@
 `Interactive_Module/interactive.py` 是整个项目的命令行交互入口。
 它负责接收用户指令，调用 `LLM_Module` 做任务规划与执行，再调用 `Robot_Module` 的工具完成动作。
 `Interactive_Module/voice_interactive.py` 提供语音输入入口，先把语音转文字，再复用同样的执行流程。
+如果把 `Interactive_Module/interactive.py` 里的 `ENABLE_VLM_CONTEXT` 改成 `True`，则每次输入前都会先调用 `VLM_Module/vlm_core.py` 生成视觉描述，并把该描述作为 LLM 的上下文。
 
 ## 依赖
 

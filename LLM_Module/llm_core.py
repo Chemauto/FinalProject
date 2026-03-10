@@ -41,8 +41,8 @@ class LLMAgent:
         data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
         return str(data.get("prompt", "")).strip()
 
-    def plan_tasks(self, user_input: str, tools: list[dict]) -> list[dict]:
-        return self.highlevel.plan_tasks(user_input, self.planning_prompt_template)
+    def plan_tasks(self, user_input: str, tools: list[dict], visual_context: str | None = None) -> list[dict]:
+        return self.highlevel.plan_tasks(user_input, self.planning_prompt_template, visual_context)
 
     def execute_single_task(
         self,
@@ -50,13 +50,22 @@ class LLMAgent:
         tools: list[dict],
         execute_tool_fn: Callable,
         previous_result: Any = None,
+        visual_context: str | None = None,
     ) -> dict:
-        return self.lowlevel.execute_single_task(task_description, tools, execute_tool_fn, previous_result)
+        return self.lowlevel.execute_single_task(task_description, tools, execute_tool_fn, previous_result, visual_context)
 
-    def run_pipeline(self, user_input: str, tools: list[dict], execute_tool_fn: Callable) -> list[dict]:
+    def run_pipeline(
+        self,
+        user_input: str,
+        tools: list[dict],
+        execute_tool_fn: Callable,
+        visual_context: str | None = None,
+    ) -> list[dict]:
         print("\n" + "█" * 60 + f"\n📥 [用户输入] {user_input}\n" + "█" * 60)
+        if visual_context:
+            print("\n" + "─" * 60 + f"\n👁️ [视觉上下文]\n{visual_context}\n" + "─" * 60)
         try:
-            tasks = self.plan_tasks(user_input, tools)
+            tasks = self.plan_tasks(user_input, tools, visual_context)
             if not tasks:
                 return []
 
@@ -66,7 +75,7 @@ class LLMAgent:
 
             for idx, task in enumerate(tasks, 1):
                 print(f"\n【步骤 {idx}/{len(tasks)}】")
-                result = self.execute_single_task(task["task"], tools, execute_tool_fn, previous_result)
+                result = self.execute_single_task(task["task"], tools, execute_tool_fn, previous_result, visual_context)
                 results.append(result)
 
                 if result.get("success") and result.get("result"):

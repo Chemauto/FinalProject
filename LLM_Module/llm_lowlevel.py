@@ -22,7 +22,7 @@ class LowLevelExecutor:
         if not self.prompt_path.exists():
             return {
                 "system_prompt": "你是一个机器人控制助手。根据子任务描述，调用相应的工具函数。",
-                "user_prompt": "执行任务：{task_description}\n\n上一步的结果：{previous_result}",
+                "user_prompt": "执行任务：{task_description}\n\n当前视觉上下文：{visual_context}\n\n上一步的结果：{previous_result}",
             }
         data = yaml.safe_load(self.prompt_path.read_text(encoding="utf-8")) or {}
         return {
@@ -36,6 +36,7 @@ class LowLevelExecutor:
         tools: list[dict],
         execute_tool_fn: Callable,
         previous_result: Any = None,
+        visual_context: str | None = None,
     ) -> dict:
         print(f"\n{'─' * 50}\n⚙️  [执行中] {task_description}\n{'─' * 50}")
         try:
@@ -47,6 +48,7 @@ class LowLevelExecutor:
 
             user_prompt = prompts["user_prompt"].format(
                 task_description=task_description,
+                visual_context=visual_context if visual_context else "无",
                 previous_result=previous_result if previous_result is not None else "无",
             )
 

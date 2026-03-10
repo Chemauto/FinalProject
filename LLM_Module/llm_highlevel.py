@@ -27,15 +27,20 @@ class HighLevelPlanner:
             "prompt": str(data.get("prompt", "")).strip(),
         }
 
-    def plan_tasks(self, user_input: str, planning_prompt: str) -> list[dict]:
+    def plan_tasks(self, user_input: str, planning_prompt: str, visual_context: str | None = None) -> list[dict]:
         print("\n" + "=" * 60 + "\n🧠 [上层LLM] 任务规划中...\n" + "=" * 60)
         prompts = self.load_prompt()
         try:
+            user_content = planning_prompt.format(
+                user_input=user_input,
+                visual_context=visual_context if visual_context else "无",
+            )
+
             completion = self.client.chat.completions.create(
                 model=self.model,
                 messages=[
                     {"role": "system", "content": prompts["system_prompt"]},
-                    {"role": "user", "content": planning_prompt.format(user_input=user_input)},
+                    {"role": "user", "content": user_content},
                 ],
                 temperature=0.3,
                 extra_body={"enable_thinking": False},
