@@ -80,6 +80,10 @@ logs/
 tmp/
 temp/
 
+# 运行时生成文件
+Interactive_Module/audio_cache/
+VLM_Module/assets/camera_capture.jpg
+
 # Gazebo 临时文件
 *.gazebo
 /gazebo_models/
