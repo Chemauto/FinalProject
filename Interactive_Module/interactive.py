@@ -128,41 +128,33 @@ def load_dynamic_prompt(prompt_path, tools):
     return prompt
 
 
-def main():
-    """主函数"""
-    # 注册所有 Robot_Module 的工具函数
+def build_llm_agent():
+    """初始化工具列表和 LLM Agent。"""
     register_all_modules()
 
-    # 检查 API Key
     api_key = os.getenv('Test_API_KEY')
     if not api_key:
         print("❌ 错误: 未设置 Test_API_KEY 环境变量", file=sys.stderr)
         print("请设置: export Test_API_KEY=your_api_key_here", file=sys.stderr)
         sys.exit(1)
 
-    # 从 Robot_Module 获取工具定义
     tools = get_tool_definitions()
-
-    # 获取提示词路径
-    prompt_path = project_root / "LLM_Module" / "prompts" / "planning_prompt_2d.yaml"
-
-    # 初始化 LLM Agent（先传入路径，避免警告）
+    prompt_path = project_root / "LLM_Module" / "prompts" / "highlevel_prompt.yaml"
     llm_agent = LLMAgent(api_key=api_key, prompt_path=str(prompt_path))
+    llm_agent.planning_prompt_template = load_dynamic_prompt(prompt_path, tools)
+    return llm_agent, tools
 
-    # 动态加载并填充提示词，覆盖默认的模板
-    dynamic_prompt = load_dynamic_prompt(prompt_path, tools)
-    llm_agent.planning_prompt_template = dynamic_prompt
 
-    # 显示欢迎信息
+def show_welcome(llm_agent, tools, title="LLM Interactive Interface", input_hint="输入 'quit' 或 'exit' 退出"):
+    """打印欢迎信息。"""
     print("="*60, file=sys.stderr)
-    print("LLM Interactive Interface", file=sys.stderr)
+    print(title, file=sys.stderr)
     print("="*60, file=sys.stderr)
     print(f"API: {llm_agent.client.base_url}", file=sys.stderr)
     print(f"Model: {llm_agent.model}", file=sys.stderr)
     print(f"可用工具: {len(tools)} 个", file=sys.stderr)
     print("-"*60, file=sys.stderr)
 
-    # 显示所有可用工具
     for tool in tools:
         func = tool.get("function", {})
         name = func.get("name", "")
@@ -180,34 +172,42 @@ def main():
     print("提示: 确保已在另一个窗口启动仿真器", file=sys.stderr)
     print("  python3 Sim_Module/2d/simulator.py", file=sys.stderr)
     print("", file=sys.stderr)
-    print("输入 'quit' 或 'exit' 退出", file=sys.stderr)
+    print(input_hint, file=sys.stderr)
     print("="*60, file=sys.stderr)
+
+
+def process_user_input(user_input: str, llm_agent, tools) -> bool:
+    """处理一条用户输入。返回 False 表示退出。"""
+    if not user_input:
+        return True
+
+    if user_input.lower() in ['quit', 'exit', 'q']:
+        print("👋 再见!", file=sys.stderr)
+        return False
+
+    results = llm_agent.run_pipeline(
+        user_input=user_input,
+        tools=tools,
+        execute_tool_fn=execute_tool
+    )
+
+    if results:
+        success_count = sum(1 for result in results if result.get("success"))
+        print(f"\n📊 [完成] {success_count}/{len(results)} 个任务成功", file=sys.stderr)
+    return True
+
+
+def main():
+    """主函数"""
+    llm_agent, tools = build_llm_agent()
+    show_welcome(llm_agent, tools)
 
     # 主循环
     while True:
         try:
-            # 获取用户输入
             user_input = input("\n💬 请输入指令: ").strip()
-
-            if not user_input:
-                continue
-
-            if user_input.lower() in ['quit', 'exit', 'q']:
-                print("👋 再见!", file=sys.stderr)
+            if not process_user_input(user_input, llm_agent, tools):
                 break
-
-            # 执行双层 LLM 流程
-            results = llm_agent.run_pipeline(
-                user_input=user_input,
-                tools=tools,
-                execute_tool_fn=execute_tool
-            )
-
-            # 显示结果摘要
-            if results:
-                success_count = sum(1 for r in results if r.get("success"))
-                print(f"\n📊 [完成] {success_count}/{len(results)} 个任务成功", file=sys.stderr)
-
         except KeyboardInterrupt:
             print("\n\n👋 再见!", file=sys.stderr)
             break

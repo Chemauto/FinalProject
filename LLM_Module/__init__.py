@@ -10,11 +10,11 @@ LLM Module - 大语言模型模块 (双层LLM架构)
 - LLMAgent: 双层LLM代理类
 
 提示词位置:
-- prompts/planning_prompt_*.yaml  (规划提示词)
-- prompts/execution_prompt_*.yaml  (执行提示词)
+- prompts/highlevel_prompt.yaml  (规划提示词)
+- prompts/lowlevel_prompt.yaml  (执行提示词)
 """
 
 from .llm_core import LLMAgent
 
-__version__ = '1.0.0'
+__version__ = '2.0.0'
 __all__ = ['LLMAgent']

@@ -73,7 +73,7 @@ ros2 run rqt_graph rqt_graph
 
 `LLM_Module/llm_core.py` 实现了两层架构：
 
-1. **上层（规划）**：使用 `LLM_Module/prompts/planning_prompt_2d.yaml` 中的提示词，将复杂的用户输入分解为子任务序列
+1. **上层（规划）**：使用 `LLM_Module/prompts/highlevel_prompt.yaml` 中的提示词，将复杂的用户输入分解为子任务序列
 2. **下层（执行）**：通过 OpenAI function-calling API 调用 Robot_Module 工具来执行各个子任务，支持 `previous_result` 传递
 
 核心方法：`run_pipeline(user_input, tools, execute_tool_fn)` 协调整个流程。
@@ -159,7 +159,7 @@ Robot_Module 的所有模块都通过 `_get_action_queue()` 和 `_get_vlm_core()
 
 ## 重要文件位置
 
-- **规划提示词**：`LLM_Module/prompts/planning_prompt_2d.yaml`
+- **规划提示词**：`LLM_Module/prompts/highlevel_prompt.yaml`
 - **VLM 提示词**：`VLM_Module/prompts/perceive_environment.yaml`
 - **入口点**：`Interactive_Module/interactive.py`
 - **MCP 服务器**：`Robot_Module/skill.py`
