@@ -23,7 +23,7 @@ class LLMAgent:
         初始化LLM代理
         """
         self.client = OpenAI(api_key=api_key, base_url=base_url)
-        self.model = "qwen3-32b"
+        self.model = "qwen-plus"
         self.planning_prompt_template = self.load_prompt(prompt_path)
 
     def load_prompt(self, prompt_path: str) -> str:

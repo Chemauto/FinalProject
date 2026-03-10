@@ -1,68 +1,77 @@
-import sys
-from ollama import Client
+from __future__ import annotations
+"""VLM 核心模块：读取图片并返回中文描述。"""
+
+from pathlib import Path
+
+from openai import OpenAI
 import yaml
-import json
+
+try:
+    from .image_source import ImageSource, Video_Port as DEFAULT_VIDEO_PORT, image_path as DEFAULT_IMAGE_PATH
+    from .vlm_utils import load_api_key, response_to_text, to_data_url
+except ImportError:
+    from image_source import ImageSource, Video_Port as DEFAULT_VIDEO_PORT, image_path as DEFAULT_IMAGE_PATH
+    from vlm_utils import load_api_key, response_to_text, to_data_url
+
 
 class VLMCore:
-    def __init__(self, model='qwen3-vl:4b', host='http://localhost:11434'):
-        self.client = Client(host=host)
+    """远程视觉描述器，只负责提示词读取与模型调用。"""
+
+    def __init__(
+        self,
+        api_key: str | None = None,
+        base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        model: str = "qwen-vl-plus",
+        Video_Port: int | str = DEFAULT_VIDEO_PORT,
+        default_image: str | None = DEFAULT_IMAGE_PATH,
+    ):
+        """初始化远程客户端与默认路径。"""
+        self.root = Path(__file__).resolve().parent
+        self.prompt_file = self.root / "prompts" / "VlmPrompt.yaml"
         self.model = model
-        self.default_image = '/home/robot/work/FinalProject/VLM_Module/assets/red.png'  # 默认红色
-        self.prompt_path = '/home/robot/work/FinalProject/VLM_Module/prompts/perceive_environment.yaml'
-
-    def perceive(self, image_path=None):
-        """识别颜色，返回格式化结果供LLM使用"""
-        image_path = image_path or self.default_image
-
-        with open(self.prompt_path, 'r', encoding='utf-8') as f:
-            prompt = yaml.safe_load(f)['prompt']
-
-        response = self.client.chat(
+        self.image_source = ImageSource(Video_Port=Video_Port, default_image=default_image)
+        self.client = OpenAI(api_key=api_key or load_api_key(self.root), base_url=base_url)
+    
+    def _load_prompts(self) -> dict[str, str]:
+        """从 YAML 中读取 system 和 user 提示词。"""
+        data = yaml.safe_load(self.prompt_file.read_text(encoding="utf-8")) or {}
+        system_prompt = str(data.get("system_prompt", "")).strip()
+        user_prompt = str(data.get("user_prompt", "")).strip()
+        if not system_prompt or not user_prompt:
+            raise ValueError(f"提示词为空: {self.prompt_file}")
+        return {"system": system_prompt, "user": user_prompt}
+    
+    def describe(self, image_path: str | None = None) -> str:
+        """读取图片并调用远程 VLM，返回中文描述文本。"""
+        image_file = self.image_source.get_image(image_path)
+        prompts = self._load_prompts()
+        response = self.client.chat.completions.create(
             model=self.model,
+            temperature=0.3,
             messages=[
-                {'role': 'user', 'content': prompt, 'images': [image_path]},
-                {'role': 'system', 'content': '请始终使用简体中文进行回复。'}
-            ]
+                {
+                    "role": "system",
+                    "content": prompts["system"],
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": prompts["user"],
+                        },
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": to_data_url(image_file)},
+                        },
+                    ],
+                },
+            ],
         )
+        return response_to_text(response.choices[0].message.content)
 
-        content = response['message']['content']
-        print(f"[VLM] 原始响应: {content}", file=sys.stderr)
 
-        # 提取JSON（去除markdown代码块）
-        if '```' in content:
-            for block in content.split('```'):
-                if '{' in block and '}' in block:
-                    content = block.strip()
-                    if content.startswith('json'):
-                        content = content[4:].strip()
-                    break
 
-        try:
-            result = json.loads(content)
-            color = result.get('color', 'none').lower()
-            print(f"[VLM] 识别颜色: {color}", file=sys.stderr)
 
-            # 颜色到动作的映射
-            color_action_map = {
-                'red': 'move_forward',
-                'orange': 'move_forward',
-                'yellow': 'turn_left',
-                'green': 'move_backward',
-                'blue': 'turn_right',
-                'purple': 'stop',
-                'black': 'none'
-            }
-
-            if color not in color_action_map:
-                print(f"[VLM] 未知颜色: {color}", file=sys.stderr)
-                return None
-
-            action = color_action_map[color]
-            if action == 'none':
-                print(f"[VLM] {color}色无动作", file=sys.stderr)
-                return None
-
-            return {'vlm_input': f'检测到{color}色方块', 'action': action}
-        except Exception as e:
-            print(f"[VLM] JSON解析失败: {e}", file=sys.stderr)
-            return None
+if __name__ == "__main__":
+    print(VLMCore().describe())
