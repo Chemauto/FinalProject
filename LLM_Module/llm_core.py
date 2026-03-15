@@ -46,13 +46,13 @@ class LLMAgent:
 
     def execute_single_task(
         self,
-        task_description: str,
+        task_info: dict,
         tools: list[dict],
         execute_tool_fn: Callable,
         previous_result: Any = None,
         visual_context: str | None = None,
     ) -> dict:
-        return self.lowlevel.execute_single_task(task_description, tools, execute_tool_fn, previous_result, visual_context)
+        return self.lowlevel.execute_single_task(task_info, tools, execute_tool_fn, previous_result, visual_context)
 
     def run_pipeline(
         self,
@@ -62,20 +62,24 @@ class LLMAgent:
         visual_context: str | None = None,
     ) -> list[dict]:
         print("\n" + "█" * 60 + f"\n📥 [用户输入] {user_input}\n" + "█" * 60)
-        if visual_context:
-            print("\n" + "─" * 60 + f"\n👁️ [视觉上下文]\n{visual_context}\n" + "─" * 60)
         try:
             tasks = self.plan_tasks(user_input, tools, visual_context)
             if not tasks:
                 return []
 
-            print("\n" + "█" * 60 + "\n🚀 [开始执行] 按顺序执行子任务\n" + "█" * 60)
+            task_understanding = self._build_task_understanding(user_input, tasks)
+            if task_understanding:
+                print("\n" + "─" * 60 + f"\n👁️ [LLM思考]\n{task_understanding}\n" + "─" * 60)
+
+            print("\n" + "█" * 60 + "\n🤖 [下层LLM] 开始执行与工具决策\n" + "█" * 60)
             results = []
             previous_result = None
 
             for idx, task in enumerate(tasks, 1):
                 print(f"\n【步骤 {idx}/{len(tasks)}】")
-                result = self.execute_single_task(task["task"], tools, execute_tool_fn, previous_result, visual_context)
+                print(f"📌 [规划函数] {task.get('function', '待LLM决定')}")
+                print(f"📝 [规划依据] {task.get('reason', '未提供规划依据')}")
+                result = self.execute_single_task(task, tools, execute_tool_fn, previous_result, visual_context)
                 results.append(result)
 
                 if result.get("success") and result.get("result"):
@@ -89,7 +93,8 @@ class LLMAgent:
             print("\n" + "█" * 60 + "\n✅ [执行完成] 任务总结\n" + "█" * 60)
             for idx, (task, result) in enumerate(zip(tasks, results), 1):
                 status = "✅ 成功" if result.get("success") else "❌ 失败"
-                print(f"  {idx}. {task['task']} - {status}")
+                action = result.get("action", "未调用")
+                print(f"  {idx}. {task['task']} -> {action} - {status}")
             return results
         except Exception as error:
             print(f"\n❌ [错误] {type(error).__name__}: {error}")
@@ -97,3 +102,35 @@ class LLMAgent:
 
             traceback.print_exc()
             return []
+
+    def _build_task_understanding(self, user_input: str, tasks: list[dict]) -> str:
+        """根据用户目标和 LLM 规划结果生成简洁的 LLM 思考输出。"""
+        if not tasks:
+            return ""
+
+        summary = getattr(self.highlevel, "last_summary", "") or "已完成任务规划"
+        environment_judgment = self._build_environment_judgment(tasks)
+        function_chain = " -> ".join(task.get("function", "待定") for task in tasks)
+        primary_reason = tasks[0].get("reason", "")
+
+        lines = [
+            f"环境判断: {environment_judgment}",
+            f"任务目标: {user_input}",
+            f"技能决策: {summary}",
+            f"选择原因: {primary_reason}",
+            f"函数链: {function_chain}",
+        ]
+        return "\n".join(lines)
+
+    @staticmethod
+    def _build_environment_judgment(tasks: list[dict]) -> str:
+        """根据第一步任务内容提取一条环境判断。"""
+        if not tasks:
+            return "未获取到有效环境判断"
+
+        first_task = tasks[0].get("task", "")
+        if "。先" in first_task:
+            return first_task.split("。先", 1)[0]
+        if "，先" in first_task:
+            return first_task.split("，先", 1)[0]
+        return first_task

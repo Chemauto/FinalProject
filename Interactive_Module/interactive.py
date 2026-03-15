@@ -186,7 +186,7 @@ def show_welcome(llm_agent, tools, title="LLM Interactive Interface", input_hint
 
     print("-"*60, file=sys.stderr)
     print("提示: 确保已在另一个窗口启动仿真器", file=sys.stderr)
-    print("  python3 Sim_Module/2d/simulator.py", file=sys.stderr)
+    print("  python3 Sim_Module/sim2d/simulator.py", file=sys.stderr)
     print("", file=sys.stderr)
     print(input_hint, file=sys.stderr)
     print("="*60, file=sys.stderr)

@@ -3,6 +3,7 @@ Robot_Module - 功能模块包
 
 模块化设计，每个模块负责一类机器人功能：
 - base.py: 底盘控制模块（移动、旋转）
+- navigation_demo.py: 四足导航技能（walk、climb、push_box、way_select）
 - example.py: 示例模块（添加新功能的参考模板）
 """
 

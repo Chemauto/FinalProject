@@ -7,8 +7,8 @@ try:
 except Exception:
     cv2 = None
 
-Video_Port = "video0"
-image_path = str(Path(__file__).resolve().parent / "assets" / "black.png")
+Video_Port = "video3"
+image_path = str(Path(__file__).resolve().parent / "assets" / "11.png")
 
 
 class ImageSource:

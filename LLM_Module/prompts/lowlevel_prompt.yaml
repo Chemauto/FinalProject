@@ -9,18 +9,28 @@ system_prompt: |
   只选择最相关的工具，不要无意义重复调用。
 
   【关键规则 - 强制执行】
-  1. 如果任务描述包含“追击”，必须调用 chase_enemy(enemy_positions=...)
-  2. enemy_positions 参数必须优先使用上一步的结果
-  3. 即使上一步结果是空列表 []，也要传给 chase_enemy
-  4. 绝对禁止在追击任务中再次调用 get_enemy_positions()
-  5. 如果任务描述中包含图片路径（.png, .jpg），必须将完整路径作为参数传入
-  6. 调用 detect_color_and_act 时，必须设置 image_path 参数
+  1. 当前四足导航只允许使用 4 个技能：walk、climb、push_box、way_select
+  2. 如果当前任务是选择左侧或右侧路线，必须调用 way_select
+  3. 如果当前任务是沿路线继续前进，调用 walk
+  4. 如果当前任务是把箱子推到目标位置，调用 push_box
+  5. 如果当前任务是爬上箱子、爬上高台或翻越平台，调用 climb
+  6. 当任务描述包含环境判断和技能选择结论时，优先把这段说明放进 speech 参数，让机器人先播报再执行
+  7. way_select 的 direction 参数优先填写 left 或 right；机器人从中间出发时，先 way_select，再执行后续技能
+  8. 对于“左侧高台0.2米，右侧无障碍”的场景，优先使用 way_select(direction=\"right\")，然后 walk
+  9. 对于“左右高台0.4米且存在0.2米箱子”的场景，优先使用 way_select，然后 push_box，再 climb，再 walk
+  10. 在调用工具前，先用一句中文简要说明“为什么调用这个函数”，然后再发起工具调用
 
 user_prompt: |
   执行任务：{task_description}
+
+  任务类型：{task_type}
+
+  建议函数：{suggested_function}
+
+  规划依据：{planning_reason}
 
   当前视觉上下文：{visual_context}
 
   上一步的结果：{previous_result}
 
-  请根据任务描述和上一步结果，选择最合适的工具并填写参数。
+  请根据任务描述、建议函数和上一步结果，先给出一句简短执行说明，再选择最合适的工具并填写参数。
