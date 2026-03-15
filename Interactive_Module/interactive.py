@@ -7,6 +7,7 @@ Interactive Interface - 交互界面
 import os
 import sys
 import asyncio
+import json
 from pathlib import Path
 
 # 取消代理设置（避免 OpenAI 客户端使用错误的代理）
@@ -40,6 +41,34 @@ from VLM_Module.vlm_core import VLMCore
 ENABLE_VLM_CONTEXT = True
 
 
+def _normalize_tool_result(function_name: str, raw_result):
+    """把工具原始返回统一转换为结构化结果。"""
+    parsed_result = raw_result
+    if isinstance(raw_result, str):
+        try:
+            parsed_result = json.loads(raw_result)
+        except json.JSONDecodeError:
+            parsed_result = {"raw_result": raw_result}
+
+    if not isinstance(parsed_result, dict):
+        parsed_result = {"raw_result": parsed_result}
+
+    status = parsed_result.get("status", "success")
+    feedback = parsed_result.get("execution_feedback") or {
+        "signal": "SUCCESS" if status == "success" else "FAILURE",
+        "skill": function_name,
+        "message": f"{function_name} 执行{'成功' if status == 'success' else '失败'}",
+    }
+    success = status == "success" and feedback.get("signal") == "SUCCESS"
+
+    return {
+        "success": success,
+        "result": parsed_result,
+        "raw_result": raw_result,
+        "feedback": feedback,
+    }
+
+
 def execute_tool(function_name: str, function_args: dict) -> dict:
     """执行 Robot_Module 中的工具函数"""
     skill_func = get_skill_function(function_name)
@@ -49,7 +78,8 @@ def execute_tool(function_name: str, function_args: dict) -> dict:
 
     try:
         # 调用异步技能函数
-        result = asyncio.run(skill_func(**function_args))
+        raw_result = asyncio.run(skill_func(**function_args))
+        normalized = _normalize_tool_result(function_name, raw_result)
 
         # 估算执行时间
         if function_name in ['move_forward', 'move_backward']:
@@ -65,7 +95,13 @@ def execute_tool(function_name: str, function_args: dict) -> dict:
         else:
             delay = 0
 
-        return {"result": result, "delay": delay}
+        return {
+            "success": normalized["success"],
+            "result": normalized["result"],
+            "raw_result": normalized["raw_result"],
+            "feedback": normalized["feedback"],
+            "delay": delay,
+        }
     except Exception as e:
         return {"error": str(e)}
 

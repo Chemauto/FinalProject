@@ -82,13 +82,22 @@ class LLMAgent:
                 result = self.execute_single_task(task, tools, execute_tool_fn, previous_result, visual_context)
                 results.append(result)
 
-                if result.get("success") and result.get("result"):
-                    previous_result = result["result"].get("result")
+                tool_output = result.get("result", {})
+                if result.get("success") and tool_output:
+                    previous_result = tool_output.get("result")
+                    feedback = result.get("feedback", {})
+                    if feedback:
+                        print(f"✅ [反馈确认] {feedback.get('skill', '当前技能')} 已返回成功信号，继续下一步")
                 else:
                     previous_result = None
 
                 if not result.get("success"):
-                    print(f"\n⚠️  [警告] 步骤 {idx} 失败，但继续执行后续任务")
+                    feedback = result.get("feedback", {})
+                    if feedback:
+                        print(f"\n⚠️  [中止] 未收到成功反馈: {feedback.get('message', '当前步骤执行失败')}")
+                    else:
+                        print(f"\n⚠️  [中止] 步骤 {idx} 执行失败，停止后续任务")
+                    break
 
             print("\n" + "█" * 60 + "\n✅ [执行完成] 任务总结\n" + "█" * 60)
             for idx, (task, result) in enumerate(zip(tasks, results), 1):

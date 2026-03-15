@@ -12,6 +12,8 @@ import sys
 import os
 import pygame
 import math
+import queue
+import time
 
 # Reconfigure stdout to use UTF-8 encoding on Windows
 if sys.platform == 'win32':
@@ -38,6 +40,7 @@ from enemy_manager import EnemyManager
 
 # 导入 ROS 通信
 from ros_topic_comm import get_shared_queue, set_robot_state, set_enemy_positions, publish_robot_state, get_enemy_remove_subscriber
+from Comm_Module.execution_comm import get_skill_command_subscriber, publish_execution_feedback
 
 
 class Robot:
@@ -52,9 +55,13 @@ class Robot:
         self.target_angle = 0
         self.is_moving = False
         self.last_command = ""
+        self.pending_motion_feedback = None
+        self.current_route = "center"
 
     def update(self):
         """更新机器人位置（平滑移动到目标位置）"""
+        completed_feedback = None
+
         # 平滑旋转
         if abs(self.angle - self.target_angle) > 1:
             diff = (self.target_angle - self.angle + 180) % 360 - 180
@@ -69,7 +76,12 @@ class Robot:
             self.x += (self.target_x - self.x) * 0.05
             self.y += (self.target_y - self.y) * 0.05
         else:
+            if self.is_moving and self.pending_motion_feedback is not None:
+                completed_feedback = self.pending_motion_feedback
+                self.pending_motion_feedback = None
             self.is_moving = False
+
+        return completed_feedback
 
     def draw(self, screen):
         """绘制机器人"""
@@ -152,6 +164,84 @@ class Robot:
 
         print(f"[Simulator] 旋转: {angle}°, 角速度={angular_speed}rad/s", file=sys.stderr)
 
+    def execute_skill_command(self, command):
+        """执行高层技能命令，并在完成后发布反馈。"""
+        self.last_command = str(command)
+        print(f"[Simulator] 执行技能命令: {command}", file=sys.stderr)
+
+        action_id = command.get("action_id", "")
+        skill = command.get("skill", "")
+        params = command.get("parameters", {})
+
+        if skill == "way_select":
+            return self._execute_way_select(action_id, params)
+        if skill == "walk":
+            return self._execute_walk(action_id, params)
+        if skill == "climb":
+            return self._execute_timed_skill(action_id, "climb", 1.2, "攀爬动作执行完成", params)
+        if skill == "push_box":
+            return self._execute_timed_skill(action_id, "push_box", 1.5, "推箱子动作执行完成", params)
+
+        return {
+            "mode": "feedback",
+            "action_id": action_id,
+            "skill": skill,
+            "signal": "FAILURE",
+            "message": f"仿真器暂不支持技能 {skill}",
+            "result": params,
+        }
+
+    def _execute_way_select(self, action_id, params):
+        direction = params.get("direction", "left")
+        lateral_distance = float(params.get("lateral_distance", 0.5))
+        shift_pixels = lateral_distance * 100
+
+        if direction == "left":
+            self.target_y = max(ROBOT_SIZE, self.y - shift_pixels)
+            self.current_route = "left"
+            route_label = "左侧"
+        else:
+            self.target_y = min(HEIGHT - ROBOT_SIZE, self.y + shift_pixels)
+            self.current_route = "right"
+            route_label = "右侧"
+        self.target_x = self.x
+        self.pending_motion_feedback = {
+            "action_id": action_id,
+            "skill": "way_select",
+            "signal": "SUCCESS",
+            "message": f"已切换到{route_label}路线",
+            "result": {"route": self.current_route, "x": self.target_x, "y": self.target_y},
+        }
+        return {"mode": "motion"}
+
+    def _execute_walk(self, action_id, params):
+        distance = float(params.get("distance", 1.0))
+        distance_pixels = distance * 100
+        route_side = params.get("route_side", f"{self.current_route}路线")
+
+        self.target_x = max(ROBOT_SIZE, min(WIDTH - ROBOT_SIZE, self.x + distance_pixels))
+        self.target_y = self.y
+        self.pending_motion_feedback = {
+            "action_id": action_id,
+            "skill": "walk",
+            "signal": "SUCCESS",
+            "message": f"已完成沿{route_side}前进",
+            "result": {"route_side": route_side, "x": self.target_x, "y": self.target_y},
+        }
+        return {"mode": "motion"}
+
+    @staticmethod
+    def _execute_timed_skill(action_id, skill, duration, message, params):
+        return {
+            "mode": "timed",
+            "action_id": action_id,
+            "skill": skill,
+            "end_time": time.time() + duration,
+            "signal": "SUCCESS",
+            "message": message,
+            "result": params,
+        }
+
 
 def draw_grid(screen):
     """绘制网格背景"""
@@ -181,6 +271,13 @@ class ChaseSimulator:
         # ROS 队列
         self.action_queue = get_shared_queue()
         self.action_queue.setup_subscriber()
+
+        # 技能命令通信
+        self.skill_command_queue = queue.Queue()
+        self.skill_command_subscriber = get_skill_command_subscriber(
+            lambda command: self.skill_command_queue.put(command)
+        )
+        self.active_timed_skill = None
 
         # 敌人清除命令订阅器
         self.enemy_remove_subscriber = get_enemy_remove_subscriber()
@@ -252,7 +349,15 @@ class ChaseSimulator:
 
     def update(self):
         """更新状态"""
-        self.robot.update()
+        completed_feedback = self.robot.update()
+        if completed_feedback:
+            publish_execution_feedback(
+                completed_feedback["action_id"],
+                completed_feedback["skill"],
+                completed_feedback["signal"],
+                completed_feedback["message"],
+                completed_feedback.get("result", {}),
+            )
 
         # 更新敌人
         robot_pos = {'x': self.robot.x, 'y': self.robot.y, 'angle': self.robot.angle}
@@ -287,6 +392,40 @@ class ChaseSimulator:
                 action = self.action_queue.get_nowait()
                 self.robot.execute_action(action)
         except:
+            pass
+
+        # 处理高层技能命令
+        self.skill_command_subscriber.spin_once(timeout_sec=0.001)
+        if self.active_timed_skill is not None and time.time() >= self.active_timed_skill["end_time"]:
+            publish_execution_feedback(
+                self.active_timed_skill["action_id"],
+                self.active_timed_skill["skill"],
+                self.active_timed_skill["signal"],
+                self.active_timed_skill["message"],
+                self.active_timed_skill.get("result", {}),
+            )
+            self.active_timed_skill = None
+
+        try:
+            if (
+                self.active_timed_skill is None
+                and self.robot.pending_motion_feedback is None
+                and not self.robot.is_moving
+                and not self.skill_command_queue.empty()
+            ):
+                skill_command = self.skill_command_queue.get_nowait()
+                execution = self.robot.execute_skill_command(skill_command)
+                if execution and execution.get("mode") == "timed":
+                    self.active_timed_skill = execution
+                elif execution and execution.get("mode") == "feedback":
+                    publish_execution_feedback(
+                        execution["action_id"],
+                        execution["skill"],
+                        execution["signal"],
+                        execution["message"],
+                        execution.get("result", {}),
+                    )
+        except queue.Empty:
             pass
 
         # 处理敌人清除命令

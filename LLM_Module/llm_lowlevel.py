@@ -101,6 +101,28 @@ class LowLevelExecutor:
                 print(f"⚠️  [函数偏差] 规划建议 {suggested_function}，实际调用 {function_name}")
             print(f"🔧 [工具调用] {function_name}({function_args})")
             result = execute_tool_fn(function_name, function_args)
+            if result.get("error"):
+                return {
+                    "success": False,
+                    "action": function_name,
+                    "task": task_description,
+                    "task_type": task_type,
+                    "suggested_function": suggested_function,
+                    "planning_reason": planning_reason,
+                    "llm_message": response_content,
+                    "result": result,
+                    "feedback": {
+                        "signal": "FAILURE",
+                        "skill": function_name,
+                        "message": result["error"],
+                    },
+                }
+
+            feedback = result.get("feedback", {})
+            if feedback:
+                signal = feedback.get("signal", "UNKNOWN")
+                message = feedback.get("message", "")
+                print(f"📨 [执行反馈] {signal} - {message}")
 
             if result and result.get("delay"):
                 delay = result["delay"]
@@ -112,13 +134,14 @@ class LowLevelExecutor:
                 print(" ✅ 完成!")
 
             return {
-                "success": True,
+                "success": result.get("success", True),
                 "action": function_name,
                 "task": task_description,
                 "task_type": task_type,
                 "suggested_function": suggested_function,
                 "planning_reason": planning_reason,
                 "llm_message": response_content,
+                "feedback": feedback,
                 "result": result,
             }
         except Exception as error:
