@@ -21,7 +21,7 @@ class VLMCore:
         self,
         api_key: str | None = None,
         base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1",
-        model: str = "qwen-vl-plus",
+        model: str = "qwen3-vl-plus",
         Video_Port: int | str = DEFAULT_VIDEO_PORT,
         default_image: str | None = DEFAULT_IMAGE_PATH,
     ):

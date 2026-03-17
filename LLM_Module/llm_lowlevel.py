@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sys
 import time
 from pathlib import Path
@@ -11,6 +12,7 @@ import yaml
 
 class LowLevelExecutor:
     """下层 LLM：负责根据单个任务调用工具。"""
+    CLIMB_LIMIT_METERS = 0.3
 
     def __init__(self, client, model: str, prompt_path: str | None = None):
         self.client = client
@@ -36,6 +38,70 @@ class LowLevelExecutor:
             "system_prompt": str(data.get("system_prompt", "")).strip(),
             "user_prompt": str(data.get("user_prompt", "")).strip(),
         }
+
+    @staticmethod
+    def _to_float(value: Any) -> float | None:
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _extract_heights(text: str) -> list[float]:
+        if not text:
+            return []
+        return [float(v) for v in re.findall(r"(\d+(?:\.\d+)?)\s*米", text)]
+
+    @classmethod
+    def _extract_previous_height(cls, previous_result: Any) -> float | None:
+        if not isinstance(previous_result, dict):
+            return None
+
+        for key in ("height", "box_height"):
+            value = cls._to_float(previous_result.get(key))
+            if value is not None and value > 0:
+                return value
+        return None
+
+    @classmethod
+    def _coerce_climb_height(
+        cls,
+        function_args: dict[str, Any],
+        task_description: str,
+        previous_result: Any,
+    ) -> tuple[dict[str, Any], str | None]:
+        requested = cls._to_float(function_args.get("height"))
+        if requested is None or requested <= cls.CLIMB_LIMIT_METERS:
+            return function_args, None
+
+        heights = cls._extract_heights(task_description)
+        previous_height = cls._extract_previous_height(previous_result)
+        candidate_height = None
+
+        if "箱子" in task_description and heights:
+            target_height = max(heights)
+
+            if previous_height is not None and target_height > previous_height:
+                remaining_height = round(target_height - previous_height, 3)
+                if 0 < remaining_height <= cls.CLIMB_LIMIT_METERS:
+                    candidate_height = remaining_height
+
+            if candidate_height is None and len(heights) >= 2:
+                base_height = min(heights)
+                remaining_height = round(max(heights) - base_height, 3)
+                if 0 < remaining_height <= cls.CLIMB_LIMIT_METERS:
+                    candidate_height = remaining_height
+
+        if candidate_height is None:
+            return function_args, None
+
+        repaired_args = dict(function_args)
+        repaired_args["height"] = candidate_height
+        message = (
+            f"climb.height 从 {requested:.2f} 米修正为 {candidate_height:.2f} 米，"
+            f"按单步攀爬高度执行（上限 {cls.CLIMB_LIMIT_METERS:.2f} 米）"
+        )
+        return repaired_args, message
 
     def execute_single_task(
         self,
@@ -97,6 +163,14 @@ class LowLevelExecutor:
             tool_call = tool_calls[0]
             function_name = tool_call.function.name
             function_args = json.loads(tool_call.function.arguments)
+            if function_name == "climb":
+                function_args, correction_message = self._coerce_climb_height(
+                    function_args=function_args,
+                    task_description=task_description,
+                    previous_result=previous_result,
+                )
+                if correction_message:
+                    print(f"🛠️  [参数修正] {correction_message}")
             if suggested_function != "待LLM决定" and function_name != suggested_function:
                 print(f"⚠️  [函数偏差] 规划建议 {suggested_function}，实际调用 {function_name}")
             print(f"🔧 [工具调用] {function_name}({function_args})")
