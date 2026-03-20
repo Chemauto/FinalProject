@@ -19,6 +19,7 @@ class HighLevelPlanner:
         root = Path(__file__).resolve().parent
         self.prompt_path = Path(prompt_path) if prompt_path else root / "prompts" / "highlevel_prompt.yaml"
         self.last_summary = ""
+        self.last_plan_metadata: dict[str, object] = {}
 
     def load_prompt(self) -> dict[str, str]:
         if not self.prompt_path.exists():
@@ -32,13 +33,22 @@ class HighLevelPlanner:
             "prompt": str(data.get("prompt", "")).strip(),
         }
 
-    def plan_tasks(self, user_input: str, planning_prompt: str, visual_context: str | None = None) -> list[dict]:
+    def plan_tasks(
+        self,
+        user_input: str,
+        planning_prompt: str,
+        visual_context: str | None = None,
+        scene_facts: dict | None = None,
+        replan_context: dict | None = None,
+    ) -> list[dict]:
         print("\n" + "=" * 60 + "\n🧠 [上层LLM] 任务规划中...\n" + "=" * 60)
         prompts = self.load_prompt()
         try:
             user_content = planning_prompt.format(
                 user_input=user_input,
                 visual_context=visual_context if visual_context else "无",
+                scene_facts=json.dumps(scene_facts or {}, ensure_ascii=False),
+                replan_context=json.dumps(replan_context or {}, ensure_ascii=False),
             )
 
             completion = self.client.chat.completions.create(
@@ -57,13 +67,23 @@ class HighLevelPlanner:
                     response_text = response_text[4:]
 
             plan = json.loads(response_text)
-            tasks = [self._normalize_task(task, idx) for idx, task in enumerate(plan.get("tasks", []), 1)]
-            summary = plan.get("summary", "")
+            tasks, plan_meta = self.parse_plan_response(plan)
+            summary = str(plan_meta.get("summary", ""))
+            tasks, summary, override_meta = self._apply_scene_rule_overrides(tasks, summary, scene_facts)
+            if override_meta:
+                plan_meta.update(override_meta)
             if not tasks:
-                tasks, summary = self._build_navigation_fallback(user_input, visual_context)
+                tasks, summary = self._build_navigation_fallback(user_input, visual_context, scene_facts=scene_facts)
                 if tasks:
                     print("⚠️  [规划兜底] LLM 返回空任务，已根据视觉上下文生成导航步骤")
+                plan_meta = {
+                    "scene_assessment": "",
+                    "candidate_plans": [],
+                    "selected_plan_id": "fallback_plan",
+                    "summary": summary,
+                }
             self.last_summary = summary
+            self.last_plan_metadata = plan_meta
             print(f"✅ [规划完成] 共分解为 {len(tasks)} 个子任务\n📋 [任务概述] {summary}\n\n子任务序列：")
             for task in tasks:
                 print(f"  步骤 {task['step']}: {task['task']} ({task['type']})")
@@ -71,9 +91,19 @@ class HighLevelPlanner:
                 print(f"    规划依据: {task['reason']}")
             return tasks
         except Exception as error:
-            fallback_tasks, fallback_summary = self._build_navigation_fallback(user_input, visual_context)
+            fallback_tasks, fallback_summary = self._build_navigation_fallback(
+                user_input,
+                visual_context,
+                scene_facts=scene_facts,
+            )
             if fallback_tasks:
                 self.last_summary = fallback_summary
+                self.last_plan_metadata = {
+                    "scene_assessment": "",
+                    "candidate_plans": [],
+                    "selected_plan_id": "fallback_plan",
+                    "summary": fallback_summary,
+                }
                 print(f"⚠️  [规划失败] {error}\n[规划兜底] 已根据视觉上下文生成导航步骤")
                 print(f"📋 [任务概述] {fallback_summary}\n\n子任务序列：")
                 for task in fallback_tasks:
@@ -84,7 +114,47 @@ class HighLevelPlanner:
 
             print(f"❌ [规划失败] {error}\n[回退] 将作为单个任务处理")
             self.last_summary = "规划失败，按单个任务处理"
+            self.last_plan_metadata = {
+                "scene_assessment": "",
+                "candidate_plans": [],
+                "selected_plan_id": "default_plan",
+                "summary": self.last_summary,
+            }
             return [self._normalize_task({"step": 1, "task": user_input, "type": "综合"}, 1)]
+
+    def parse_plan_response(self, payload: dict) -> tuple[list[dict], dict[str, object]]:
+        raw_tasks = payload.get("tasks", [])
+        tasks = [self._normalize_task(task, idx) for idx, task in enumerate(raw_tasks, 1)]
+        meta = {
+            "scene_assessment": str(payload.get("scene_assessment", "")).strip(),
+            "candidate_plans": payload.get("candidate_plans", []) or [],
+            "selected_plan_id": str(payload.get("selected_plan_id", "default_plan")).strip() or "default_plan",
+            "summary": str(payload.get("summary", "")).strip(),
+        }
+        return tasks, meta
+
+    def _apply_scene_rule_overrides(
+        self,
+        tasks: list[dict],
+        summary: str,
+        scene_facts: dict | None,
+    ) -> tuple[list[dict], str, dict[str, object] | None]:
+        single_climb = self._detect_single_climb_side(scene_facts)
+        if not single_climb:
+            return tasks, summary, None
+
+        climb_side, climb_height = single_climb
+        has_climb = any(task.get("function") == "climb" for task in tasks)
+        if has_climb:
+            return tasks, summary, None
+
+        override_tasks, override_summary = self._build_single_climb_plan(climb_side, climb_height)
+        override_meta = {
+            "selected_plan_id": "rule_override_single_climb",
+            "summary": override_summary,
+        }
+        print("⚠️  [规则修正] 检测到仅单侧可攀爬场景，已将 walk 规划修正为 climb")
+        return override_tasks, override_summary, override_meta
 
     @staticmethod
     def _normalize_task(task: dict, default_step: int) -> dict:
@@ -97,12 +167,21 @@ class HighLevelPlanner:
             "reason": task.get("reason", "未提供规划依据"),
         }
 
-    def _build_navigation_fallback(self, user_input: str, visual_context: str | None) -> tuple[list[dict], str]:
+    def _build_navigation_fallback(
+        self,
+        user_input: str,
+        visual_context: str | None,
+        scene_facts: dict | None = None,
+    ) -> tuple[list[dict], str]:
         """当上层 LLM 返回空任务或异常时，基于规则生成导航步骤。"""
         if not self._is_navigation_request(user_input):
             return [], "无效输入，无法分解任务"
 
         context = visual_context or ""
+
+        single_climb = self._detect_single_climb_side(scene_facts)
+        if single_climb:
+            return self._build_single_climb_plan(*single_climb)
 
         if self._is_box_assisted_scene(context):
             box_side = self._detect_box_side(context)
@@ -234,6 +313,69 @@ class HighLevelPlanner:
                 )
             ],
             "基于当前视觉上下文未发现必须换道的关键障碍，直接行走到目标点",
+        )
+
+    def _detect_single_climb_side(self, scene_facts: dict | None) -> tuple[str, float] | None:
+        if not scene_facts:
+            return None
+
+        interactive_objects = scene_facts.get("interactive_objects") or []
+        if interactive_objects:
+            return None
+
+        constraints = scene_facts.get("constraints") or {}
+        climb_limit = float(constraints.get("max_climb_height_m", 0.3))
+        terrain_features = scene_facts.get("terrain_features") or []
+        features_by_side = {
+            feature.get("side"): feature
+            for feature in terrain_features
+            if feature.get("side") in {"left", "right"}
+        }
+        if len(features_by_side) < 2:
+            return None
+
+        climbable_side = None
+        blocked_other_side = False
+        for side, feature in features_by_side.items():
+            height = float(feature.get("height_m") or 0.0)
+            feature_type = str(feature.get("type", ""))
+            traversable = bool(feature.get("traversable"))
+            if feature_type == "platform" and 0 < height <= climb_limit and traversable:
+                climbable_side = (side, round(height, 3))
+            elif height > climb_limit or not traversable:
+                blocked_other_side = True
+
+        if climbable_side and blocked_other_side:
+            return climbable_side
+        return None
+
+    def _build_single_climb_plan(self, climb_side: str, climb_height: float) -> tuple[list[dict], str]:
+        side_label = "左侧" if climb_side == "left" else "右侧"
+        height_label = f"{climb_height:.1f}".rstrip("0").rstrip(".")
+        return (
+            [
+                self._normalize_task(
+                    {
+                        "step": 1,
+                        "task": f"{side_label}高台约{height_label}米且在单步攀爬上限内。先播报环境并选择{side_label}路线",
+                        "type": "路线选择",
+                        "function": "way_select",
+                        "reason": f"{side_label}是唯一可通过攀爬到达的路线，需先切换到{side_label}入口",
+                    },
+                    1,
+                ),
+                self._normalize_task(
+                    {
+                        "step": 2,
+                        "task": f"攀爬约{height_label}米到{side_label}高台",
+                        "type": "攀爬",
+                        "function": "climb",
+                        "reason": f"{side_label}高台高度约{height_label}米，满足单步攀爬上限，应使用 climb 而不是直接 walk",
+                    },
+                    2,
+                ),
+            ],
+            f"根据结构化场景判断，仅{side_label}约{height_label}米高台可攀爬，先选择{side_label}路线再执行攀爬",
         )
 
     def _is_navigation_request(self, user_input: str) -> bool:

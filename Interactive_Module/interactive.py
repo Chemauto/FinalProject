@@ -162,6 +162,8 @@ def load_dynamic_prompt(prompt_path, tools):
         robot_config=robot_config,
         available_skills=available_skills,
         visual_context="{visual_context}",
+        scene_facts="{scene_facts}",
+        replan_context="{replan_context}",
         user_input="{user_input}"  # 保留占位符
     )
 
@@ -238,10 +240,15 @@ def process_user_input(user_input: str, llm_agent, tools, vlm_core=None) -> bool
         return False
 
     visual_context = None
+    scene_facts = None
     if vlm_core is not None:
         try:
             visual_context = vlm_core.describe()
             print(f"[VLM] 当前视觉描述: {visual_context}", file=sys.stderr)
+            if hasattr(vlm_core, "describe_scene_facts"):
+                scene_facts = vlm_core.describe_scene_facts()
+            elif hasattr(vlm_core, "describe_structured"):
+                scene_facts = VLMCore.build_scene_facts(vlm_core.describe_structured())
         except Exception as error:
             print(f"[VLM] 视觉描述失败，继续仅使用文字输入: {error}", file=sys.stderr)
 
@@ -250,6 +257,7 @@ def process_user_input(user_input: str, llm_agent, tools, vlm_core=None) -> bool
         tools=tools,
         execute_tool_fn=execute_tool,
         visual_context=visual_context,
+        scene_facts=scene_facts,
     )
 
     if results:

@@ -41,8 +41,21 @@ class LLMAgent:
         data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
         return str(data.get("prompt", "")).strip()
 
-    def plan_tasks(self, user_input: str, tools: list[dict], visual_context: str | None = None) -> list[dict]:
-        return self.highlevel.plan_tasks(user_input, self.planning_prompt_template, visual_context)
+    def plan_tasks(
+        self,
+        user_input: str,
+        tools: list[dict],
+        visual_context: str | None = None,
+        scene_facts: dict[str, Any] | None = None,
+        replan_context: dict[str, Any] | None = None,
+    ) -> list[dict]:
+        return self.highlevel.plan_tasks(
+            user_input,
+            self.planning_prompt_template,
+            visual_context,
+            scene_facts=scene_facts,
+            replan_context=replan_context,
+        )
 
     def execute_single_task(
         self,
@@ -60,10 +73,11 @@ class LLMAgent:
         tools: list[dict],
         execute_tool_fn: Callable,
         visual_context: str | None = None,
+        scene_facts: dict[str, Any] | None = None,
     ) -> list[dict]:
         print("\n" + "█" * 60 + f"\n📥 [用户输入] {user_input}\n" + "█" * 60)
         try:
-            tasks = self.plan_tasks(user_input, tools, visual_context)
+            tasks = self.plan_tasks(user_input, tools, visual_context, scene_facts=scene_facts)
             if not tasks:
                 return []
 
@@ -74,9 +88,14 @@ class LLMAgent:
             print("\n" + "█" * 60 + "\n🤖 [下层LLM] 开始执行与工具决策\n" + "█" * 60)
             results = []
             previous_result = None
+            completed_tasks: list[dict] = []
+            replan_attempts = 0
+            active_tasks = tasks
+            idx = 0
 
-            for idx, task in enumerate(tasks, 1):
-                print(f"\n【步骤 {idx}/{len(tasks)}】")
+            while idx < len(active_tasks):
+                task = active_tasks[idx]
+                print(f"\n【步骤 {idx + 1}/{len(active_tasks)}】")
                 print(f"📌 [规划函数] {task.get('function', '待LLM决定')}")
                 print(f"📝 [规划依据] {task.get('reason', '未提供规划依据')}")
                 result = self.execute_single_task(task, tools, execute_tool_fn, previous_result, visual_context)
@@ -84,26 +103,50 @@ class LLMAgent:
 
                 tool_output = result.get("result", {})
                 if result.get("success") and tool_output:
+                    completed_tasks.append(task)
                     previous_result = tool_output.get("result")
                     feedback = result.get("feedback", {})
                     if feedback:
                         print(f"✅ [反馈确认] {feedback.get('skill', '当前技能')} 已返回成功信号，继续下一步")
+                    idx += 1
                 else:
                     previous_result = None
 
                 if not result.get("success"):
                     feedback = result.get("feedback", {})
+                    if feedback and replan_attempts < 1:
+                        replan_attempts += 1
+                        replan_context = self._build_replan_context(
+                            user_input=user_input,
+                            scene_facts=scene_facts,
+                            completed_tasks=completed_tasks,
+                            failed_task=task,
+                            failure_feedback=feedback,
+                        )
+                        replanned_tasks = self.plan_tasks(
+                            user_input,
+                            tools,
+                            visual_context,
+                            scene_facts=scene_facts,
+                            replan_context=replan_context,
+                        )
+                        if replanned_tasks:
+                            print("\n🔁 [重规划] 已根据失败反馈生成替代计划，继续执行")
+                            active_tasks = replanned_tasks
+                            idx = 0
+                            continue
                     if feedback:
                         print(f"\n⚠️  [中止] 未收到成功反馈: {feedback.get('message', '当前步骤执行失败')}")
                     else:
-                        print(f"\n⚠️  [中止] 步骤 {idx} 执行失败，停止后续任务")
+                        print(f"\n⚠️  [中止] 步骤 {idx + 1} 执行失败，停止后续任务")
                     break
 
             print("\n" + "█" * 60 + "\n✅ [执行完成] 任务总结\n" + "█" * 60)
-            for idx, (task, result) in enumerate(zip(tasks, results), 1):
+            for idx, result in enumerate(results, 1):
                 status = "✅ 成功" if result.get("success") else "❌ 失败"
                 action = result.get("action", "未调用")
-                print(f"  {idx}. {task['task']} -> {action} - {status}")
+                task_label = result.get("task", "未记录任务")
+                print(f"  {idx}. {task_label} -> {action} - {status}")
             return results
         except Exception as error:
             print(f"\n❌ [错误] {type(error).__name__}: {error}")
@@ -111,6 +154,24 @@ class LLMAgent:
 
             traceback.print_exc()
             return []
+
+    def _build_replan_context(
+        self,
+        user_input: str,
+        scene_facts: dict[str, Any] | None,
+        completed_tasks: list[dict],
+        failed_task: dict,
+        failure_feedback: dict[str, Any],
+    ) -> dict[str, Any]:
+        plan_metadata = getattr(self.highlevel, "last_plan_metadata", {}) or {}
+        return {
+            "user_goal": user_input,
+            "scene_facts": scene_facts or {},
+            "completed_tasks": list(completed_tasks),
+            "failed_task": failed_task,
+            "failure_feedback": failure_feedback,
+            "current_plan_id": plan_metadata.get("selected_plan_id", "default_plan"),
+        }
 
     def _build_task_understanding(self, user_input: str, tasks: list[dict]) -> str:
         """根据用户目标和 LLM 规划结果生成简洁的 LLM 思考输出。"""
