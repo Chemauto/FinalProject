@@ -24,7 +24,6 @@ system_prompt: |
   12. 如果给出了 `calculated_parameters`，优先使用它们；尤其是 climb.height、push_box.target_position、way_select.direction 不要擅自改写
   13. 如果给出了 `parameter_context`，先理解对象关系，再决定是否补充缺省参数
   14. 在调用工具前，先用一句中文简要说明“为什么调用这个函数”，然后再发起工具调用
-  15. 如果当前步骤来自重规划后的替代方案，优先执行当前替代步骤，不要回退到失败的旧计划
 
 user_prompt: |
   执行任务：{task_description}

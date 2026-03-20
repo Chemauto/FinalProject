@@ -44,7 +44,7 @@ async def _wait_skill_feedback(
     parameters: dict[str, Any],
     local_success_message: str,
     wait_feedback: bool = True,
-    timeout_sec: float = 10.0,
+    timeout_sec: float = 20.0,
 ) -> dict[str, Any]:
     """发送技能命令并等待反馈。"""
     if not wait_feedback:
@@ -454,7 +454,7 @@ def register_tools(mcp):
         )
         return json.dumps(result, ensure_ascii=False)
 
-    print("[navigation_demo.py:register_tools] 导航技能模块已注册 (4 个工具)", file=sys.stderr)
+    print("[navigation.py:register_tools] 导航技能模块已注册 (4 个工具)", file=sys.stderr)
 
     return {
         "walk": walk,

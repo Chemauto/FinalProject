@@ -222,7 +222,7 @@ def publish_execution_feedback(
 
 async def wait_for_execution_feedback(
     action_id: str,
-    timeout_sec: float = 10.0,
+    timeout_sec: float = 20.0,
     poll_interval: float = 0.05,
 ) -> dict:
     """异步等待某个 action_id 的执行反馈。"""

@@ -40,12 +40,9 @@ _tool_metadata = {}
 # ==============================================================================
 # 2. 导入各功能模块（此时 mcp 已可用）
 # ==============================================================================
-from module.base import register_tools as register_base_tools
-# from module.vision import register_tools as register_vision_tools
-from module.chase import register_tools as register_chase_tools
 from module.example import register_tools as register_example_tools
 from module.walkisaacsim import register_tools as register_walk_tools
-from module.navigation_demo import register_tools as register_navigation_demo_tools
+from module.navigation import register_tools as register_navigation_tools
 
 # ==============================================================================
 # 3. 工具注册和元数据提取
@@ -120,9 +117,9 @@ def register_all_modules():
     # chase_tools = register_chase_tools(mcp)
     # _tool_registry.update(chase_tools)
 
-    # 注册四足导航 demo 模块（返回工具函数映射）
-    navigation_demo_tools = register_navigation_demo_tools(mcp)
-    _tool_registry.update(navigation_demo_tools)
+    # 注册四足导航模块（返回工具函数映射）
+    navigation_tools = register_navigation_tools(mcp)
+    _tool_registry.update(navigation_tools)
 
     # # 注册 IsaacSim 行走模块（返回工具函数映射）
     # walk_tools = register_walk_tools(mcp)

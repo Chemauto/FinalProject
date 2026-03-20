@@ -75,9 +75,6 @@ prompt: |
   结构化物体真值（若为空对象，表示当前没有外部几何真值）：
   {object_facts}
 
-  如果当前是重规划，下面会给出失败反馈和已完成步骤；如果不是重规划，该字段为空对象：
-  {replan_context}
-
   输出要求：
   - 先给出 `scene_assessment`
   - 再给出 2 到 3 个 `candidate_plans`

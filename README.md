@@ -1,31 +1,79 @@
 # FinalProject
 
-这是一个基于 LLM 决策的四足机器人导航项目，面向 Unitree Go2。  
-系统当前包含语音/文字输入、视觉环境理解、双层 LLM 规划与执行，以及机器人技能调用几个部分。
+基于 LLM 决策的四足机器人导航项目，面向 Unitree Go2。
 
-目前机器人对外保留 4 个技能：
+## 当前能力
+
+系统当前只对外暴露 4 个技能：
 
 - `walk`
 - `climb`
 - `push_box`
 - `way_select`
 
-其中最大攀爬高度为 `0.3 m`。当前版本以 demo 为主，技能执行先用打印方式模拟，后续会逐步替换为 IsaacLab 训练策略和真实机器人控制。
+关键约束：
 
-## 最终目标
+- 最大单步攀爬高度：`0.3 m`
+- 技能执行反馈默认等待：`20 秒`
+- 执行失败后：直接停止后续任务，不再重规划
 
-最终希望实现这样的完整流程：
+## 当前主链路
 
-1. 用户通过语音下达指令，例如“前往前方目标点”
-2. 机器人结合当前环境进行理解
-3. LLM 根据地形和已有技能做出简单、快速的决策
-4. 机器人先说出自己的判断结果和准备调用的技能
-5. 再自动执行对应技能，到达目标点
+`user_input -> VLM -> scene_facts -> highlevel plan -> parameter calculation -> lowlevel execution -> tool result`
 
-例如：
+其中：
 
-- 如果一侧无障碍，优先直接行走
-- 如果高台在可攀爬范围内，调用攀爬技能
-- 如果高台过高但有可推动箱子，调用推箱子加攀爬的组合方案
+- `Interactive_Module/interactive.py`：交互入口
+- `VLM_Module/vlm_core.py`：图像转结构化视觉描述
+- `LLM_Module/llm_highlevel.py`：高层规划
+- `LLM_Module/parameter_calculator.py`：参数计算
+- `LLM_Module/llm_lowlevel.py`：低层执行
+- `Robot_Module/module/navigation.py`：导航技能实现
 
-当前项目重点就是把“环境理解 -> LLM 思考 -> 技能选择 -> 技能执行”这条链路逐步打通。
+## 输入方式
+
+系统同时使用两类输入：
+
+1. `visual_context`
+   - 来自 VLM 的结构化视觉描述
+2. `object_facts`
+   - 来自 `config/object_facts.json` 的几何真值
+
+`object_facts` 优先级高于 VLM，适合直接提供：
+
+- `navigation_goal`
+- `robot_pose`
+- `constraints`
+- `objects`
+
+示例文件：
+
+- `config/object_facts.example.json`
+
+## 当前规划逻辑
+
+- 单侧可攀爬：`way_select -> climb`
+- 箱子辅助攀爬：`way_select -> push_box -> climb -> climb -> walk`
+- 如果任务里已经有 `calculated_parameters`，低层直接执行，不再重新猜参数
+
+## 常用入口
+
+交互运行：
+
+```bash
+cd /home/robot/work/FinalProject/Interactive_Module
+python interactive.py
+```
+
+导航模块本地 demo：
+
+```bash
+python3 Robot_Module/module/navigation.py case2
+python3 Robot_Module/module/navigation.py case4
+```
+
+## 相关文档
+
+- `LLM_Module/README.md`
+- `Robot_Module/README.md`
+- `VLM_Module/prompts/VlmPrompt.yaml`

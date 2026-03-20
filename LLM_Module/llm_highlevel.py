@@ -40,7 +40,6 @@ class HighLevelPlanner:
         visual_context: str | None = None,
         scene_facts: dict | None = None,
         object_facts: dict | None = None,
-        replan_context: dict | None = None,
     ) -> list[dict]:
         print("\n" + "=" * 60 + "\n🧠 [上层LLM] 任务规划中...\n" + "=" * 60)
         prompts = self.load_prompt()
@@ -50,7 +49,6 @@ class HighLevelPlanner:
                 visual_context=visual_context if visual_context else "无",
                 scene_facts=json.dumps(scene_facts or {}, ensure_ascii=False),
                 object_facts=json.dumps(object_facts or {}, ensure_ascii=False),
-                replan_context=json.dumps(replan_context or {}, ensure_ascii=False),
             )
 
             completion = self.client.chat.completions.create(

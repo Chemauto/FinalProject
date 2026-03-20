@@ -166,7 +166,6 @@ def load_dynamic_prompt(prompt_path, tools):
         visual_context="{visual_context}",
         scene_facts="{scene_facts}",
         object_facts="{object_facts}",
-        replan_context="{replan_context}",
         user_input="{user_input}"  # 保留占位符
     )
 

@@ -102,3 +102,14 @@ htmlcov/
 *.bak
 *.swp
 .worktrees/
+
+# ========================================
+# 本地忽略目录（用户要求）
+# 仅影响未跟踪文件；已跟踪文件的修改/删除仍会出现在 git status
+# ========================================
+docs/
+tests/
+Sim_Module/
+Robot_Module/module/base.py
+Robot_Module/module/chase.py
+Robot_Module/module/navigation_demo.py
