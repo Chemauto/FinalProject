@@ -13,9 +13,11 @@ import yaml
 try:
     from .llm_highlevel import HighLevelPlanner
     from .llm_lowlevel import LowLevelExecutor
+    from .parameter_calculator import ParameterCalculator
 except ImportError:
     from llm_highlevel import HighLevelPlanner
     from llm_lowlevel import LowLevelExecutor
+    from parameter_calculator import ParameterCalculator
 
 
 class LLMAgent:
@@ -31,6 +33,7 @@ class LLMAgent:
         self.model = "qwen3-max-2025-09-23"
         self.highlevel = HighLevelPlanner(self.client, self.model, prompt_path=prompt_path)
         self.lowlevel = LowLevelExecutor(self.client, self.model)
+        self.parameter_calculator = ParameterCalculator()
         self.planning_prompt_template = self.load_prompt(prompt_path)
 
     def load_prompt(self, prompt_path: str | None = None) -> str:
@@ -47,6 +50,7 @@ class LLMAgent:
         tools: list[dict],
         visual_context: str | None = None,
         scene_facts: dict[str, Any] | None = None,
+        object_facts: dict[str, Any] | None = None,
         replan_context: dict[str, Any] | None = None,
     ) -> list[dict]:
         return self.highlevel.plan_tasks(
@@ -54,6 +58,7 @@ class LLMAgent:
             self.planning_prompt_template,
             visual_context,
             scene_facts=scene_facts,
+            object_facts=object_facts,
             replan_context=replan_context,
         )
 
@@ -74,14 +79,22 @@ class LLMAgent:
         execute_tool_fn: Callable,
         visual_context: str | None = None,
         scene_facts: dict[str, Any] | None = None,
+        object_facts: dict[str, Any] | None = None,
     ) -> list[dict]:
         print("\n" + "█" * 60 + f"\n📥 [用户输入] {user_input}\n" + "█" * 60)
         try:
-            tasks = self.plan_tasks(user_input, tools, visual_context, scene_facts=scene_facts)
+            tasks = self.plan_tasks(
+                user_input,
+                tools,
+                visual_context,
+                scene_facts=scene_facts,
+                object_facts=object_facts,
+            )
             if not tasks:
                 return []
+            active_tasks = self._apply_parameter_calculation(tasks, object_facts)
 
-            task_understanding = self._build_task_understanding(user_input, tasks)
+            task_understanding = self._build_task_understanding(user_input, active_tasks)
             if task_understanding:
                 print("\n" + "─" * 60 + f"\n👁️ [LLM思考]\n{task_understanding}\n" + "─" * 60)
 
@@ -90,7 +103,6 @@ class LLMAgent:
             previous_result = None
             completed_tasks: list[dict] = []
             replan_attempts = 0
-            active_tasks = tasks
             idx = 0
 
             while idx < len(active_tasks):
@@ -128,11 +140,12 @@ class LLMAgent:
                             tools,
                             visual_context,
                             scene_facts=scene_facts,
+                            object_facts=object_facts,
                             replan_context=replan_context,
                         )
                         if replanned_tasks:
                             print("\n🔁 [重规划] 已根据失败反馈生成替代计划，继续执行")
-                            active_tasks = replanned_tasks
+                            active_tasks = self._apply_parameter_calculation(replanned_tasks, object_facts)
                             idx = 0
                             continue
                     if feedback:
@@ -154,6 +167,15 @@ class LLMAgent:
 
             traceback.print_exc()
             return []
+
+    def _apply_parameter_calculation(
+        self,
+        tasks: list[dict],
+        object_facts: dict[str, Any] | None,
+    ) -> list[dict]:
+        if not object_facts:
+            return tasks
+        return self.parameter_calculator.annotate_tasks(tasks, object_facts)
 
     def _build_replan_context(
         self,

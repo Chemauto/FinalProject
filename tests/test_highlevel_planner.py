@@ -85,6 +85,50 @@ class HighLevelPlannerTests(unittest.TestCase):
         self.assertIn("0.2米", tasks[1]["task"])
         self.assertIn("攀爬", summary)
 
+    def test_build_navigation_fallback_prefers_box_assist_from_object_facts(self):
+        planner = HighLevelPlanner(client=None, model="test")
+        scene_facts = {
+            "terrain_features": [
+                {"side": "left", "type": "platform", "height_m": 0.4, "traversable": False, "description": "左侧0.4米高台"},
+            ],
+            "interactive_objects": [
+                {"name": "box1", "side": "left", "height_m": 0.2, "movable": True, "usable_as_step": True},
+            ],
+            "route_options": [
+                {"direction": "left", "status": "blocked", "reason": "左侧0.4米高台"},
+            ],
+            "constraints": {
+                "max_climb_height_m": 0.3,
+                "push_only_on_ground": True,
+                "climb_requires_adjacency": True,
+            },
+        }
+        object_facts = {
+            "navigation_goal": [5.0, 0.0, 0.0],
+            "robot_pose": [0.0, 0.0, 0.0],
+            "constraints": {
+                "max_climb_height_m": 0.3,
+                "push_only_on_ground": True,
+                "climb_requires_adjacency": True,
+            },
+            "objects": [
+                {"id": "box1", "type": "box", "center": [2.3, 0.25, 0.0], "size": [0.8, 0.5, 0.2], "movable": True},
+                {"id": "platform_front", "type": "platform", "center": [3.5, 0.12, 0.0], "size": [0.6, 0.6, 0.4], "movable": False},
+            ],
+        }
+
+        tasks, summary = planner._build_navigation_fallback(
+            "前往目标点",
+            "左侧有0.2米箱子，前方有0.4米高台",
+            scene_facts=scene_facts,
+            object_facts=object_facts,
+        )
+
+        self.assertEqual([task["function"] for task in tasks], ["way_select", "push_box", "climb", "climb", "walk"])
+        self.assertIn("推箱子", tasks[1]["task"])
+        self.assertIn("箱子", tasks[2]["task"])
+        self.assertIn("攀爬", summary)
+
     def test_plan_tasks_overrides_walk_only_plan_in_single_climb_scene(self):
         scene_facts = {
             "terrain_features": [
@@ -135,6 +179,79 @@ class HighLevelPlannerTests(unittest.TestCase):
 
         self.assertEqual([task["function"] for task in tasks], ["way_select", "climb"])
         self.assertIn("0.2米", tasks[1]["task"])
+        self.assertIn("攀爬", planner.last_summary)
+
+    def test_plan_tasks_overrides_walk_only_plan_in_box_assisted_scene(self):
+        scene_facts = {
+            "terrain_features": [
+                {"side": "left", "type": "platform", "height_m": 0.4, "traversable": False, "description": "左侧0.4米高台"},
+                {"side": "right", "type": "platform", "height_m": 0.4, "traversable": False, "description": "右侧0.4米高台"},
+            ],
+            "interactive_objects": [
+                {"name": "box1", "side": "left", "height_m": 0.2, "movable": True, "usable_as_step": True},
+            ],
+            "route_options": [
+                {"direction": "left", "status": "blocked", "reason": "左侧0.4米高台"},
+                {"direction": "right", "status": "blocked", "reason": "右侧0.4米高台"},
+            ],
+            "constraints": {
+                "max_climb_height_m": 0.3,
+                "push_only_on_ground": True,
+                "climb_requires_adjacency": True,
+            },
+        }
+        object_facts = {
+            "navigation_goal": [5.0, 0.0, 0.0],
+            "robot_pose": [0.0, 0.0, 0.0],
+            "constraints": {
+                "max_climb_height_m": 0.3,
+                "push_only_on_ground": True,
+                "climb_requires_adjacency": True,
+            },
+            "objects": [
+                {"id": "box1", "type": "box", "center": [2.3, 0.25, 0.0], "size": [0.8, 0.5, 0.2], "movable": True},
+                {"id": "platform_front", "type": "platform", "center": [3.5, 0.12, 0.0], "size": [0.6, 0.6, 0.4], "movable": False},
+            ],
+        }
+
+        def create_completion(*, model, messages, temperature, extra_body):
+            return _FakeCompletion(
+                '{"tasks":['
+                '{"step":1,"task":"先选择左侧路线","type":"路线选择","function":"way_select","reason":"左侧更近"},'
+                '{"step":2,"task":"沿左侧路线直接行走到目标点","type":"行走","function":"walk","reason":"继续前进即可"}'
+                '],"summary":"选择左侧路线后直接行走"}'
+            )
+
+        fake_client = types.SimpleNamespace(
+            chat=types.SimpleNamespace(
+                completions=types.SimpleNamespace(create=create_completion)
+            )
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            prompt_path = Path(tmpdir) / "prompt.yaml"
+            prompt_path.write_text(
+                "system_prompt: |\n"
+                "  你是测试高层规划器。\n"
+                "prompt: |\n"
+                "  visual_context={visual_context}\n"
+                "  scene_facts={scene_facts}\n"
+                "  object_facts={object_facts}\n"
+                "  user_input={user_input}\n"
+                "  replan_context={replan_context}\n",
+                encoding="utf-8",
+            )
+            planner = HighLevelPlanner(client=fake_client, model="fake-model", prompt_path=str(prompt_path))
+            tasks = planner.plan_tasks(
+                "前往目标点",
+                planner.load_prompt()["prompt"],
+                visual_context="左侧有0.2米箱子，前方有0.4米高台",
+                scene_facts=scene_facts,
+                object_facts=object_facts,
+            )
+
+        self.assertEqual([task["function"] for task in tasks], ["way_select", "push_box", "climb", "climb", "walk"])
+        self.assertIn("推箱子", tasks[1]["task"])
         self.assertIn("攀爬", planner.last_summary)
 
 

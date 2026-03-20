@@ -9,6 +9,9 @@ class ReplanFlowTests(unittest.TestCase):
         agent = LLMAgent.__new__(LLMAgent)
         agent.highlevel = types.SimpleNamespace(last_summary="", last_plan_metadata={})
         agent.lowlevel = object()
+        agent.parameter_calculator = types.SimpleNamespace(
+            annotate_tasks=lambda tasks, object_facts: tasks
+        )
 
         plan_calls = []
         plan_sequence = [
@@ -32,9 +35,9 @@ class ReplanFlowTests(unittest.TestCase):
             ],
         ]
 
-        def fake_plan_tasks(self, user_input, tools, visual_context=None, scene_facts=None, replan_context=None):
+        def fake_plan_tasks(self, user_input, tools, visual_context=None, scene_facts=None, object_facts=None, replan_context=None):
             call_index = len(plan_calls)
-            plan_calls.append({"scene_facts": scene_facts, "replan_context": replan_context})
+            plan_calls.append({"scene_facts": scene_facts, "object_facts": object_facts, "replan_context": replan_context})
             self.highlevel.last_summary = "初始计划" if call_index == 0 else "重规划计划"
             self.highlevel.last_plan_metadata = {
                 "selected_plan_id": "plan_a" if call_index == 0 else "plan_b",
@@ -90,6 +93,9 @@ class ReplanFlowTests(unittest.TestCase):
         agent = LLMAgent.__new__(LLMAgent)
         agent.highlevel = types.SimpleNamespace(last_summary="", last_plan_metadata={})
         agent.lowlevel = object()
+        agent.parameter_calculator = types.SimpleNamespace(
+            annotate_tasks=lambda tasks, object_facts: tasks
+        )
 
         plan_calls = []
         plan_sequence = [
@@ -97,7 +103,7 @@ class ReplanFlowTests(unittest.TestCase):
             [{"step": 1, "task": "改走左侧", "type": "路线选择", "function": "way_select", "reason": "替代方案"}],
         ]
 
-        def fake_plan_tasks(self, user_input, tools, visual_context=None, scene_facts=None, replan_context=None):
+        def fake_plan_tasks(self, user_input, tools, visual_context=None, scene_facts=None, object_facts=None, replan_context=None):
             call_index = len(plan_calls)
             plan_calls.append({"replan_context": replan_context})
             self.highlevel.last_summary = "计划"

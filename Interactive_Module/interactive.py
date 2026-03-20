@@ -31,6 +31,7 @@ except ImportError:
     pass  # python-dotenv 未安装，跳过
 
 from LLM_Module.llm_core import LLMAgent
+from LLM_Module.object_facts_loader import load_object_facts
 from Robot_Module.skill import (
     get_skill_function,
     get_tool_definitions,
@@ -39,6 +40,7 @@ from Robot_Module.skill import (
 from VLM_Module.vlm_core import VLMCore
 
 ENABLE_VLM_CONTEXT = True
+DEFAULT_OBJECT_FACTS_PATH = project_root / "config" / "object_facts.json"
 
 
 def _normalize_tool_result(function_name: str, raw_result):
@@ -163,6 +165,7 @@ def load_dynamic_prompt(prompt_path, tools):
         available_skills=available_skills,
         visual_context="{visual_context}",
         scene_facts="{scene_facts}",
+        object_facts="{object_facts}",
         replan_context="{replan_context}",
         user_input="{user_input}"  # 保留占位符
     )
@@ -230,7 +233,7 @@ def show_welcome(llm_agent, tools, title="LLM Interactive Interface", input_hint
     print("="*60, file=sys.stderr)
 
 
-def process_user_input(user_input: str, llm_agent, tools, vlm_core=None) -> bool:
+def process_user_input(user_input: str, llm_agent, tools, vlm_core=None, object_facts_path: str | Path | None = None) -> bool:
     """处理一条用户输入。返回 False 表示退出。"""
     if not user_input:
         return True
@@ -241,16 +244,30 @@ def process_user_input(user_input: str, llm_agent, tools, vlm_core=None) -> bool
 
     visual_context = None
     scene_facts = None
+    object_facts = None
+
+    try:
+        object_facts = load_object_facts(object_facts_path or DEFAULT_OBJECT_FACTS_PATH)
+        if object_facts is not None:
+            print(f"[ObjectFacts] 已加载结构化物体信息: {object_facts_path or DEFAULT_OBJECT_FACTS_PATH}", file=sys.stderr)
+    except Exception as error:
+        print(f"[ObjectFacts] 读取失败，忽略结构化物体信息: {error}", file=sys.stderr)
+
     if vlm_core is not None:
         try:
-            visual_context = vlm_core.describe()
-            print(f"[VLM] 当前视觉描述: {visual_context}", file=sys.stderr)
-            if hasattr(vlm_core, "describe_scene_facts"):
-                scene_facts = vlm_core.describe_scene_facts()
-            elif hasattr(vlm_core, "describe_structured"):
-                scene_facts = VLMCore.build_scene_facts(vlm_core.describe_structured())
+            if hasattr(vlm_core, "describe_structured"):
+                structured_context = vlm_core.describe_structured()
+                visual_context = json.dumps(structured_context, ensure_ascii=False)
+                print(f"[VLM] 当前视觉描述: {visual_context}", file=sys.stderr)
+                scene_facts = VLMCore.build_scene_facts(structured_context)
+            else:
+                visual_context = vlm_core.describe()
+                print(f"[VLM] 当前视觉描述: {visual_context}", file=sys.stderr)
         except Exception as error:
             print(f"[VLM] 视觉描述失败，继续仅使用文字输入: {error}", file=sys.stderr)
+
+    if object_facts is not None:
+        scene_facts = VLMCore.merge_scene_facts(scene_facts, object_facts)
 
     results = llm_agent.run_pipeline(
         user_input=user_input,
@@ -258,6 +275,7 @@ def process_user_input(user_input: str, llm_agent, tools, vlm_core=None) -> bool
         execute_tool_fn=execute_tool,
         visual_context=visual_context,
         scene_facts=scene_facts,
+        object_facts=object_facts,
     )
 
     if results:

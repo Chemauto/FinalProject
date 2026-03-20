@@ -110,6 +110,17 @@ class VLMCore:
     def _is_clear_path(text: str) -> bool:
         return any(keyword in text for keyword in ("无障碍", "可通行", "畅通", "开阔"))
 
+    @staticmethod
+    def _infer_side_from_y(y_value: Any) -> str:
+        try:
+            return "left" if float(y_value) >= 0 else "right"
+        except (TypeError, ValueError):
+            return "unknown"
+
+    @staticmethod
+    def _format_height_label(height: float) -> str:
+        return f"{height:.1f}".rstrip("0").rstrip(".")
+
     @classmethod
     def build_scene_facts(cls, payload: dict[str, Any]) -> dict[str, Any]:
         left_text = cls._normalize_text(payload.get("left_side"))
@@ -198,6 +209,97 @@ class VLMCore:
             "constraints": {"max_climb_height_m": cls.MAX_CLIMB_HEIGHT_M},
             "uncertainties": cls._normalize_list(payload.get("uncertainties")),
         }
+
+    @classmethod
+    def build_scene_facts_from_object_facts(cls, object_facts: dict[str, Any]) -> dict[str, Any]:
+        constraints = dict(object_facts.get("constraints") or {})
+        climb_limit = float(constraints.get("max_climb_height_m", cls.MAX_CLIMB_HEIGHT_M))
+        constraints["max_climb_height_m"] = climb_limit
+
+        terrain_features = []
+        interactive_objects = []
+        route_options_by_side: dict[str, dict[str, Any]] = {}
+        platform_summaries = []
+        object_summaries = []
+
+        for obj in object_facts.get("objects") or []:
+            obj_id = cls._normalize_text(obj.get("id"))
+            obj_type = cls._normalize_text(obj.get("type")).lower()
+            center = obj.get("center") or [0.0, 0.0, 0.0]
+            size = obj.get("size") or [0.0, 0.0, 0.0]
+            side = cls._infer_side_from_y(center[1] if len(center) > 1 else 0.0)
+            height = round(float(size[2]), 3)
+            side_label = "左侧" if side == "left" else "右侧" if side == "right" else "当前侧"
+
+            if obj_type == "platform":
+                terrain_features.append(
+                    {
+                        "side": side,
+                        "type": "platform",
+                        "height_m": height,
+                        "traversable": height <= climb_limit,
+                        "description": f"{side_label}平台 {obj_id}",
+                        "object_id": obj_id,
+                    }
+                )
+                route_options_by_side[side] = {
+                    "direction": side,
+                    "status": "clear" if height <= climb_limit else "blocked",
+                    "reason": f"{side_label}{cls._format_height_label(height)}米高台 {obj_id}",
+                }
+                platform_summaries.append(f"{side_label}存在约{cls._format_height_label(height)}米高台")
+            elif obj_type == "box":
+                interactive_objects.append(
+                    {
+                        "name": obj_id,
+                        "side": side,
+                        "height_m": height,
+                        "movable": bool(obj.get("movable")),
+                        "usable_as_step": height <= climb_limit,
+                        "description": f"{side_label}箱子 {obj_id}",
+                        "center": center,
+                        "size": size,
+                    }
+                )
+                route_options_by_side.setdefault(
+                    side,
+                    {
+                        "direction": side,
+                        "status": "clear",
+                        "reason": f"{side_label}有可利用箱子 {obj_id}",
+                    },
+                )
+                object_summaries.append(f"{side_label}有可推动箱子 {obj_id}")
+
+        return {
+            "summary": "，".join([*platform_summaries, *object_summaries]) if platform_summaries or object_summaries else "已加载结构化物体信息",
+            "terrain_features": terrain_features,
+            "interactive_objects": interactive_objects,
+            "route_options": list(route_options_by_side.values()),
+            "constraints": constraints,
+            "uncertainties": [],
+        }
+
+    @classmethod
+    def merge_scene_facts(
+        cls,
+        vlm_scene_facts: dict[str, Any] | None,
+        object_facts: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        if not object_facts:
+            return vlm_scene_facts or cls.build_scene_facts(cls.DEFAULT_OUTPUT)
+
+        object_scene_facts = cls.build_scene_facts_from_object_facts(object_facts)
+        if not vlm_scene_facts:
+            return object_scene_facts
+
+        merged = dict(object_scene_facts)
+        merged["uncertainties"] = [
+            *cls._normalize_list(object_scene_facts.get("uncertainties")),
+            *cls._normalize_list(vlm_scene_facts.get("uncertainties")),
+        ]
+        merged["visual_summary"] = cls._normalize_text(vlm_scene_facts.get("summary"))
+        return merged
 
     @classmethod
     def _normalize_payload(cls, payload: dict[str, Any]) -> dict[str, Any]:

@@ -39,6 +39,7 @@ class HighLevelPlanner:
         planning_prompt: str,
         visual_context: str | None = None,
         scene_facts: dict | None = None,
+        object_facts: dict | None = None,
         replan_context: dict | None = None,
     ) -> list[dict]:
         print("\n" + "=" * 60 + "\n🧠 [上层LLM] 任务规划中...\n" + "=" * 60)
@@ -48,6 +49,7 @@ class HighLevelPlanner:
                 user_input=user_input,
                 visual_context=visual_context if visual_context else "无",
                 scene_facts=json.dumps(scene_facts or {}, ensure_ascii=False),
+                object_facts=json.dumps(object_facts or {}, ensure_ascii=False),
                 replan_context=json.dumps(replan_context or {}, ensure_ascii=False),
             )
 
@@ -69,11 +71,16 @@ class HighLevelPlanner:
             plan = json.loads(response_text)
             tasks, plan_meta = self.parse_plan_response(plan)
             summary = str(plan_meta.get("summary", ""))
-            tasks, summary, override_meta = self._apply_scene_rule_overrides(tasks, summary, scene_facts)
+            tasks, summary, override_meta = self._apply_scene_rule_overrides(tasks, summary, scene_facts, object_facts)
             if override_meta:
                 plan_meta.update(override_meta)
             if not tasks:
-                tasks, summary = self._build_navigation_fallback(user_input, visual_context, scene_facts=scene_facts)
+                tasks, summary = self._build_navigation_fallback(
+                    user_input,
+                    visual_context,
+                    scene_facts=scene_facts,
+                    object_facts=object_facts,
+                )
                 if tasks:
                     print("⚠️  [规划兜底] LLM 返回空任务，已根据视觉上下文生成导航步骤")
                 plan_meta = {
@@ -95,6 +102,7 @@ class HighLevelPlanner:
                 user_input,
                 visual_context,
                 scene_facts=scene_facts,
+                object_facts=object_facts,
             )
             if fallback_tasks:
                 self.last_summary = fallback_summary
@@ -138,7 +146,20 @@ class HighLevelPlanner:
         tasks: list[dict],
         summary: str,
         scene_facts: dict | None,
+        object_facts: dict | None,
     ) -> tuple[list[dict], str, dict[str, object] | None]:
+        box_assisted = self._detect_box_assisted_geometry(scene_facts, object_facts)
+        if box_assisted:
+            has_box_plan = any(task.get("function") in {"push_box", "climb"} for task in tasks)
+            if not has_box_plan:
+                override_tasks, override_summary = self._build_box_assisted_plan(box_assisted)
+                override_meta = {
+                    "selected_plan_id": "rule_override_box_assist",
+                    "summary": override_summary,
+                }
+                print("⚠️  [规则修正] 检测到箱子辅助攀爬场景，已将 walk 规划修正为 push_box + climb")
+                return override_tasks, override_summary, override_meta
+
         single_climb = self._detect_single_climb_side(scene_facts)
         if not single_climb:
             return tasks, summary, None
@@ -172,12 +193,17 @@ class HighLevelPlanner:
         user_input: str,
         visual_context: str | None,
         scene_facts: dict | None = None,
+        object_facts: dict | None = None,
     ) -> tuple[list[dict], str]:
         """当上层 LLM 返回空任务或异常时，基于规则生成导航步骤。"""
         if not self._is_navigation_request(user_input):
             return [], "无效输入，无法分解任务"
 
         context = visual_context or ""
+
+        box_assisted = self._detect_box_assisted_geometry(scene_facts, object_facts)
+        if box_assisted:
+            return self._build_box_assisted_plan(box_assisted)
 
         single_climb = self._detect_single_climb_side(scene_facts)
         if single_climb:
@@ -315,6 +341,53 @@ class HighLevelPlanner:
             "基于当前视觉上下文未发现必须换道的关键障碍，直接行走到目标点",
         )
 
+    def _detect_box_assisted_geometry(
+        self,
+        scene_facts: dict | None,
+        object_facts: dict | None,
+    ) -> dict[str, object] | None:
+        if not scene_facts or not object_facts:
+            return None
+
+        constraints = object_facts.get("constraints") or scene_facts.get("constraints") or {}
+        climb_limit = float(constraints.get("max_climb_height_m", 0.3))
+
+        objects = object_facts.get("objects") or []
+        boxes = [
+            obj for obj in objects
+            if obj.get("movable") and str(obj.get("type", "")).lower() == "box"
+        ]
+        platforms = [
+            obj for obj in objects
+            if str(obj.get("type", "")).lower() == "platform"
+        ]
+        if not boxes or not platforms:
+            return None
+
+        support_box = min(boxes, key=lambda item: float((item.get("size") or [0.0, 0.0, 0.0])[2]))
+        target_platform = max(platforms, key=lambda item: float((item.get("size") or [0.0, 0.0, 0.0])[2]))
+        box_height = round(float((support_box.get("size") or [0.0, 0.0, 0.0])[2]), 3)
+        platform_height = round(float((target_platform.get("size") or [0.0, 0.0, 0.0])[2]), 3)
+        remaining_height = round(platform_height - box_height, 3)
+
+        if not (0 < box_height <= climb_limit):
+            return None
+        if platform_height <= climb_limit:
+            return None
+        if not (0 < remaining_height <= climb_limit):
+            return None
+
+        center = support_box.get("center") or target_platform.get("center") or [0.0, 0.0, 0.0]
+        side = "left" if float(center[1]) >= 0 else "right"
+        return {
+            "side": side,
+            "box_id": str(support_box.get("id", "box")),
+            "box_height": box_height,
+            "platform_id": str(target_platform.get("id", "platform")),
+            "platform_height": platform_height,
+            "remaining_height": remaining_height,
+        }
+
     def _detect_single_climb_side(self, scene_facts: dict | None) -> tuple[str, float] | None:
         if not scene_facts:
             return None
@@ -380,6 +453,72 @@ class HighLevelPlanner:
 
     def _is_navigation_request(self, user_input: str) -> bool:
         return any(keyword in user_input for keyword in self._NAVIGATION_KEYWORDS)
+
+    def _build_box_assisted_plan(self, box_plan: dict[str, object]) -> tuple[list[dict], str]:
+        side = str(box_plan["side"])
+        side_label = "左侧" if side == "left" else "右侧"
+        box_id = str(box_plan["box_id"])
+        box_height = float(box_plan["box_height"])
+        platform_id = str(box_plan["platform_id"])
+        remaining_height = float(box_plan["remaining_height"])
+        box_height_label = f"{box_height:.1f}".rstrip("0").rstrip(".")
+        remaining_height_label = f"{remaining_height:.1f}".rstrip("0").rstrip(".")
+
+        return (
+            [
+                self._normalize_task(
+                    {
+                        "step": 1,
+                        "task": f"{side_label}存在可利用箱子 {box_id}。先播报环境并选择{side_label}路线",
+                        "type": "路线选择",
+                        "function": "way_select",
+                        "reason": f"机器人需要先切换到{side_label}箱子所在路线，后续才能执行推箱子和攀爬",
+                    },
+                    1,
+                ),
+                self._normalize_task(
+                    {
+                        "step": 2,
+                        "task": f"推箱子 {box_id} 到高台 {platform_id} 旁边",
+                        "type": "推箱子",
+                        "function": "push_box",
+                        "reason": "高台超过单步攀爬上限，需要先把箱子移动到高台边形成中间支撑",
+                    },
+                    2,
+                ),
+                self._normalize_task(
+                    {
+                        "step": 3,
+                        "task": f"先攀爬约{box_height_label}米到箱子 {box_id} 顶部",
+                        "type": "攀爬",
+                        "function": "climb",
+                        "reason": f"先到达箱子顶部，利用 {box_id} 作为中间支撑点",
+                    },
+                    3,
+                ),
+                self._normalize_task(
+                    {
+                        "step": 4,
+                        "task": f"再攀爬约{remaining_height_label}米到高台 {platform_id}",
+                        "type": "攀爬",
+                        "function": "climb",
+                        "reason": f"利用箱子后，剩余相对高度约{remaining_height_label}米，满足单步攀爬上限",
+                    },
+                    4,
+                ),
+                self._normalize_task(
+                    {
+                        "step": 5,
+                        "task": "在高台上继续行走到前方目标点",
+                        "type": "行走",
+                        "function": "walk",
+                        "reason": "完成翻越后继续前进到目标点",
+                    },
+                    5,
+                ),
+            ],
+            f"根据结构化物体几何信息，需先选择{side_label}路线，推动箱子并分两段攀爬后到达目标点",
+        )
 
     def _has_side_obstacle(self, context: str, side: str) -> bool:
         if not context:
