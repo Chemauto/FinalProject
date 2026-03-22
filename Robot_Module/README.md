@@ -28,7 +28,17 @@
 - 通过 FastMCP 注册工具
 - 技能执行结果统一封装为结构化反馈
 - 默认等待执行反馈 `20 秒`
-- 当前版本仍以 demo 为主，技能层主要打印执行信息并转发 ROS 反馈
+- `module/navigation.py` 默认直接写 IsaacLab EnvTest 控制文件
+- 可选执行后端：
+  - `file`：默认，直接写 `/tmp/*.txt`
+  - `udp`：发到 `Socket/envtest_socket_server.py`
+  - `ros`：继续走 `Comm_Module/execution_comm.py`
+- `way_select` 默认按侧向 `walk` 控制；如需切到导航策略可设置：
+  - `export FINALPROJECT_WAY_SELECT_POLICY=navigation`
+- `push_box.target_position` 支持：
+  - `"auto"`
+  - `"x,y,z"`
+  - `"[x, y, z]"`
 
 ## 主要文件
 
@@ -40,8 +50,40 @@
 ## 本地运行导航模块
 
 ```bash
-python3 Robot_Module/module/navigation.py case2
-python3 Robot_Module/module/navigation.py case4
+python3 /home/xcj/work/FinalProject/Robot_Module/module/navigation.py case2
+python3 /home/xcj/work/FinalProject/Robot_Module/module/navigation.py case4
+```
+
+## 最常用启动方式
+
+默认推荐直接配合 IsaacLab 的 `file` 后端：
+
+1. 启动 IsaacLab player
+
+```bash
+cd /home/xcj/work/IsaacLab/IsaacLabBisShe
+python NewTools/envtest_model_use_player.py --scene_id 4
+```
+
+2. 启动 FinalProject 交互入口
+
+```bash
+cd /home/xcj/work/FinalProject/Interactive_Module
+python interactive.py
+```
+
+如果你想单独启动技能服务器：
+
+```bash
+cd /home/xcj/work/FinalProject/Robot_Module
+python skill.py
+```
+
+如果你改成 UDP 后端，再补启动：
+
+```bash
+cd /home/xcj/work/IsaacLab/IsaacLabBisShe
+python Socket/envtest_socket_server.py
 ```
 
 ## 与上层的关系
