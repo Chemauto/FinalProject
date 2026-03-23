@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from math import hypot
+import re
 from typing import Any
 
 
@@ -25,6 +26,8 @@ class ParameterCalculator:
         support_box = self._select_support_box(objects)
         target_platform = self._select_target_platform(objects)
         route_side = self._infer_route_side(support_box or target_platform)
+        current_route_side = route_side
+        plan_uses_push_box = any(task.get("function") == "push_box" for task in tasks)
 
         box_height = self._object_height(support_box)
         platform_height = self._object_height(target_platform)
@@ -45,86 +48,139 @@ class ParameterCalculator:
             function_name = task.get("function")
             parameter_context = dict(task.get("parameter_context") or {})
 
-            if function_name == "way_select" and route_side:
+            selected_route_side = self._infer_way_select_route_side(task, current_route_side)
+            selected_support_box = self._select_box_for_task(
+                task=task,
+                objects=objects,
+                preferred_side=current_route_side,
+                default_box=support_box,
+                current_pose=current_pose,
+            )
+            selected_platform = self._select_platform_for_task(
+                task=task,
+                objects=objects,
+                preferred_side=current_route_side,
+                default_platform=target_platform,
+                current_pose=current_pose,
+            )
+            selected_box_height = self._object_height(selected_support_box)
+            selected_platform_height = self._object_height(selected_platform)
+            selected_remaining_height = round(selected_platform_height - selected_box_height, 3)
+            selected_can_use_box_assist = bool(
+                plan_uses_push_box
+                and selected_support_box
+                and selected_platform
+                and 0 < selected_box_height <= climb_limit
+                and selected_platform_height > climb_limit
+                and 0 < selected_remaining_height <= climb_limit
+            )
+
+            if function_name == "way_select" and selected_route_side:
                 parameter_context.update(
                     {
-                        "route_side": route_side,
-                        "route_side_label": self._side_label(route_side),
+                        "route_side": selected_route_side,
+                        "route_side_label": self._side_label(selected_route_side),
                     }
                 )
                 annotated["parameter_context"] = parameter_context
                 annotated["calculated_parameters"] = {
-                    "direction": route_side,
+                    "direction": selected_route_side,
                     "lateral_distance": self.DEFAULT_LATERAL_DISTANCE,
                     "target": "前方目标点",
                 }
+                current_route_side = selected_route_side
                 current_pose = self._estimate_pose_after_way_select(
                     current_pose=current_pose,
-                    route_side=route_side,
+                    route_side=selected_route_side,
                     lateral_distance=self.DEFAULT_LATERAL_DISTANCE,
-                    anchor_obj=support_box or target_platform,
+                    anchor_obj=selected_support_box or selected_platform,
                 )
-            elif function_name == "push_box" and can_use_box_assist:
-                target_position = self._build_adjacent_ground_position(support_box, target_platform)
+            elif function_name == "push_box" and (selected_can_use_box_assist or can_use_box_assist):
+                active_box = selected_support_box or support_box
+                active_platform = selected_platform or target_platform
+                if not active_box or not active_platform:
+                    annotated_tasks.append(annotated)
+                    continue
+                target_position = self._build_adjacent_ground_position(active_box, active_platform)
                 parameter_context.update(
                     {
-                        "support_object": support_box["id"],
-                        "target_object": target_platform["id"],
+                        "support_object": active_box["id"],
+                        "target_object": active_platform["id"],
                         "target_position_xyz": target_position,
                     }
                 )
                 annotated["parameter_context"] = parameter_context
                 annotated["calculated_parameters"] = {
-                    "box_height": box_height,
+                    "box_height": self._object_height(active_box),
                     "target_position": str(target_position),
                 }
                 current_pose = [target_position[0], target_position[1], current_pose[2]]
-            elif function_name == "climb" and target_platform:
+            elif function_name == "climb" and selected_platform:
                 climb_count += 1
-                if can_use_box_assist and climb_count == 1:
+                task_targets_box = self._task_targets_box(task, selected_support_box)
+                task_targets_platform = self._task_targets_platform(task, selected_platform)
+
+                if selected_can_use_box_assist and selected_support_box and (
+                    task_targets_box or (climb_count == 1 and not task_targets_platform)
+                ):
                     parameter_context.update(
                         {
-                            "support_object": support_box["id"],
-                            "target_object": support_box["id"],
-                            "relative_height_m": box_height,
+                            "support_object": selected_support_box["id"],
+                            "target_object": selected_support_box["id"],
+                            "relative_height_m": selected_box_height,
                         }
                     )
                     annotated["parameter_context"] = parameter_context
                     annotated["calculated_parameters"] = {
-                        "height": box_height,
-                        "stage": support_box["id"],
-                        "target": support_box["id"],
+                        "height": selected_box_height,
+                        "stage": selected_support_box["id"],
+                        "target": selected_support_box["id"],
                     }
-                    current_pose = self._estimate_pose_after_climb(current_pose, support_box, box_height)
-                elif can_use_box_assist and climb_count >= 2:
+                    current_pose = self._estimate_pose_after_climb(
+                        current_pose,
+                        selected_support_box,
+                        selected_box_height,
+                    )
+                    current_route_side = self._infer_route_side(selected_support_box) or current_route_side
+                elif selected_can_use_box_assist and climb_count >= 2:
                     parameter_context.update(
                         {
-                            "support_object": support_box["id"],
-                            "target_object": target_platform["id"],
-                            "relative_height_m": remaining_height,
+                            "support_object": selected_support_box["id"],
+                            "target_object": selected_platform["id"],
+                            "relative_height_m": selected_remaining_height,
                         }
                     )
                     annotated["parameter_context"] = parameter_context
                     annotated["calculated_parameters"] = {
-                        "height": remaining_height,
-                        "stage": target_platform["id"],
-                        "target": target_platform["id"],
+                        "height": selected_remaining_height,
+                        "stage": selected_platform["id"],
+                        "target": selected_platform["id"],
                     }
-                    current_pose = self._estimate_pose_after_climb(current_pose, target_platform, remaining_height)
+                    current_pose = self._estimate_pose_after_climb(
+                        current_pose,
+                        selected_platform,
+                        selected_remaining_height,
+                    )
+                    current_route_side = self._infer_route_side(selected_platform) or current_route_side
                 else:
                     parameter_context.update(
                         {
-                            "target_object": target_platform["id"],
-                            "relative_height_m": platform_height,
+                            "target_object": selected_platform["id"],
+                            "relative_height_m": selected_platform_height,
                         }
                     )
                     annotated["parameter_context"] = parameter_context
                     annotated["calculated_parameters"] = {
-                        "height": platform_height,
-                        "stage": target_platform["id"],
-                        "target": target_platform["id"],
+                        "height": selected_platform_height,
+                        "stage": selected_platform["id"],
+                        "target": selected_platform["id"],
                     }
-                    current_pose = self._estimate_pose_after_climb(current_pose, target_platform, platform_height)
+                    current_pose = self._estimate_pose_after_climb(
+                        current_pose,
+                        selected_platform,
+                        selected_platform_height,
+                    )
+                    current_route_side = self._infer_route_side(selected_platform) or current_route_side
             elif function_name == "walk":
                 walk_parameters = self._build_walk_parameters(task, current_pose, navigation_goal)
                 if walk_parameters:
@@ -229,6 +285,22 @@ class ParameterCalculator:
         return f"目标点[{x:g}, {y:g}, {z:g}]"
 
     @staticmethod
+    def _infer_way_select_route_side(
+        task: dict[str, Any],
+        default_side: str | None,
+    ) -> str | None:
+        task_text = f"{task.get('task', '')} {task.get('reason', '')}".lower()
+        if re.search(r"(选择|切换到|到达|沿).{0,8}右侧路线|right", task_text):
+            return "right"
+        if re.search(r"(选择|切换到|到达|沿).{0,8}左侧路线|left", task_text):
+            return "left"
+        if "右侧" in task_text and "左侧" not in task_text:
+            return "right"
+        if "左侧" in task_text and "右侧" not in task_text:
+            return "left"
+        return default_side
+
+    @staticmethod
     def _object_height(obj: dict[str, Any] | None) -> float:
         if not obj:
             return 0.0
@@ -256,6 +328,131 @@ class ParameterCalculator:
         if not platforms:
             return None
         return max(platforms, key=lambda item: float((item.get("size") or [0.0, 0.0, 0.0])[2]))
+
+    @classmethod
+    def _select_platform_for_task(
+        cls,
+        task: dict[str, Any],
+        objects: list[dict[str, Any]],
+        preferred_side: str | None,
+        default_platform: dict[str, Any] | None,
+        current_pose: list[float] | None,
+    ) -> dict[str, Any] | None:
+        explicit_platform = cls._match_object_from_task(task, objects, object_type="platform")
+        if explicit_platform:
+            return explicit_platform
+
+        task_side = cls._infer_task_side(task) or preferred_side
+        if task_side:
+            side_platform = cls._select_platform_on_side(objects, task_side, current_pose)
+            if side_platform:
+                return side_platform
+
+        return default_platform
+
+    @classmethod
+    def _select_box_for_task(
+        cls,
+        task: dict[str, Any],
+        objects: list[dict[str, Any]],
+        preferred_side: str | None,
+        default_box: dict[str, Any] | None,
+        current_pose: list[float] | None,
+    ) -> dict[str, Any] | None:
+        explicit_box = cls._match_object_from_task(task, objects, object_type="box")
+        if explicit_box:
+            return explicit_box
+
+        task_side = cls._infer_task_side(task) or preferred_side
+        if task_side:
+            side_box = cls._select_box_on_side(objects, task_side, current_pose)
+            if side_box:
+                return side_box
+
+        return default_box
+
+    @classmethod
+    def _select_platform_on_side(
+        cls,
+        objects: list[dict[str, Any]],
+        side: str,
+        current_pose: list[float] | None,
+    ) -> dict[str, Any] | None:
+        candidates = [
+            obj
+            for obj in objects
+            if str(obj.get("type", "")).lower() == "platform"
+            and cls._infer_route_side(obj) == side
+        ]
+        if not candidates:
+            return None
+        if not current_pose:
+            return min(candidates, key=lambda item: abs(float((item.get("center") or [0.0, 0.0, 0.0])[0])))
+        return min(candidates, key=lambda item: cls._planar_distance_to_object(current_pose, item))
+
+    @classmethod
+    def _select_box_on_side(
+        cls,
+        objects: list[dict[str, Any]],
+        side: str,
+        current_pose: list[float] | None,
+    ) -> dict[str, Any] | None:
+        candidates = [
+            obj
+            for obj in objects
+            if str(obj.get("type", "")).lower() == "box"
+            and obj.get("movable")
+            and cls._infer_route_side(obj) == side
+        ]
+        if not candidates:
+            return None
+        if not current_pose:
+            return min(candidates, key=lambda item: abs(float((item.get("center") or [0.0, 0.0, 0.0])[0])))
+        return min(candidates, key=lambda item: cls._planar_distance_to_object(current_pose, item))
+
+    @classmethod
+    def _match_object_from_task(
+        cls,
+        task: dict[str, Any],
+        objects: list[dict[str, Any]],
+        object_type: str,
+    ) -> dict[str, Any] | None:
+        task_text = f"{task.get('task', '')} {task.get('reason', '')}".lower()
+        for obj in objects:
+            if str(obj.get("type", "")).lower() != object_type:
+                continue
+            object_id = str(obj.get("id", "")).lower()
+            if object_id and object_id in task_text:
+                return obj
+        return None
+
+    @staticmethod
+    def _infer_task_side(task: dict[str, Any]) -> str | None:
+        task_text = f"{task.get('task', '')} {task.get('reason', '')}".lower()
+        if "左侧" in task_text and "右侧" not in task_text:
+            return "left"
+        if "右侧" in task_text and "左侧" not in task_text:
+            return "right"
+        return None
+
+    @staticmethod
+    def _task_targets_box(task: dict[str, Any], support_box: dict[str, Any] | None) -> bool:
+        task_text = f"{task.get('task', '')} {task.get('reason', '')}".lower()
+        if support_box and str(support_box.get("id", "")).lower() in task_text:
+            return True
+        return bool(re.search(r"箱子|box", task_text))
+
+    @staticmethod
+    def _task_targets_platform(task: dict[str, Any], platform: dict[str, Any] | None) -> bool:
+        task_text = f"{task.get('task', '')} {task.get('reason', '')}".lower()
+        if platform and str(platform.get("id", "")).lower() in task_text:
+            return True
+        return bool(re.search(r"平台|高台|platform", task_text))
+
+    @staticmethod
+    def _planar_distance_to_object(current_pose: list[float], obj: dict[str, Any]) -> float:
+        center = obj.get("center") or [0.0, 0.0, 0.0]
+        return hypot(float(center[0]) - current_pose[0], float(center[1]) - current_pose[1])
 
     @staticmethod
     def _infer_route_side(obj: dict[str, Any] | None) -> str | None:

@@ -13,6 +13,15 @@ system_prompt: |
   如果图像中出现平台、台阶、高台、凸起结构或明显的颜色/平面分界，优先视为存在高度差或疑似高度差。
   在描述 `left_side`、`right_side`、`front_area` 时，先描述“是什么物体/结构”，再描述它的颜色、材质和外观。
   `obstacles` 字段优先列出会影响导航和技能选择的对象，例如箱子、平台边缘、高台、凸起块、台阶，而不是只列颜色区域。
+  你的输出还必须尽量和 IsaacLab 的 `EnvTest Live Status` 槽位对齐，但只能填写图像中能看见或高置信推断的内容。
+  对齐规则：
+  - `platform_1` 表示左侧槽位，对应 `left_low_obstacle` 或 `left_high_obstacle`
+  - `platform_2` 表示右侧槽位，对应 `right_low_obstacle` 或 `right_high_obstacle`
+  - `box` 表示中间可推动箱子，对应 `support_box`
+  - 如果图像里没有看到该槽位对象，填写 `null`
+  - 如果只能判断是平台但无法区分 low/high，可保留 `name="unknown_platform"` 并把不确定性写入 `uncertainties`
+  - `height_m` 只填写近似相对高度；低障碍常接近 `0.3`，高障碍常接近 `0.5`，箱子常接近 `0.2`
+  - 不要凭空输出 `robot_pose`、`model_use`、`scene_id`、`start` 等图像无法直接看出的运行时字段
   无法确认时必须明确写入不确定项，不要猜测。
   不要编造图像中没有的信息。
   严格输出 JSON，不要输出任何 JSON 之外的文字，不要使用 Markdown 代码块。
@@ -24,13 +33,26 @@ system_prompt: |
     "front_area": "对前方区域的描述",
     "obstacles": ["可见障碍物或凸起结构列表"],
     "suspected_height_diff": true,
-    "uncertainties": ["仅凭图像无法确认的事项列表"]
+    "uncertainties": ["仅凭图像无法确认的事项列表"],
+    "envtest_alignment": {
+      "platform_1": {
+        "name": "left_low_obstacle",
+        "type": "platform",
+        "side": "left",
+        "height_m": 0.3,
+        "summary": "左侧约0.3米低平台"
+      },
+      "platform_2": null,
+      "box": null
+    }
   }
   所有字段必须存在。
+  `envtest_alignment` 中每个非空对象都必须包含 `name`、`type`、`side`、`height_m`、`summary`。
 
 user_prompt: |
   请根据这张相机图像输出结构化环境事实，只能输出 JSON。
   优先识别并描述箱子、平台、高台、台阶、平台边缘、可推动长方体物体，再补充颜色和墙体信息。
+  输出中请尽量补齐 `envtest_alignment.platform_1 / platform_2 / box`，使其和 IsaacLab 的状态面板槽位一致。
 # system_prompt: |
 #   你是机器人视觉环境感知模块。
 #   你的任务是根据相机输入的图像，保守地描述机器人当前所处环境，为后续大语言模型决策提供环境上下文。

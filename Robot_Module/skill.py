@@ -41,7 +41,6 @@ _tool_metadata = {}
 # 2. 导入各功能模块（此时 mcp 已可用）
 # ==============================================================================
 from module.example import register_tools as register_example_tools
-from module.walkisaacsim import register_tools as register_walk_tools
 from module.navigation import register_tools as register_navigation_tools
 
 # ==============================================================================

@@ -1,6 +1,6 @@
 {
   "navigation_goal": [
-    5.0,
+    20.0,
     0.0,
     0.0
   ],
@@ -14,10 +14,76 @@
     "push_only_on_ground": true,
     "climb_requires_adjacency": true
   },
-  "objects": [],
-  "scene_objects": [],
+  "objects": [
+    {
+      "id": "platform_left_low",
+      "source_name": "left_low_obstacle",
+      "type": "platform",
+      "center": [
+        3.0,
+        0.75,
+        0.0
+      ],
+      "size": [
+        2.0,
+        1.5,
+        0.3
+      ],
+      "movable": false
+    },
+    {
+      "id": "platform_right_high",
+      "source_name": "right_high_obstacle",
+      "type": "platform",
+      "center": [
+        3.0,
+        -0.75,
+        0.0
+      ],
+      "size": [
+        2.0,
+        1.5,
+        0.5
+      ],
+      "movable": false
+    }
+  ],
+  "scene_objects": [
+    {
+      "id": "platform_left_low",
+      "source_name": "left_low_obstacle",
+      "type": "platform",
+      "center": [
+        3.0,
+        0.75,
+        0.0
+      ],
+      "size": [
+        2.0,
+        1.5,
+        0.3
+      ],
+      "movable": false
+    },
+    {
+      "id": "platform_right_high",
+      "source_name": "right_high_obstacle",
+      "type": "platform",
+      "center": [
+        3.0,
+        -0.75,
+        0.0
+      ],
+      "size": [
+        2.0,
+        1.5,
+        0.5
+      ],
+      "movable": false
+    }
+  ],
   "runtime_state": {
-    "scene_id": 0,
+    "scene_id": 3,
     "model_use": 0,
     "start": false,
     "vel_command": [
@@ -32,6 +98,11 @@
       0.0,
       0.0
     ],
-    "skill": "idle"
+    "skill": "idle",
+    "navigation_goal_override": [
+      20.0,
+      0.0,
+      0.0
+    ]
   }
 }

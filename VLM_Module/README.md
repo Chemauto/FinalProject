@@ -31,4 +31,5 @@ python3 -c "from VLM_Module.vlm_core import VLMCore; print(VLMCore().describe('V
 ## 输入输出
 
 - 输入：摄像头图片、默认图片，或代码中传入的图片路径
-- 输出：终端打印 JSON 字符串，包含 `ground`、`left_side`、`right_side`、`front_area`、`obstacles`、`suspected_height_diff`、`uncertainties`
+- 输出：终端打印 JSON 字符串，包含 `ground`、`left_side`、`right_side`、`front_area`、`obstacles`、`suspected_height_diff`、`uncertainties`、`envtest_alignment`
+- `envtest_alignment` 里的 `platform_1 / platform_2 / box` 用于和 IsaacLab `EnvTest Live Status` 槽位对齐

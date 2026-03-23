@@ -90,6 +90,13 @@ def _parse_vector(text: str) -> list[float] | None:
     return values or None
 
 
+def _parse_navigation_goal_inline(text: str) -> list[float] | None:
+    values = _round_list(_parse_vector(text))
+    if values is None or len(values) < 3:
+        return None
+    return values[:3]
+
+
 def _read_text_if_exists(path: str | Path) -> str:
     file_path = Path(path)
     if not file_path.exists():
@@ -353,6 +360,37 @@ def extract_runtime_overrides(user_input: str) -> dict[str, list[float]]:
     return overrides
 
 
+def extract_navigation_goal_override(user_input: str) -> list[float] | None:
+    if not user_input:
+        return None
+
+    normalized = user_input.replace("，", ",").replace("（", "(").replace("）", ")")
+
+    explicit_aliases = ("navigation_goal", "goal", "target", "目标点", "目标", "坐标", "位置")
+    for alias in explicit_aliases:
+        pattern = rf"{alias}\s*[:=]?\s*(\[[^\]]+\]|\([^\)]+\)|[-+]?\d*\.?\d+(?:\s*,\s*[-+]?\d*\.?\d+){{2,3}})"
+        match = re.search(pattern, normalized, flags=re.IGNORECASE)
+        if not match:
+            continue
+        parsed = _parse_navigation_goal_inline(match.group(1))
+        if parsed is not None:
+            return parsed
+
+    navigation_patterns = (
+        r"(?:前往|去往|去到|到达|导航到|移动到|走到)\s*(?:坐标)?\s*(\[[^\]]+\]|\([^\)]+\)|[-+]?\d*\.?\d+(?:\s*,\s*[-+]?\d*\.?\d+){{2,3}})",
+        r"(?:前往|去往|去到|到达|导航到|移动到|走到)\s*([-\d\.,\s]+?)\s*(?:处|位置|坐标处|坐标点|点位|附近|$)",
+    )
+    for pattern in navigation_patterns:
+        match = re.search(pattern, normalized, flags=re.IGNORECASE)
+        if not match:
+            continue
+        parsed = _parse_navigation_goal_inline(match.group(1))
+        if parsed is not None:
+            return parsed
+
+    return None
+
+
 def _build_runtime_objects(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
     runtime_objects: list[dict[str, Any]] = []
 
@@ -420,10 +458,17 @@ def update_object_facts_runtime(
     if overrides:
         runtime_state.update(overrides)
 
+    navigation_goal_override = extract_navigation_goal_override(user_input)
+    if navigation_goal_override is not None:
+        payload["navigation_goal"] = navigation_goal_override
+        runtime_state["navigation_goal_override"] = navigation_goal_override
+
     if "pose_command" in runtime_state and isinstance(runtime_state["pose_command"], list):
         runtime_state["pose_command"] = _round_list(runtime_state["pose_command"])
     if "vel_command" in runtime_state and isinstance(runtime_state["vel_command"], list):
         runtime_state["vel_command"] = _round_list(runtime_state["vel_command"])
+    if "navigation_goal_override" in runtime_state and isinstance(runtime_state["navigation_goal_override"], list):
+        runtime_state["navigation_goal_override"] = _round_list(runtime_state["navigation_goal_override"])[:3]
 
     payload["runtime_state"] = runtime_state
     _write_object_facts(object_facts_path, payload)

@@ -44,11 +44,13 @@ MODEL_USE_PUSH_BOX = 3
 MODEL_USE_NAVIGATION = 4
 
 DEFAULT_WALK_SPEED_MPS = 0.6
-DEFAULT_LATERAL_SPEED_MPS = 0.4
-DEFAULT_CLIMB_SPEED_MPS = 0.3
+DEFAULT_LATERAL_SPEED_MPS = 0.5
+DEFAULT_CLIMB_SPEED_MPS = 0.6
 DEFAULT_WAY_SELECT_FORWARD_BIAS_M = 0.2
+DEFAULT_WAY_SELECT_DURATION_SEC = 3.0
 DEFAULT_WALK_BUFFER_SEC = 0.5
 DEFAULT_CLIMB_BASE_DURATION_SEC = 4.0
+DEFAULT_CLIMB_EXECUTION_SEC = 10.0
 DEFAULT_PUSH_BOX_DURATION_SEC = 10.0
 DEFAULT_NAVIGATION_DURATION_SEC = 6.0
 DEFAULT_COMMAND_SETTLE_SEC = 0.15
@@ -99,6 +101,11 @@ def _read_env_bool(name: str, default: bool) -> bool:
     return raw in {"1", "true", "yes", "y", "on"}
 
 
+def _read_env_str(name: str, default: str) -> str:
+    raw = os.getenv(name, "").strip()
+    return raw or default
+
+
 def _load_runtime_config() -> EnvTestRuntimeConfig:
     backend = os.getenv("FINALPROJECT_NAV_BACKEND", "file").strip().lower()
     if backend not in {"file", "udp", "ros"}:
@@ -122,6 +129,21 @@ def _load_runtime_config() -> EnvTestRuntimeConfig:
         auto_idle_after_skill=_read_env_bool("FINALPROJECT_NAV_AUTO_IDLE", True),
         way_select_policy=way_select_policy,
     )
+
+
+def _envtest_repo_root() -> Path:
+    return Path(_read_env_str("FINALPROJECT_ENVTEST_ROOT", "/home/xcj/work/IsaacLab/IsaacLabBisShe"))
+
+
+def _envtest_socket_client_path() -> Path:
+    default_path = _envtest_repo_root() / "Socket" / "envtest_socket_client.py"
+    return Path(_read_env_str("FINALPROJECT_ENVTEST_SOCKET_CLIENT", str(default_path)))
+
+
+def _climb_uses_socket_client(config: EnvTestRuntimeConfig) -> bool:
+    if config.backend == "ros":
+        return False
+    return _read_env_bool("FINALPROJECT_CLIMB_USE_SOCKET_CLIENT", True)
 
 
 def _format_height(height: float) -> str:
@@ -386,6 +408,50 @@ async def _stop_envtest_skill(config: EnvTestRuntimeConfig) -> None:
     _apply_envtest_command(config, **stop_fields)
 
 
+async def _run_envtest_socket_client(
+    config: EnvTestRuntimeConfig,
+    *args: str,
+) -> dict[str, Any]:
+    client_path = _envtest_socket_client_path()
+    if not client_path.is_file():
+        raise FileNotFoundError(f"未找到 envtest_socket_client.py: {client_path}")
+
+    command = [
+        sys.executable,
+        str(client_path),
+        "--host",
+        config.udp_host,
+        "--port",
+        str(config.udp_port),
+        *args,
+    ]
+    process = await asyncio.create_subprocess_exec(
+        *command,
+        cwd=str(client_path.parent.parent),
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, stderr = await process.communicate()
+    output = {
+        "command": command,
+        "returncode": process.returncode,
+        "stdout": stdout.decode("utf-8", errors="ignore").strip(),
+        "stderr": stderr.decode("utf-8", errors="ignore").strip(),
+    }
+    if process.returncode != 0:
+        message = output["stderr"] or output["stdout"] or "socket client 执行失败"
+        raise RuntimeError(message)
+    return output
+
+
+async def _stop_envtest_skill_via_socket_client(config: EnvTestRuntimeConfig) -> None:
+    await _run_envtest_socket_client(config, "--start", "0")
+    await asyncio.sleep(config.stop_settle_sec)
+    await _run_envtest_socket_client(config, "--velocity", "0.0", "0.0", "0.0")
+    if config.auto_idle_after_skill:
+        await _run_envtest_socket_client(config, "--model_use", str(MODEL_USE_IDLE))
+
+
 async def _wait_skill_feedback(
     skill_name: str,
     parameters: dict[str, Any],
@@ -472,6 +538,79 @@ async def _wait_skill_feedback(
     }
 
 
+async def _execute_climb_via_socket_client(
+    *,
+    height: float,
+    stage: str,
+    target: str,
+    velocity_command: Sequence[float],
+    execution_time_sec: float,
+    wait_feedback: bool,
+    config: EnvTestRuntimeConfig,
+    timeout_sec: float = 20.0,
+) -> dict[str, Any]:
+    action_id = _make_action_id("climb")
+    planned_result = {
+        "mode": "planned_only",
+        "backend": "socket_client",
+        "model_use": MODEL_USE_CLIMB,
+        "parameters": {
+            "height": height,
+            "stage": stage,
+            "target": target,
+            "velocity_command": list(velocity_command),
+        },
+        "velocity_command": list(velocity_command),
+        "goal_command": None,
+        "estimated_execution_time_sec": execution_time_sec,
+    }
+    if not wait_feedback:
+        return {
+            "action_id": action_id,
+            **_build_feedback("climb", f"已完成{stage}" if "攀爬" in stage else f"已完成{stage}攀爬"),
+            "result": planned_result,
+        }
+
+    await _run_envtest_socket_client(
+        config,
+        "--model_use",
+        str(MODEL_USE_CLIMB),
+        "--velocity",
+        *(str(float(value)) for value in velocity_command[:3]),
+    )
+    await asyncio.sleep(config.command_settle_sec)
+    await _run_envtest_socket_client(config, "--start", "1")
+
+    actual_wait_sec = min(timeout_sec, execution_time_sec)
+    await asyncio.sleep(actual_wait_sec)
+    await _stop_envtest_skill_via_socket_client(config)
+
+    if execution_time_sec > timeout_sec:
+        return {
+            "action_id": action_id,
+            **_build_feedback(
+                "climb",
+                f"climb 预计执行 {execution_time_sec:.1f}s，超过超时阈值 {timeout_sec:.1f}s",
+                signal="FAILURE",
+            ),
+            "result": {
+                **planned_result,
+                "mode": "envtest_timeout",
+                "wait_time_sec": actual_wait_sec,
+            },
+        }
+
+    return {
+        "action_id": action_id,
+        **_build_feedback("climb", f"已完成{stage}" if "攀爬" in stage else f"已完成{stage}攀爬"),
+        "result": {
+            **planned_result,
+            "mode": "envtest_socket_client",
+            "wait_time_sec": actual_wait_sec,
+        },
+    }
+
+
 async def execute_walk_skill(
     route_side: str = "前方",
     distance: float = 1.0,
@@ -542,29 +681,42 @@ async def execute_climb_skill(
             f"当前 demo 约束为最大攀爬高度 {CLIMB_LIMIT_METERS:.2f} 米，收到 {height:.2f} 米"
         )
 
+    config = _load_runtime_config()
     climb_speed = abs(_read_env_float("FINALPROJECT_CLIMB_SPEED_MPS", DEFAULT_CLIMB_SPEED_MPS))
     velocity_command = [climb_speed, 0.0, 0.0]
-    execution_time_sec = _estimate_climb_duration(height)
+    execution_time_sec = max(0.5, _read_env_float("FINALPROJECT_CLIMB_DURATION_SEC", DEFAULT_CLIMB_EXECUTION_SEC))
 
     _speak(speech)
     _log_skill(
         "climb",
-        f"攀爬{stage}，高度 {height:.2f} 米，目标={target}，速度命令={velocity_command}",
+        f"攀爬{stage}，高度 {height:.2f} 米，目标={target}，速度命令={velocity_command}，预计执行 {execution_time_sec:.2f} 秒",
     )
-    feedback = await _wait_skill_feedback(
-        "climb",
-        {
-            "height": height,
-            "stage": stage,
-            "target": target,
-            "velocity_command": velocity_command,
-        },
-        f"已完成{stage}" if "攀爬" in stage else f"已完成{stage}攀爬",
-        wait_feedback=wait_feedback,
-        model_use=MODEL_USE_CLIMB,
-        velocity_command=velocity_command,
-        execution_time_sec=execution_time_sec,
-    )
+
+    if _climb_uses_socket_client(config):
+        feedback = await _execute_climb_via_socket_client(
+            height=height,
+            stage=stage,
+            target=target,
+            velocity_command=velocity_command,
+            execution_time_sec=execution_time_sec,
+            wait_feedback=wait_feedback,
+            config=config,
+        )
+    else:
+        feedback = await _wait_skill_feedback(
+            "climb",
+            {
+                "height": height,
+                "stage": stage,
+                "target": target,
+                "velocity_command": velocity_command,
+            },
+            f"已完成{stage}" if "攀爬" in stage else f"已完成{stage}攀爬",
+            wait_feedback=wait_feedback,
+            model_use=MODEL_USE_CLIMB,
+            velocity_command=velocity_command,
+            execution_time_sec=execution_time_sec,
+        )
     status = "success" if feedback.get("signal") == "SUCCESS" else "failure"
     backend_label = _resolve_feedback_backend(feedback)
     return {
@@ -672,22 +824,24 @@ async def execute_way_select_skill(
             "target": f"{direction_label}路线入口",
         }
     else:
-        lateral_speed = abs(_read_env_float("FINALPROJECT_WAY_SELECT_SPEED_MPS", DEFAULT_LATERAL_SPEED_MPS))
+        lateral_speed = abs(DEFAULT_LATERAL_SPEED_MPS)
         signed_lateral_speed = lateral_speed if normalized_direction == "left" else -lateral_speed
         velocity_command = [0.0, signed_lateral_speed, 0.0]
-        execution_time_sec = _estimate_linear_duration(lateral_distance, lateral_speed)
+        execution_time_sec = DEFAULT_WAY_SELECT_DURATION_SEC
         base_skill_call = {
             "skill": "walk",
             "route_side": f"{direction_label}路线入口",
-            "distance": lateral_distance,
+            "distance": round(lateral_speed * execution_time_sec, 3),
+            "requested_lateral_distance": lateral_distance,
             "target": f"{direction_label}路线入口",
             "velocity_command": velocity_command,
+            "execution_time_sec": execution_time_sec,
         }
 
     _speak(speech)
     _log_skill(
         "way_select",
-        f"选择{direction_label}路线，控制模式={control_mode}，目标={target}",
+        f"选择{direction_label}路线，控制模式={control_mode}，目标={target}，速度命令={velocity_command}，预计执行 {execution_time_sec:.2f} 秒",
     )
     feedback = await _wait_skill_feedback(
         "way_select",
