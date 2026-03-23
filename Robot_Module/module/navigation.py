@@ -490,7 +490,7 @@ async def execute_walk_skill(
     _speak(speech)
     _log_skill(
         "walk",
-        f"沿{route_side}路径行走 {distance:.2f} 米，目标={target}，速度命令={velocity_command}",
+        f"沿{route_side}路径行走 {distance:.2f} 米，目标={target}，速度命令={velocity_command}，预计执行 {execution_time_sec:.2f} 秒",
     )
     feedback = await _wait_skill_feedback(
         "walk",

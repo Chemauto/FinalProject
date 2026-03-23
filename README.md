@@ -89,6 +89,7 @@ python Socket/envtest_socket_server.py
 3. 准备几何真值输入
 
 - 默认文件：`/home/xcj/work/FinalProject/config/object_facts.json`
+- 也可通过环境变量覆盖：`export FINALPROJECT_OBJECT_FACTS_PATH=/home/xcj/work/FinalProject/config/object_facts.example.json`
 - 至少建议写入：`navigation_goal`、`robot_pose`、`objects`、`constraints`
 
 4. 启动 FinalProject 交互入口
@@ -124,6 +125,28 @@ python3 /home/xcj/work/FinalProject/Robot_Module/module/navigation.py case4
 cd /home/xcj/work/FinalProject/Robot_Module
 python skill.py
 ```
+
+如果想把 `envtest_model_use_player.py` 终端里的 `EnvTest Live Status` 文本块同步进 `object_facts.json`，可运行：
+
+```bash
+cd /home/xcj/work/FinalProject/Interactive_Module
+python sync_envtest_status.py --status-file /path/to/envtest_status.txt
+```
+
+如果不想手工复制状态文本，也可以直接从正在运行的 `envtest_model_use_player.py` 进程同步：
+
+```bash
+cd /home/xcj/work/FinalProject/Interactive_Module
+python sync_envtest_status.py --live-envtest
+```
+
+额外说明：
+
+- `runtime_state` 会写入 `model_use / skill / scene_id / start / pose_command / vel_command / robot_pose / goal`
+- `runtime_objects` 会写入 `platform_1 / platform_2 / box` 映射出的对象信息
+- 如果命令里带 `--replace-objects`，则会用状态块里的对象覆盖 top-level `objects`
+- 交互模式现在会在每次用户输入后、规划前，优先尝试从 live EnvTest 进程同步场景和控制文件，再加载 `object_facts.json`
+- 在交互模式下，用户输入若包含 `pose_command=[...]` 或 `vel_command=[...]`，会先覆盖到 `object_facts.json` 的 `runtime_state`，没有提供则保持原值
 
 ## 相关文档
 

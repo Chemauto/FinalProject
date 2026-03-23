@@ -1,0 +1,37 @@
+{
+  "navigation_goal": [
+    5.0,
+    0.0,
+    0.0
+  ],
+  "robot_pose": [
+    0.0,
+    0.0,
+    0.0
+  ],
+  "constraints": {
+    "max_climb_height_m": 0.3,
+    "push_only_on_ground": true,
+    "climb_requires_adjacency": true
+  },
+  "objects": [],
+  "scene_objects": [],
+  "runtime_state": {
+    "scene_id": 0,
+    "model_use": 0,
+    "start": false,
+    "vel_command": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "pose_command": null,
+    "goal": null,
+    "robot_pose": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "skill": "idle"
+  }
+}

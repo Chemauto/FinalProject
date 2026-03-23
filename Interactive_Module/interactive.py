@@ -32,6 +32,10 @@ except ImportError:
 
 from LLM_Module.llm_core import LLMAgent
 from LLM_Module.object_facts_loader import load_object_facts
+from envtest_status_sync import (
+    sync_object_facts_from_live_envtest,
+    sync_runtime_overrides_from_user_input,
+)
 from Robot_Module.skill import (
     get_skill_function,
     get_tool_definitions,
@@ -40,7 +44,25 @@ from Robot_Module.skill import (
 from VLM_Module.vlm_core import VLMCore
 
 ENABLE_VLM_CONTEXT = True
-DEFAULT_OBJECT_FACTS_PATH = project_root / "config" / "object_facts.json"
+DEFAULT_OBJECT_FACTS_PATH = Path(
+    os.getenv("FINALPROJECT_OBJECT_FACTS_PATH", str(project_root / "config" / "object_facts.json"))
+)
+
+
+def _report_object_facts_status(object_facts_path: str | Path) -> None:
+    path = Path(object_facts_path)
+    if path.exists():
+        return
+
+    example_path = path.with_name(f"{path.stem}.example{path.suffix}")
+    if example_path.exists():
+        print(
+            f"[ObjectFacts] 未找到结构化物体信息文件: {path}；示例文件 {example_path} 不会自动加载，本次仅使用 VLM",
+            file=sys.stderr,
+        )
+        return
+
+    print(f"[ObjectFacts] 未找到结构化物体信息文件: {path}，本次仅使用 VLM", file=sys.stderr)
 
 
 def _normalize_tool_result(function_name: str, raw_result):
@@ -246,9 +268,30 @@ def process_user_input(user_input: str, llm_agent, tools, vlm_core=None, object_
     object_facts = None
 
     try:
-        object_facts = load_object_facts(object_facts_path or DEFAULT_OBJECT_FACTS_PATH)
+        effective_object_facts_path = object_facts_path or DEFAULT_OBJECT_FACTS_PATH
+        synced_payload = sync_object_facts_from_live_envtest(
+            effective_object_facts_path,
+            user_input=user_input,
+        )
+        if synced_payload is not None:
+            runtime_state = synced_payload.get("runtime_state") or {}
+            print(
+                "[EnvTestSync] 已同步实时场景: "
+                f"scene_id={runtime_state.get('scene_id')}, "
+                f"model_use={runtime_state.get('model_use')}, "
+                f"objects={len(synced_payload.get('objects') or [])}",
+                file=sys.stderr,
+            )
+        else:
+            sync_runtime_overrides_from_user_input(
+                effective_object_facts_path,
+                user_input=user_input,
+            )
+        object_facts = load_object_facts(effective_object_facts_path)
         if object_facts is not None:
-            print(f"[ObjectFacts] 已加载结构化物体信息: {object_facts_path or DEFAULT_OBJECT_FACTS_PATH}", file=sys.stderr)
+            print(f"[ObjectFacts] 已加载结构化物体信息: {effective_object_facts_path}", file=sys.stderr)
+        else:
+            _report_object_facts_status(effective_object_facts_path)
     except Exception as error:
         print(f"[ObjectFacts] 读取失败，忽略结构化物体信息: {error}", file=sys.stderr)
 
