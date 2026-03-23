@@ -72,6 +72,9 @@ class HighLevelPlanner:
             tasks, summary, override_meta = self._apply_scene_rule_overrides(tasks, summary, scene_facts, object_facts)
             if override_meta:
                 plan_meta.update(override_meta)
+            tasks, summary, climb_override_meta = self._prefer_climb_for_followup_travel(tasks, summary)
+            if climb_override_meta:
+                plan_meta.update(climb_override_meta)
             if not tasks:
                 tasks, summary = self._build_navigation_fallback(
                     user_input,
@@ -175,6 +178,49 @@ class HighLevelPlanner:
         print("⚠️  [规则修正] 检测到仅单侧可攀爬场景，已将 walk 规划修正为 climb")
         return override_tasks, override_summary, override_meta
 
+    def _prefer_climb_for_followup_travel(
+        self,
+        tasks: list[dict],
+        summary: str,
+    ) -> tuple[list[dict], str, dict[str, object] | None]:
+        first_climb_idx = next(
+            (idx for idx, task in enumerate(tasks) if task.get("function") == "climb"),
+            None,
+        )
+        if first_climb_idx is None:
+            return tasks, summary, None
+
+        converted = False
+        rewritten_tasks: list[dict] = []
+        for idx, task in enumerate(tasks, 1):
+            normalized = self._normalize_task(task, idx)
+            if idx - 1 > first_climb_idx and normalized.get("function") == "walk":
+                normalized = {
+                    **normalized,
+                    "type": "攀爬",
+                    "function": "climb",
+                    "task": self._rewrite_followup_walk_as_climb(normalized.get("task", "")),
+                    "reason": "当前路线已进入需要 climb 的运动模式，climb 同时支持前进和通过高差，后续无需再切回 walk",
+                }
+                converted = True
+            rewritten_tasks.append(normalized)
+
+        if not converted:
+            return tasks, summary, None
+
+        updated_summary = summary.rstrip("。")
+        if updated_summary:
+            updated_summary = updated_summary.replace("+ walk", "+ climb")
+            updated_summary = updated_summary.replace("-> walk", "-> climb")
+            updated_summary = f"{updated_summary}，后续前进统一使用 climb"
+        else:
+            updated_summary = "检测到需要 climb 的路线，后续前进统一使用 climb"
+        print("⚠️  [规则修正] 检测到 climb 后续仍包含 walk，已统一改为 climb")
+        return rewritten_tasks, updated_summary, {
+            "selected_plan_id": "rule_override_followup_climb",
+            "summary": updated_summary,
+        }
+
     @staticmethod
     def _normalize_task(task: dict, default_step: int) -> dict:
         """补齐规划字段，保证执行层可以稳定读取。"""
@@ -255,15 +301,15 @@ class HighLevelPlanner:
                     self._normalize_task(
                         {
                             "step": 5,
-                            "task": "在高台上继续行走到前方目标点",
-                            "type": "行走",
-                            "function": "walk",
-                            "reason": "完成翻越后，继续直行到目标点",
+                            "task": "在高台上继续使用 climb 前进到前方目标点",
+                            "type": "攀爬",
+                            "function": "climb",
+                            "reason": "当前路线已进入需要 climb 的运动模式，后续前进统一使用 climb 即可",
                         },
                         5,
                     ),
                 ],
-                "根据视觉上下文判断需要先选择箱子所在路线，再执行推箱子和攀爬动作到达目标点",
+                "根据视觉上下文判断需要先选择箱子所在路线，再执行推箱子和攀爬动作，后续前进统一使用 climb 到达目标点",
             )
 
         right_obstacle = self._has_side_obstacle(context, "right")
@@ -507,16 +553,40 @@ class HighLevelPlanner:
                 self._normalize_task(
                     {
                         "step": 5,
-                        "task": "在高台上继续行走到前方目标点",
-                        "type": "行走",
-                        "function": "walk",
-                        "reason": "完成翻越后继续前进到目标点",
+                        "task": "在高台上继续使用 climb 前进到前方目标点",
+                        "type": "攀爬",
+                        "function": "climb",
+                        "reason": "当前路线已进入需要 climb 的运动模式，后续前进统一使用 climb 即可",
                     },
                     5,
                 ),
             ],
-            f"根据结构化物体几何信息，需先选择{side_label}路线，推动箱子并分两段攀爬后到达目标点",
+            f"根据结构化物体几何信息，需先选择{side_label}路线，推动箱子并分两段攀爬，后续前进统一使用 climb 到达目标点",
         )
+
+    @staticmethod
+    def _rewrite_followup_walk_as_climb(task_text: str) -> str:
+        text = str(task_text).strip()
+        if not text:
+            return "继续使用 climb 前进到前方目标点"
+
+        replacements = (
+            ("继续行走到", "继续使用 climb 前进到"),
+            ("继续行走向", "继续使用 climb 前进到"),
+            ("行走到", "使用 climb 前进到"),
+            ("行走向", "使用 climb 前进到"),
+            ("继续行走", "继续使用 climb 前进"),
+            ("行走", "使用 climb 前进"),
+            ("walk", "climb"),
+        )
+        rewritten = text
+        for source, target in replacements:
+            if source in rewritten:
+                rewritten = rewritten.replace(source, target, 1)
+                break
+        if "climb" not in rewritten:
+            rewritten = f"继续使用 climb 执行：{rewritten}"
+        return rewritten
 
     def _has_side_obstacle(self, context: str, side: str) -> bool:
         if not context:
