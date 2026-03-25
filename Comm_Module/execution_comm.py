@@ -55,7 +55,7 @@ class SkillCommandPublisher:
     def __init__(self):
         _ros_init()
         self.node = Node("skill_command_publisher")
-        self.publisher = self.node.create_publisher(String, SKILL_COMMAND_TOPIC, 10)
+        self.publisher = self.node.create_publisher(String, SKILL_COMMAND_TOPIC, 15)
         print(f"[SkillCommandPublisher] 已创建: {SKILL_COMMAND_TOPIC}", file=sys.stderr)
         time.sleep(0.2)
 
@@ -86,7 +86,7 @@ class SkillCommandSubscriber:
             String,
             SKILL_COMMAND_TOPIC,
             self._message_callback,
-            10,
+            15,
         )
         print(f"[SkillCommandSubscriber] 已创建: {SKILL_COMMAND_TOPIC}", file=sys.stderr)
 
@@ -110,7 +110,7 @@ class ExecutionFeedbackPublisher:
     def __init__(self):
         _ros_init()
         self.node = Node("execution_feedback_publisher")
-        self.publisher = self.node.create_publisher(String, EXECUTION_FEEDBACK_TOPIC, 10)
+        self.publisher = self.node.create_publisher(String, EXECUTION_FEEDBACK_TOPIC, 15)
         print(f"[ExecutionFeedbackPublisher] 已创建: {EXECUTION_FEEDBACK_TOPIC}", file=sys.stderr)
         time.sleep(0.2)
 
@@ -132,7 +132,7 @@ class ExecutionFeedbackSubscriber:
             String,
             EXECUTION_FEEDBACK_TOPIC,
             self._message_callback,
-            10,
+            15,
         )
         print(f"[ExecutionFeedbackSubscriber] 已创建: {EXECUTION_FEEDBACK_TOPIC}", file=sys.stderr)
         time.sleep(0.2)

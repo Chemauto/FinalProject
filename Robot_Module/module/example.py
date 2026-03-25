@@ -24,7 +24,7 @@ def register_tools(mcp):
     """
 
     @mcp.tool()
-    async def example_tool(param1: str, param2: float = 10.0) -> str:
+    async def example_tool(param1: str, param2: float = 15.0) -> str:
         """示例工具函数
 
         这是一个模板函数，展示如何定义新的工具函数。
