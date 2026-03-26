@@ -12,6 +12,7 @@ class HighLevelPlanner:
 
     _OBSTACLE_KEYWORDS = ("高台", "矮墙", "长凳", "障碍", "箱子", "台阶", "结构", "墙体", "混凝土")
     _NAVIGATION_KEYWORDS = ("前往", "目标点", "到目标点", "到达", "导航")
+    _CLEAR_NAVIGATION_KEYWORDS = ("无障碍", "无明显障碍", "可通行", "畅通", "开阔", "开阔通道", "地面延伸", "延伸至远处")
 
     def __init__(self, client, model: str, prompt_path: str | None = None):
         self.client = client
@@ -69,7 +70,14 @@ class HighLevelPlanner:
             plan = json.loads(response_text)
             tasks, plan_meta = self.parse_plan_response(plan)
             summary = str(plan_meta.get("summary", ""))
-            tasks, summary, override_meta = self._apply_scene_rule_overrides(tasks, summary, scene_facts, object_facts)
+            tasks, summary, override_meta = self._apply_scene_rule_overrides(
+                tasks,
+                summary,
+                user_input,
+                visual_context,
+                scene_facts,
+                object_facts,
+            )
             if override_meta:
                 plan_meta.update(override_meta)
             tasks, summary, climb_override_meta = self._prefer_climb_for_followup_travel(tasks, summary)
@@ -153,9 +161,26 @@ class HighLevelPlanner:
         self,
         tasks: list[dict],
         summary: str,
+        user_input: str,
+        visual_context: str | None,
         scene_facts: dict | None,
         object_facts: dict | None,
     ) -> tuple[list[dict], str, dict[str, object] | None]:
+        direct_navigation = self._detect_direct_navigation_route(
+            user_input=user_input,
+            visual_context=visual_context,
+            scene_facts=scene_facts,
+            object_facts=object_facts,
+        )
+        if direct_navigation and self._should_force_direct_navigation(tasks):
+            override_tasks, override_summary = self._build_direct_navigation_plan(direct_navigation)
+            override_meta = {
+                "selected_plan_id": "rule_override_direct_navigation",
+                "summary": override_summary,
+            }
+            print("⚠️  [规则修正] 检测到目标点存在可直接导航路线，已将任务链修正为 navigation")
+            return override_tasks, override_summary, override_meta
+
         box_assisted = self._detect_box_assisted_geometry(scene_facts, object_facts)
         if box_assisted:
             if self._should_override_box_assisted_plan(tasks):
@@ -276,6 +301,100 @@ class HighLevelPlanner:
         }
 
     @staticmethod
+    def _parse_visual_context_payload(visual_context: str | None) -> dict[str, object]:
+        if not visual_context:
+            return {}
+        try:
+            payload = json.loads(visual_context)
+        except json.JSONDecodeError:
+            return {}
+        return payload if isinstance(payload, dict) else {}
+
+    @classmethod
+    def _text_has_clear_navigation_signal(cls, text: str) -> bool:
+        normalized = str(text or "").strip()
+        if not normalized:
+            return False
+        return any(keyword in normalized for keyword in cls._CLEAR_NAVIGATION_KEYWORDS)
+
+    @staticmethod
+    def _navigation_goal_is_ground_reachable(object_facts: dict | None) -> bool:
+        goal = (object_facts or {}).get("navigation_goal") or []
+        if not isinstance(goal, list) or len(goal) < 3:
+            return True
+        try:
+            return float(goal[2]) <= 0.05
+        except (TypeError, ValueError):
+            return True
+
+    def _detect_direct_navigation_route(
+        self,
+        user_input: str,
+        visual_context: str | None,
+        scene_facts: dict | None,
+        object_facts: dict | None,
+    ) -> dict[str, str] | None:
+        if not self._is_navigation_request(user_input):
+            return None
+        if not self._navigation_goal_is_ground_reachable(object_facts):
+            return None
+
+        visual_payload = self._parse_visual_context_payload(visual_context)
+        front_text = str(visual_payload.get("front_area", "")).strip()
+        obstacles = [str(item) for item in visual_payload.get("obstacles") or []]
+        front_clear = self._text_has_clear_navigation_signal(front_text)
+        front_blocked = any(
+            ("前方" in obstacle or "中央" in obstacle)
+            and any(keyword in obstacle for keyword in ("高台", "平台", "箱子", "障碍", "墙体", "台阶"))
+            for obstacle in obstacles
+        )
+        if front_clear and not front_blocked:
+            return {
+                "task": "前方存在可通行地面，直接调用 navigation 前往目标点",
+                "reason": "前方区域开阔且无明显正前方阻挡，navigation 具备自动导航和绕障能力，直接 navigation 是最简单的方案",
+                "summary": "前方存在可通行地面，直接使用 navigation 前往目标点是最简单方案",
+            }
+
+        route_options = (scene_facts or {}).get("route_options") or []
+        clear_ground_routes = [
+            option
+            for option in route_options
+            if str(option.get("status", "")).lower() == "clear"
+            and self._text_has_clear_navigation_signal(str(option.get("reason", "")))
+        ]
+        if clear_ground_routes:
+            preferred_route = clear_ground_routes[0]
+            direction = "左侧" if preferred_route.get("direction") == "left" else "右侧"
+            return {
+                "task": f"{direction}存在可通行地面，直接调用 navigation 前往目标点",
+                "reason": f"{direction}路线可通行，navigation 可自动绕过局部障碍并规划到终点，无需额外 climb 或手动切路线",
+                "summary": f"{direction}存在可通行地面，直接使用 navigation 前往目标点是最简单方案",
+            }
+        return None
+
+    @staticmethod
+    def _should_force_direct_navigation(tasks: list[dict]) -> bool:
+        function_chain = [str(task.get("function", "")) for task in tasks]
+        return function_chain != ["navigation"]
+
+    def _build_direct_navigation_plan(self, route_plan: dict[str, str]) -> tuple[list[dict], str]:
+        return (
+            [
+                self._normalize_task(
+                    {
+                        "step": 1,
+                        "task": route_plan["task"],
+                        "type": "导航",
+                        "function": "navigation",
+                        "reason": route_plan["reason"],
+                    },
+                    1,
+                )
+            ],
+            route_plan["summary"],
+        )
+
+    @staticmethod
     def _normalize_task(task: dict, default_step: int) -> dict:
         """补齐规划字段，保证执行层可以稳定读取。"""
         return {
@@ -296,6 +415,15 @@ class HighLevelPlanner:
         """当上层 LLM 返回空任务或异常时，基于规则生成导航步骤。"""
         if not self._is_navigation_request(user_input):
             return [], "无效输入，无法分解任务"
+
+        direct_navigation = self._detect_direct_navigation_route(
+            user_input=user_input,
+            visual_context=visual_context,
+            scene_facts=scene_facts,
+            object_facts=object_facts,
+        )
+        if direct_navigation:
+            return self._build_direct_navigation_plan(direct_navigation)
 
         context = visual_context or ""
 

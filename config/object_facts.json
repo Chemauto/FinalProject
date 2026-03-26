@@ -1,6 +1,6 @@
 {
   "navigation_goal": [
-    4.0,
+    5.0,
     0.0,
     0.0
   ],
@@ -30,22 +30,6 @@
         0.3
       ],
       "movable": false
-    },
-    {
-      "id": "platform_right_high",
-      "source_name": "right_high_obstacle",
-      "type": "platform",
-      "center": [
-        3.0,
-        -0.75,
-        0.0
-      ],
-      "size": [
-        2.0,
-        1.5,
-        0.5
-      ],
-      "movable": false
     }
   ],
   "scene_objects": [
@@ -64,27 +48,11 @@
         0.3
       ],
       "movable": false
-    },
-    {
-      "id": "platform_right_high",
-      "source_name": "right_high_obstacle",
-      "type": "platform",
-      "center": [
-        3.0,
-        -0.75,
-        0.0
-      ],
-      "size": [
-        2.0,
-        1.5,
-        0.5
-      ],
-      "movable": false
     }
   ],
   "runtime_state": {
-    "scene_id": 3,
-    "model_use": 3,
+    "scene_id": 1,
+    "model_use": 0,
     "start": false,
     "vel_command": [
       0.0,
@@ -98,9 +66,9 @@
       0.0,
       0.0
     ],
-    "skill": "push_box",
+    "skill": "idle",
     "navigation_goal_override": [
-      4.0,
+      5.0,
       0.0,
       0.0
     ]

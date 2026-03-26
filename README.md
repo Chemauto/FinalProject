@@ -3,6 +3,7 @@
 
 ## 当前能力
 - 只对外暴露 6 个技能：`walk`、`navigation`、`climb_align`、`climb`、`push_box`、`way_select`
+- 规划优先级：`navigation` 最简单，`climb` 次之，`push_box + climb_align + climb` 最复杂
 - 最大单步攀爬高度：`0.3 m`
 - 几何真值优先级高于 VLM
 - 任一步失败后直接停止后续任务，不自动重规划
@@ -155,6 +156,7 @@ python interactive.py
 
 说明：
 - 当用户说“前往某个目标点/坐标/位置”时，高层规划会优先调用 `navigation`
+- 如果前方存在可通行地面路线，即使侧边存在低平台，规划也会优先直接 `navigation`，因为导航策略具备自动绕障能力
 - `walk` 主要保留给沿路线直行、横向切换后的继续前进等速度式动作
 - 箱子辅助场景默认收敛为 `push_box -> climb_align -> climb -> navigation`
 
