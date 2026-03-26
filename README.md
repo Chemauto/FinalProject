@@ -21,6 +21,7 @@
 -> 低层执行器直接调用工具
 -> Robot_Module/module/navigation.py
 -> 写 /tmp 控制文件 或 调 Socket client
+-> 轮询 /tmp/envtest_live_status.json
 -> IsaacLab EnvTest 执行
 -> 返回 execution_feedback
 ```
@@ -133,6 +134,7 @@ VLM 当前输出结构化 JSON，核心字段：
 ## 技能当前行为
 - `walk`：默认速度 `0.6 m/s`，用于沿当前路线继续前进
 - `navigation`：通过 `goal_command` 下发目标点，使用 EnvTest `model_use=4` 自动导航到目标位置
+- `navigation`：默认每 `0.5s` 轮询 `/tmp/envtest_live_status.json`，按“目标距离 + 连续位置稳定”判定 SUCCESS，而不是仅按预计时间返回成功
 - `climb_align`：在正式 `climb` 前，使用 `model_use=4` 导航到箱子或平台前的攀爬起点
 - `way_select`：默认是横向 `walk`；左侧 `velocity=[0.0,0.5,0.0]`，右侧 `velocity=[0.0,-0.5,0.0]`，固定 `3s`
 - `climb`：最大 `0.3m`，默认速度 `0.6 m/s`，默认执行 `15s`，默认通过 `Socket/envtest_socket_client.py` 下发 `model_use=2`
@@ -144,6 +146,7 @@ VLM 当前输出结构化 JSON，核心字段：
 cd /home/xcj/work/IsaacLab/IsaacLabBisShe
 python NewTools/envtest_model_use_player.py --scene_id 3
 ```
+默认会持续写出 `/tmp/envtest_live_status.json`，供 FinalProject 轮询导航完成状态。
 2. 启动交互入口
 ```bash
 cd /home/xcj/work/FinalProject/Interactive_Module
@@ -164,6 +167,12 @@ python interactive.py
 - `FINALPROJECT_OBJECT_FACTS_PATH`
 - `FINALPROJECT_WAY_SELECT_POLICY`
 - `FINALPROJECT_NAV_BACKEND`
+- `FINALPROJECT_STATUS_FILE`
+- `FINALPROJECT_STATUS_POLL_SEC`
+- `FINALPROJECT_NAV_ARRIVAL_TOL_M`
+- `FINALPROJECT_NAV_STABLE_POSITION_DELTA_M`
+- `FINALPROJECT_NAV_REQUIRED_STABLE_POLLS`
+- `FINALPROJECT_STATUS_STALE_SEC`
 - `FINALPROJECT_CLIMB_DURATION_SEC`
 - `FINALPROJECT_CLIMB_SPEED_MPS`
 - `FINALPROJECT_CLIMB_USE_SOCKET_CLIENT`

@@ -24,6 +24,7 @@ import os
 import re
 import socket
 import sys
+import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -63,6 +64,12 @@ DEFAULT_CLIMB_PREALIGN_OFFSET_M = 0.35
 PUSH_GOAL_FRONT_GAP_M = 0.03
 PUSH_GOAL_LATERAL_MARGIN_M = 0.03
 PUSH_PAIR_GOAL_FRONT_GAP_M = 0.0
+DEFAULT_STATUS_POLL_SEC = 0.5
+DEFAULT_NAV_ARRIVAL_TOL_M = 0.15
+DEFAULT_NAV_STABLE_POSITION_DELTA_M = 0.08
+DEFAULT_NAV_REQUIRED_STABLE_POLLS = 3
+DEFAULT_STATUS_STALE_SEC = 2.0
+DEFAULT_STATUS_READY_TIMEOUT_SEC = 2.0
 DEFAULT_COMMAND_SETTLE_SEC = 0.15
 DEFAULT_STOP_SETTLE_SEC = 0.1
 
@@ -86,6 +93,7 @@ class EnvTestRuntimeConfig:
     model_use_file: Path
     velocity_file: Path
     goal_file: Path
+    status_file: Path
     start_file: Path
     reset_file: Path
     command_settle_sec: float
@@ -116,6 +124,16 @@ def _read_env_str(name: str, default: str) -> str:
     return raw or default
 
 
+def _read_env_int(name: str, default: int) -> int:
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        return default
+
+
 def _load_runtime_config() -> EnvTestRuntimeConfig:
     backend = os.getenv("FINALPROJECT_NAV_BACKEND", "file").strip().lower()
     if backend not in {"file", "udp", "ros"}:
@@ -132,6 +150,7 @@ def _load_runtime_config() -> EnvTestRuntimeConfig:
         model_use_file=Path(os.getenv("FINALPROJECT_MODEL_USE_FILE", "/tmp/model_use.txt")),
         velocity_file=Path(os.getenv("FINALPROJECT_VELOCITY_FILE", "/tmp/envtest_velocity_command.txt")),
         goal_file=Path(os.getenv("FINALPROJECT_GOAL_FILE", "/tmp/envtest_goal_command.txt")),
+        status_file=Path(os.getenv("FINALPROJECT_STATUS_FILE", "/tmp/envtest_live_status.json")),
         start_file=Path(os.getenv("FINALPROJECT_START_FILE", "/tmp/envtest_start.txt")),
         reset_file=Path(os.getenv("FINALPROJECT_RESET_FILE", "/tmp/envtest_reset.txt")),
         command_settle_sec=_read_env_float("FINALPROJECT_NAV_COMMAND_SETTLE_SEC", DEFAULT_COMMAND_SETTLE_SEC),
@@ -290,6 +309,34 @@ def _extract_robot_pose() -> list[float]:
         return [float(robot_pose[0]), float(robot_pose[1]), float(robot_pose[2])]
     except (TypeError, ValueError):
         return [0.0, 0.0, 0.0]
+
+
+def _read_status_snapshot(path: Path) -> dict[str, Any] | None:
+    if not path.is_file():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _extract_status_vector(payload: dict[str, Any], key: str, min_len: int = 3) -> list[float] | None:
+    values = payload.get(key)
+    if not isinstance(values, list) or len(values) < min_len:
+        return None
+    try:
+        return [float(value) for value in values]
+    except (TypeError, ValueError):
+        return None
+
+
+def _is_recent_status_snapshot(payload: dict[str, Any], stale_sec: float) -> bool:
+    timestamp = payload.get("timestamp")
+    try:
+        return (time.time() - float(timestamp)) <= stale_sec
+    except (TypeError, ValueError):
+        return False
 
 
 def _load_scene_objects() -> list[dict[str, Any]]:
@@ -791,6 +838,132 @@ async def _stop_envtest_skill_via_socket_client(config: EnvTestRuntimeConfig) ->
         await _run_envtest_socket_client(config, "--model_use", str(MODEL_USE_IDLE))
 
 
+async def _wait_navigation_arrival_status(
+    config: EnvTestRuntimeConfig,
+    goal_command: list[float],
+    timeout_sec: float,
+) -> dict[str, Any]:
+    poll_sec = max(0.1, _read_env_float("FINALPROJECT_STATUS_POLL_SEC", DEFAULT_STATUS_POLL_SEC))
+    arrival_tol_m = abs(_read_env_float("FINALPROJECT_NAV_ARRIVAL_TOL_M", DEFAULT_NAV_ARRIVAL_TOL_M))
+    stable_delta_m = abs(
+        _read_env_float("FINALPROJECT_NAV_STABLE_POSITION_DELTA_M", DEFAULT_NAV_STABLE_POSITION_DELTA_M)
+    )
+    required_stable_polls = max(
+        1,
+        _read_env_int("FINALPROJECT_NAV_REQUIRED_STABLE_POLLS", DEFAULT_NAV_REQUIRED_STABLE_POLLS),
+    )
+    stale_sec = abs(_read_env_float("FINALPROJECT_STATUS_STALE_SEC", DEFAULT_STATUS_STALE_SEC))
+    ready_timeout_sec = max(
+        poll_sec,
+        _read_env_float("FINALPROJECT_STATUS_READY_TIMEOUT_SEC", DEFAULT_STATUS_READY_TIMEOUT_SEC),
+    )
+
+    start_time = time.time()
+    deadline = start_time + timeout_sec
+    ready_deadline = start_time + ready_timeout_sec
+    stable_hits = 0
+    previous_robot_pose: list[float] | None = None
+    latest_snapshot: dict[str, Any] | None = None
+    latest_dist_xy: float | None = None
+    latest_pose_delta: float | None = None
+
+    while time.time() < deadline:
+        await asyncio.sleep(poll_sec)
+        snapshot = _read_status_snapshot(config.status_file)
+        if snapshot is None:
+            if time.time() >= ready_deadline:
+                return {
+                    "ok": False,
+                    "reason": f"未找到导航状态文件: {config.status_file}",
+                    "snapshot": latest_snapshot,
+                    "dist_xy": latest_dist_xy,
+                    "pose_delta_xy": latest_pose_delta,
+                    "elapsed_sec": round(time.time() - start_time, 3),
+                }
+            continue
+        if not _is_recent_status_snapshot(snapshot, stale_sec):
+            latest_snapshot = snapshot
+            if time.time() >= ready_deadline:
+                return {
+                    "ok": False,
+                    "reason": f"导航状态文件已过期，超过 {stale_sec:.1f}s 未更新",
+                    "snapshot": latest_snapshot,
+                    "dist_xy": latest_dist_xy,
+                    "pose_delta_xy": latest_pose_delta,
+                    "elapsed_sec": round(time.time() - start_time, 3),
+                }
+            continue
+
+        latest_snapshot = snapshot
+        robot_pose = _extract_status_vector(snapshot, "robot_pose", min_len=3)
+        status_goal = _extract_status_vector(snapshot, "goal", min_len=3)
+        active_goal = status_goal or goal_command
+        if robot_pose is None or not isinstance(active_goal, list) or len(active_goal) < 2:
+            continue
+
+        latest_dist_xy = math.hypot(robot_pose[0] - active_goal[0], robot_pose[1] - active_goal[1])
+        latest_pose_delta = None
+        if previous_robot_pose is not None:
+            latest_pose_delta = math.hypot(
+                robot_pose[0] - previous_robot_pose[0],
+                robot_pose[1] - previous_robot_pose[1],
+            )
+        previous_robot_pose = robot_pose
+
+        start_flag = snapshot.get("start")
+        model_use_value = snapshot.get("model_use")
+        try:
+            current_model_use = int(model_use_value) if model_use_value is not None else None
+        except (TypeError, ValueError):
+            current_model_use = None
+
+        is_stable_pose = latest_pose_delta is not None and latest_pose_delta <= stable_delta_m
+        if latest_dist_xy <= arrival_tol_m and is_stable_pose:
+            stable_hits += 1
+            if stable_hits >= required_stable_polls:
+                return {
+                    "ok": True,
+                    "reason": f"导航已到达目标附近 (dist_xy={latest_dist_xy:.3f}m)",
+                    "snapshot": latest_snapshot,
+                    "dist_xy": latest_dist_xy,
+                    "pose_delta_xy": latest_pose_delta,
+                    "stable_hits": stable_hits,
+                    "elapsed_sec": round(time.time() - start_time, 3),
+                }
+        else:
+            stable_hits = 0
+
+        if start_flag is False or (current_model_use is not None and current_model_use != MODEL_USE_NAVIGATION):
+            if latest_dist_xy is None or latest_dist_xy > arrival_tol_m:
+                return {
+                    "ok": False,
+                    "reason": (
+                        "导航在到达目标前已停止"
+                        if latest_dist_xy is None
+                        else f"导航在到达目标前已停止 (dist_xy={latest_dist_xy:.3f}m)"
+                    ),
+                    "snapshot": latest_snapshot,
+                    "dist_xy": latest_dist_xy,
+                    "pose_delta_xy": latest_pose_delta,
+                    "stable_hits": stable_hits,
+                    "elapsed_sec": round(time.time() - start_time, 3),
+                }
+
+    return {
+        "ok": False,
+        "reason": (
+            f"导航超时，{timeout_sec:.1f}s 内未到达目标"
+            if latest_dist_xy is None
+            else f"导航超时，{timeout_sec:.1f}s 内未到达目标 (dist_xy={latest_dist_xy:.3f}m)"
+        ),
+        "snapshot": latest_snapshot,
+        "dist_xy": latest_dist_xy,
+        "pose_delta_xy": latest_pose_delta,
+        "stable_hits": stable_hits,
+        "elapsed_sec": round(time.time() - start_time, 3),
+    }
+
+
 async def _wait_skill_feedback(
     skill_name: str,
     parameters: dict[str, Any],
@@ -844,6 +1017,43 @@ async def _wait_skill_feedback(
     )
     await asyncio.sleep(config.command_settle_sec)
     _apply_envtest_command(config, start=True)
+
+    if model_use == MODEL_USE_NAVIGATION and isinstance(goal_command, list) and len(goal_command) >= 3:
+        arrival_result = await _wait_navigation_arrival_status(
+            config,
+            goal_command=goal_command,
+            timeout_sec=timeout_sec,
+        )
+        await _stop_envtest_skill(config)
+
+        if not arrival_result.get("ok"):
+            return {
+                "action_id": action_id,
+                **_build_feedback(
+                    skill_name,
+                    str(arrival_result.get("reason") or "导航未确认到达目标"),
+                    signal="FAILURE",
+                ),
+                "result": {
+                    **planned_result,
+                    "mode": "envtest_live_status_failure",
+                    "backend": config.backend,
+                    "wait_time_sec": arrival_result.get("elapsed_sec"),
+                    "arrival_check": arrival_result,
+                },
+            }
+
+        return {
+            "action_id": action_id,
+            **_build_feedback(skill_name, local_success_message),
+                "result": {
+                    **planned_result,
+                    "mode": "envtest_live_status",
+                    "backend": config.backend,
+                    "wait_time_sec": arrival_result.get("elapsed_sec"),
+                    "arrival_check": arrival_result,
+                },
+            }
 
     actual_wait_sec = min(timeout_sec, execution_time_sec)
     await asyncio.sleep(actual_wait_sec)

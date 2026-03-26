@@ -29,6 +29,7 @@ DEFAULT_CONTROL_FILES = {
     "model_use_file": Path(os.getenv("FINALPROJECT_MODEL_USE_FILE", "/tmp/model_use.txt")),
     "velocity_file": Path(os.getenv("FINALPROJECT_VELOCITY_FILE", "/tmp/envtest_velocity_command.txt")),
     "goal_file": Path(os.getenv("FINALPROJECT_GOAL_FILE", "/tmp/envtest_goal_command.txt")),
+    "status_file": Path(os.getenv("FINALPROJECT_STATUS_FILE", "/tmp/envtest_live_status.json")),
     "start_file": Path(os.getenv("FINALPROJECT_START_FILE", "/tmp/envtest_start.txt")),
 }
 SCENE_OBJECT_SPECS = {
@@ -179,6 +180,17 @@ def _read_vector_file(path: str | Path, valid_lengths: tuple[int, ...]) -> list[
     if values is None or len(values) not in valid_lengths:
         return None
     return values
+
+
+def _read_status_json_file(path: str | Path) -> dict[str, Any] | None:
+    text = _read_text_if_exists(path)
+    if not text:
+        return None
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        return None
+    return payload if isinstance(payload, dict) else None
 
 
 def _iter_process_cmdlines() -> list[tuple[int, list[str]]]:
@@ -525,6 +537,7 @@ def sync_object_facts_from_live_envtest(
     model_use_file = Path(_extract_cli_arg(tokens, "--model_use_file", str(DEFAULT_CONTROL_FILES["model_use_file"])) or DEFAULT_CONTROL_FILES["model_use_file"])
     velocity_file = Path(_extract_cli_arg(tokens, "--velocity_command_file", str(DEFAULT_CONTROL_FILES["velocity_file"])) or DEFAULT_CONTROL_FILES["velocity_file"])
     goal_file = Path(_extract_cli_arg(tokens, "--goal_command_file", str(DEFAULT_CONTROL_FILES["goal_file"])) or DEFAULT_CONTROL_FILES["goal_file"])
+    status_file = Path(_extract_cli_arg(tokens, "--status_json_file", str(DEFAULT_CONTROL_FILES["status_file"])) or DEFAULT_CONTROL_FILES["status_file"])
     start_file = Path(_extract_cli_arg(tokens, "--start_file", str(DEFAULT_CONTROL_FILES["start_file"])) or DEFAULT_CONTROL_FILES["start_file"])
 
     snapshot: dict[str, Any] = {
@@ -538,6 +551,16 @@ def sync_object_facts_from_live_envtest(
     }
     if isinstance(snapshot.get("model_use"), int):
         snapshot["skill"] = MODEL_USE_TO_SKILL.get(int(snapshot["model_use"]))
+
+    status_payload = _read_status_json_file(status_file)
+    if status_payload:
+        for key in ("model_use", "skill", "scene_id", "start", "unified_obs_dim", "policy_obs_dim"):
+            if key in status_payload:
+                snapshot[key] = status_payload.get(key)
+        for key in ("pose_command", "vel_command", "robot_pose", "goal"):
+            values = status_payload.get(key)
+            if isinstance(values, list):
+                snapshot[key] = _round_list(values)
 
     scene_objects = _build_scene_objects(scene_id, repo_root)
     return update_object_facts_runtime(

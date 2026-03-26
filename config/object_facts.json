@@ -1,13 +1,13 @@
 {
   "navigation_goal": [
-    5.0,
+    6.0,
     0.0,
     0.0
   ],
   "robot_pose": [
+    -0.065,
     0.0,
-    0.0,
-    0.0
+    0.285
   ],
   "constraints": {
     "max_climb_height_m": 0.3,
@@ -62,15 +62,17 @@
     "pose_command": null,
     "goal": null,
     "robot_pose": [
+      -0.065,
       0.0,
-      0.0,
-      0.0
+      0.285
     ],
     "skill": "idle",
     "navigation_goal_override": [
-      5.0,
+      6.0,
       0.0,
       0.0
-    ]
+    ],
+    "unified_obs_dim": 256,
+    "policy_obs_dim": null
   }
 }
