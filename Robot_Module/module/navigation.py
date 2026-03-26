@@ -55,6 +55,13 @@ DEFAULT_CLIMB_EXECUTION_SEC = 15.0
 DEFAULT_PUSH_BOX_DURATION_SEC = 15.0
 DEFAULT_NAVIGATION_DURATION_SEC = 6.0
 DEFAULT_NAVIGATION_TIMEOUT_MARGIN_SEC = 5.0
+DEFAULT_POST_PUSH_SETTLE_SEC = 1.2
+DEFAULT_PRE_CLIMB_SETTLE_SEC = 0.8
+DEFAULT_POST_ALIGN_SETTLE_SEC = 0.6
+DEFAULT_CLIMB_PREALIGN_OFFSET_M = 0.35
+PUSH_GOAL_FRONT_GAP_M = 0.03
+PUSH_GOAL_LATERAL_MARGIN_M = 0.03
+PUSH_PAIR_GOAL_FRONT_GAP_M = 0.0
 DEFAULT_COMMAND_SETTLE_SEC = 0.15
 DEFAULT_STOP_SETTLE_SEC = 0.1
 
@@ -284,6 +291,313 @@ def _extract_robot_pose() -> list[float]:
         return [0.0, 0.0, 0.0]
 
 
+def _load_scene_objects() -> list[dict[str, Any]]:
+    object_facts = _load_object_facts() or {}
+    objects = object_facts.get("objects") or []
+    if isinstance(objects, list):
+        return [obj for obj in objects if isinstance(obj, dict)]
+    return []
+
+
+def _find_scene_object(*candidates: str) -> dict[str, Any] | None:
+    normalized_candidates = {
+        str(candidate).strip().lower()
+        for candidate in candidates
+        if str(candidate).strip()
+    }
+    if not normalized_candidates:
+        return None
+
+    for obj in _load_scene_objects():
+        identifiers = {
+            str(obj.get("id", "")).strip().lower(),
+            str(obj.get("source_name", "")).strip().lower(),
+            str(obj.get("name", "")).strip().lower(),
+        }
+        if identifiers & normalized_candidates:
+            return obj
+    return None
+
+
+def _planar_distance(point_a: Sequence[float], point_b: Sequence[float]) -> float:
+    return math.hypot(float(point_a[0]) - float(point_b[0]), float(point_a[1]) - float(point_b[1]))
+
+
+def _select_support_box_for_target(target_obj: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not target_obj:
+        return None
+
+    boxes = [
+        obj
+        for obj in _load_scene_objects()
+        if bool(obj.get("movable")) and str(obj.get("type", "")).lower() == "box"
+    ]
+    if not boxes:
+        return None
+
+    target_center = target_obj.get("center") or [0.0, 0.0, 0.0]
+    try:
+        return min(boxes, key=lambda box: _planar_distance(box.get("center") or [0.0, 0.0, 0.0], target_center))
+    except (TypeError, ValueError):
+        return boxes[0]
+
+
+def _lookup_scene_object(name: str) -> dict[str, Any] | None:
+    return _find_scene_object(name)
+
+
+def _compute_centered_pair_push_goal_from_objects(
+    support_box: dict[str, Any],
+) -> tuple[list[float], dict[str, Any]] | None:
+    candidate_pairs = (
+        ("left_high_obstacle", "right_high_obstacle"),
+        ("left_low_obstacle", "right_low_obstacle"),
+        ("left_high_obstacle", "right_low_obstacle"),
+        ("left_low_obstacle", "right_high_obstacle"),
+    )
+
+    support_box_size = support_box.get("size") or []
+    support_box_center = support_box.get("center") or []
+    if len(support_box_size) < 3 or len(support_box_center) < 3:
+        return None
+
+    for left_name, right_name in candidate_pairs:
+        left_obj = _lookup_scene_object(left_name)
+        right_obj = _lookup_scene_object(right_name)
+        if left_obj is None or right_obj is None:
+            continue
+
+        left_center = left_obj.get("center") or []
+        left_size = left_obj.get("size") or []
+        right_center = right_obj.get("center") or []
+        right_size = right_obj.get("size") or []
+        if len(left_center) < 3 or len(left_size) < 3 or len(right_center) < 3 or len(right_size) < 3:
+            continue
+
+        try:
+            left_front_x = float(left_center[0]) - 0.5 * float(left_size[0])
+            right_front_x = float(right_center[0]) - 0.5 * float(right_size[0])
+            goal_x = min(left_front_x, right_front_x) - 0.5 * float(support_box_size[0]) - PUSH_PAIR_GOAL_FRONT_GAP_M
+
+            left_inner_y = float(left_center[1]) - 0.5 * float(left_size[1])
+            right_inner_y = float(right_center[1]) + 0.5 * float(right_size[1])
+            goal_y = 0.5 * (left_inner_y + right_inner_y)
+
+            barrier_y_min = min(
+                float(left_center[1]) - 0.5 * float(left_size[1]),
+                float(right_center[1]) - 0.5 * float(right_size[1]),
+            )
+            barrier_y_max = max(
+                float(left_center[1]) + 0.5 * float(left_size[1]),
+                float(right_center[1]) + 0.5 * float(right_size[1]),
+            )
+            return [
+                round(goal_x, 3),
+                round(goal_y, 3),
+                round(float(support_box_center[2]), 3),
+                0.0,
+            ], {
+                "selected_obstacle_names": f"{left_name}+{right_name}",
+                "selected_obstacle_position": [
+                    round(0.5 * (float(left_center[0]) + float(right_center[0])), 3),
+                    round(0.5 * (barrier_y_min + barrier_y_max), 3),
+                    round(0.5 * (float(left_center[2]) + float(right_center[2])), 3),
+                ],
+                "selected_obstacle_size": [
+                    round(max(float(left_size[0]), float(right_size[0])), 3),
+                    round(barrier_y_max - barrier_y_min, 3),
+                    round(max(float(left_size[2]), float(right_size[2])), 3),
+                ],
+                "align_mode": "paired_wall",
+            }
+        except (TypeError, ValueError):
+            continue
+
+    return None
+
+
+def _estimate_box_pose_after_push(
+    support_box: dict[str, Any],
+    target_platform: dict[str, Any] | None,
+) -> tuple[list[float], dict[str, Any]] | None:
+    centered_pair_goal = _compute_centered_pair_push_goal_from_objects(support_box)
+    if centered_pair_goal is not None:
+        return centered_pair_goal
+
+    box_center = support_box.get("center") or []
+    box_size = support_box.get("size") or []
+    if len(box_center) < 3 or len(box_size) < 3:
+        return None
+
+    platform_candidates = [
+        obj
+        for obj in _load_scene_objects()
+        if str(obj.get("type", "")).lower() == "platform"
+    ]
+    if target_platform is not None:
+        platform_candidates = [target_platform, *platform_candidates]
+
+    deduped_candidates: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
+    for candidate in platform_candidates:
+        candidate_id = str(candidate.get("id", "")).strip().lower()
+        if candidate_id and candidate_id in seen_ids:
+            continue
+        if candidate_id:
+            seen_ids.add(candidate_id)
+        deduped_candidates.append(candidate)
+
+    best_goal: list[float] | None = None
+    best_debug: dict[str, Any] | None = None
+    best_distance: float | None = None
+
+    for platform_obj in deduped_candidates:
+        platform_center = platform_obj.get("center") or []
+        platform_size = platform_obj.get("size") or []
+        if len(platform_center) < 3 or len(platform_size) < 3:
+            continue
+
+        try:
+            goal_x = (
+                float(platform_center[0])
+                - 0.5 * float(platform_size[0])
+                - 0.5 * float(box_size[0])
+                - PUSH_GOAL_FRONT_GAP_M
+            )
+            lateral_half_range = 0.5 * (float(platform_size[1]) - float(box_size[1])) - PUSH_GOAL_LATERAL_MARGIN_M
+            if lateral_half_range > 0.0:
+                goal_y_min = float(platform_center[1]) - lateral_half_range
+                goal_y_max = float(platform_center[1]) + lateral_half_range
+                goal_y = min(max(float(box_center[1]), goal_y_min), goal_y_max)
+            else:
+                goal_y = float(platform_center[1])
+
+            candidate_goal = [
+                round(goal_x, 3),
+                round(goal_y, 3),
+                round(float(box_center[2]), 3),
+                0.0,
+            ]
+            candidate_distance = _planar_distance(candidate_goal, box_center)
+        except (TypeError, ValueError):
+            continue
+
+        if best_distance is None or candidate_distance < best_distance:
+            best_distance = candidate_distance
+            best_goal = candidate_goal
+            best_debug = {
+                "selected_obstacle_names": str(platform_obj.get("source_name") or platform_obj.get("id") or "platform"),
+                "selected_obstacle_position": [round(float(v), 3) for v in platform_center[:3]],
+                "selected_obstacle_size": [round(float(v), 3) for v in platform_size[:3]],
+                "align_mode": "single_platform",
+            }
+
+    if best_goal is None or best_debug is None:
+        return None
+    return best_goal, best_debug
+
+
+def _box_entry_pose_towards_platform(
+    box_pose: Sequence[float],
+    box_size: Sequence[float],
+    platform_center: Sequence[float],
+) -> list[float] | None:
+    if len(box_pose) < 2 or len(box_size) < 2 or len(platform_center) < 2:
+        return None
+
+    try:
+        delta_x = float(platform_center[0]) - float(box_pose[0])
+        delta_y = float(platform_center[1]) - float(box_pose[1])
+    except (TypeError, ValueError):
+        return None
+
+    norm = math.hypot(delta_x, delta_y)
+    if norm < 1e-6:
+        direction_x, direction_y = 1.0, 0.0
+    else:
+        direction_x = delta_x / norm
+        direction_y = delta_y / norm
+
+    try:
+        box_half_extent = abs(direction_x) * float(box_size[0]) / 2.0 + abs(direction_y) * float(box_size[1]) / 2.0
+    except (TypeError, ValueError):
+        return None
+
+    clearance = abs(_read_env_float("FINALPROJECT_CLIMB_PREALIGN_OFFSET_M", DEFAULT_CLIMB_PREALIGN_OFFSET_M))
+    yaw = math.atan2(direction_y, direction_x)
+    return [
+        round(float(box_pose[0]) - direction_x * (box_half_extent + clearance), 3),
+        round(float(box_pose[1]) - direction_y * (box_half_extent + clearance), 3),
+        0.0,
+        round(yaw, 3),
+    ]
+
+
+def _build_climb_staging_goal(
+    stage: str,
+    target: str,
+) -> tuple[list[float], dict[str, Any]] | None:
+    target_obj = _find_scene_object(stage, target)
+    if not target_obj:
+        return None
+    if str(target_obj.get("type", "")).lower() != "platform":
+        return None
+
+    center = target_obj.get("center") or []
+    size = target_obj.get("size") or []
+    if not isinstance(center, list) or len(center) < 2:
+        return None
+    if not isinstance(size, list) or len(size) < 2:
+        return None
+
+    support_box = _select_support_box_for_target(target_obj)
+    if support_box is not None:
+        estimated_push_result = _estimate_box_pose_after_push(support_box, target_obj)
+        support_box_size = support_box.get("size") or []
+        if estimated_push_result is not None and isinstance(support_box_size, list) and len(support_box_size) >= 2:
+            estimated_box_pose, push_debug = estimated_push_result
+            obstacle_center = push_debug.get("selected_obstacle_position") or center
+            box_entry_goal = _box_entry_pose_towards_platform(
+                estimated_box_pose,
+                support_box_size,
+                obstacle_center,
+            )
+            if box_entry_goal is not None:
+                return box_entry_goal, {
+                    "object_id": str(support_box.get("id", "")).strip() or "box",
+                    "object_type": "box_entry",
+                    "object_center": estimated_box_pose,
+                    "object_size": support_box_size,
+                    "target_platform_id": str(target_obj.get("id", "")).strip() or target,
+                    "align_mode": str(push_debug.get("align_mode") or "box_assisted"),
+                    "selected_obstacle_names": push_debug.get("selected_obstacle_names"),
+                    "selected_obstacle_position": obstacle_center,
+                    "selected_obstacle_size": push_debug.get("selected_obstacle_size"),
+                }
+
+    try:
+        center_x = float(center[0])
+        center_y = float(center[1])
+        size_x = float(size[0])
+    except (TypeError, ValueError):
+        return None
+
+    approach_offset = abs(_read_env_float("FINALPROJECT_CLIMB_PREALIGN_OFFSET_M", DEFAULT_CLIMB_PREALIGN_OFFSET_M))
+    goal = [
+        round(center_x - size_x / 2.0 - approach_offset, 3),
+        round(center_y, 3),
+        0.0,
+        0.0,
+    ]
+    return goal, {
+        "object_id": str(target_obj.get("id", "")).strip() or target,
+        "object_type": str(target_obj.get("type", "")).strip() or "platform",
+        "object_center": center,
+        "object_size": size,
+        "align_mode": "platform_front",
+    }
+
+
 def _select_side_anchor_y(direction: str) -> float | None:
     object_facts = _load_object_facts() or {}
     objects = object_facts.get("objects") or []
@@ -350,6 +664,28 @@ def _estimate_goal_skill_duration(goal_value: list[float] | str | None, fallback
     goal_y = float(goal_value[1])
     planar_distance = math.hypot(goal_x - robot_x, goal_y - robot_y)
     return max(fallback_sec, planar_distance / 0.35 + 1.0)
+
+
+async def _hold_idle_stability(
+    config: EnvTestRuntimeConfig,
+    *,
+    wait_sec: float,
+    reason: str,
+) -> None:
+    wait_sec = max(0.0, float(wait_sec))
+    if wait_sec <= 0:
+        return
+
+    _log_skill("stabilize", f"{reason}，静止等待 {wait_sec:.2f} 秒")
+    if config.backend != "ros":
+        idle_fields: dict[str, Any] = {
+            "start": False,
+            "velocity": [0.0, 0.0, 0.0],
+        }
+        if config.auto_idle_after_skill:
+            idle_fields["model_use"] = MODEL_USE_IDLE
+        _apply_envtest_command(config, **idle_fields)
+    await asyncio.sleep(wait_sec)
 
 
 def _apply_envtest_command(
@@ -740,6 +1076,42 @@ async def execute_climb_skill(
     climb_speed = abs(_read_env_float("FINALPROJECT_CLIMB_SPEED_MPS", DEFAULT_CLIMB_SPEED_MPS))
     velocity_command = [climb_speed, 0.0, 0.0]
     execution_time_sec = max(0.5, _read_env_float("FINALPROJECT_CLIMB_DURATION_SEC", DEFAULT_CLIMB_EXECUTION_SEC))
+    prealign_enabled = _read_env_bool("FINALPROJECT_CLIMB_PREALIGN_ENABLED", True)
+    prealign_result: dict[str, Any] | None = None
+
+    if wait_feedback:
+        pre_climb_settle_sec = _read_env_float("FINALPROJECT_PRE_CLIMB_SETTLE_SEC", DEFAULT_PRE_CLIMB_SETTLE_SEC)
+        await _hold_idle_stability(
+            config,
+            wait_sec=pre_climb_settle_sec,
+            reason=f"climb 前稳定机身，目标={target}",
+        )
+
+        if prealign_enabled:
+            staging_goal = _build_climb_staging_goal(stage, target)
+            if staging_goal is not None:
+                align_goal_command, align_meta = staging_goal
+                align_target = f"{align_meta['object_id']} 前对正点"
+                _log_skill(
+                    "climb_align",
+                    f"climb 前先对正到 {align_target}，goal={align_goal_command}",
+                )
+                prealign_result = await execute_navigation_skill(
+                    goal_command=align_goal_command,
+                    target=align_target,
+                    speech="",
+                    wait_feedback=True,
+                )
+                if prealign_result.get("status") != "success":
+                    feedback = prealign_result.get("execution_feedback") or {}
+                    raise RuntimeError(f"climb 前对正失败: {feedback.get('message', 'navigation pre-align failed')}")
+
+                post_align_settle_sec = _read_env_float("FINALPROJECT_POST_ALIGN_SETTLE_SEC", DEFAULT_POST_ALIGN_SETTLE_SEC)
+                await _hold_idle_stability(
+                    config,
+                    wait_sec=post_align_settle_sec,
+                    reason=f"对正完成后再次稳定机身，目标={target}",
+                )
 
     _speak(speech)
     _log_skill(
@@ -783,6 +1155,7 @@ async def execute_climb_skill(
         "action_id": feedback.get("action_id"),
         "execution_feedback": feedback,
         "execution_result": feedback.get("result", {}),
+        "prealign_result": prealign_result,
         "control_command": {
             "model_use": MODEL_USE_CLIMB,
             "velocity": velocity_command,
@@ -805,14 +1178,14 @@ async def execute_push_box_skill(
 
     parsed_goal_command = _parse_goal_value(target_position)
     auto_target = parsed_goal_command is None or parsed_goal_command == "auto"
-    goal_command = None if auto_target else parsed_goal_command
+    goal_command = "auto" if auto_target else parsed_goal_command
     target_label = "默认自动目标" if auto_target else str(target_position)
     execution_time_sec = _estimate_goal_skill_duration(goal_command, DEFAULT_PUSH_BOX_DURATION_SEC)
 
     _speak(speech)
     _log_skill(
         "push_box",
-        f"推动高度 {box_height:.2f} 米的箱子到{target_label}，目标命令={goal_command if goal_command is not None else 'auto(default)'}",
+        f"推动高度 {box_height:.2f} 米的箱子到{target_label}，目标命令={goal_command}",
     )
     feedback = await _wait_skill_feedback(
         "push_box",
@@ -829,6 +1202,13 @@ async def execute_push_box_skill(
     )
     status = "success" if feedback.get("signal") == "SUCCESS" else "failure"
     backend_label = _resolve_feedback_backend(feedback)
+    if wait_feedback and status == "success":
+        post_push_settle_sec = _read_env_float("FINALPROJECT_POST_PUSH_SETTLE_SEC", DEFAULT_POST_PUSH_SETTLE_SEC)
+        await _hold_idle_stability(
+            _load_runtime_config(),
+            wait_sec=post_push_settle_sec,
+            reason="push_box 完成后等待姿态和速度收敛",
+        )
     return {
         "skill": "push_box",
         "box_height": box_height,
