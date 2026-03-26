@@ -20,16 +20,16 @@ prompt: |
 
   重要规则：
   - 如果环境中存在障碍、人员或不可通行区域，优先加入观察、绕行、避障、接近目标等步骤
-  - 当前四足导航只允许使用 5 个技能：walk、navigation、climb、push_box、way_select
+  - 当前四足导航只允许使用 6 个技能：walk、navigation、climb_align、climb、push_box、way_select
   - 如果提供了 object_facts，其中的 navigation_goal、robot_pose、objects、constraints 都是高可信几何真值
   - 如果 object_facts 与 visual_context 或 scene_facts 冲突，以 object_facts 为准
   - 机器人初始位于中间位置，因此遇到左右分路时，第一步优先使用 way_select 选择左侧或右侧路线
   - 如果 object_facts 或视觉上下文已经明确给出高台高度、箱子信息、对象名称，要把这些数值和对象名保留在子任务描述里
   - 对 climb 相关任务，描述中的高度应是“当前一步的攀爬高度（相对高度）”，不能把目标平台绝对高度直接当作 climb 参数
-  - 如果规划要用到箱子辅助攀爬，应优先写成 push_box -> climb -> navigation；其中 push_box 使用默认自动目标，climb 表示借助箱子完成登台
+  - 如果规划要用到箱子辅助攀爬，应优先写成 push_box -> climb_align -> climb -> navigation；其中 push_box 使用默认自动目标，climb_align 表示先导航到箱子后方的攀爬起点，climb 表示真正执行登台
   - 当前 demo 最大单步攀爬高度是 0.3 米；若高台 0.4 米且先上 0.2 米箱子，第二次攀爬应描述为“再攀爬约 0.2 米到高台”
   - 如果只有一侧高台高度小于等于 0.3 米、另一侧高度超过 0.3 米、且没有可推动箱子，则不能把该场景误判为 walk；应先 way_select 到可攀爬侧，再调用 climb
-  - 如果 object_facts 表明存在可推动箱子、高台高度超过 0.3 米、且“高台高度 - 箱子高度 <= 0.3 米”，则优先规划为 push_box -> climb -> navigation，而不是 walk
+  - 如果 object_facts 表明存在可推动箱子、高台高度超过 0.3 米、且“高台高度 - 箱子高度 <= 0.3 米”，则优先规划为 push_box -> climb_align -> climb -> navigation，而不是 walk
   - 当用户明确说“前往某个目标点/坐标/位置”时，最终到目标点的动作优先使用 navigation，而不是 walk
   - 高层只负责决定策略和技能顺序，不要在 tasks 中编造精确坐标；坐标会由后续 parameter calculation 处理
   - 对“前往目标点”类导航任务，要按技能调用顺序拆分，不要把多个技能压缩成一步
@@ -113,10 +113,11 @@ prompt: |
   {{{{
     "tasks": [
       {{{{ "step": 1, "task": "先调用 push_box，将箱子 box1 推到高台 platform_front 旁边", "type": "推箱子", "function": "push_box", "reason": "箱子辅助场景下，push_box 会自动计算默认推箱目标，无需先单独切路线" }}}},
-      {{{{ "step": 2, "task": "利用已推到位的箱子辅助攀爬约0.2米到高台 platform_front", "type": "攀爬", "function": "climb", "reason": "借助箱子后，剩余相对高度 0.4-0.2=0.2 米，单次 climb 即可登上高台" }}}},
-      {{{{ "step": 3, "task": "登上高台后，使用 navigation 前往前方目标点", "type": "导航", "function": "navigation", "reason": "越过高差后，目标点明确，最后应使用 navigation 精准抵达终点" }}}}
+      {{{{ "step": 2, "task": "调用 climb_align，先对正到箱子 box1 后方的攀爬起点", "type": "攀爬对正", "function": "climb_align", "reason": "push_box 完成后，应先单独对正到箱子后方，再执行 climb，避免把对正和攀爬混在同一个技能里" }}}},
+      {{{{ "step": 3, "task": "利用已推到位的箱子辅助攀爬约0.2米到高台 platform_front", "type": "攀爬", "function": "climb", "reason": "完成 climb_align 后，剩余相对高度 0.4-0.2=0.2 米，单次 climb 即可登上高台" }}}},
+      {{{{ "step": 4, "task": "登上高台后，使用 navigation 前往前方目标点", "type": "导航", "function": "navigation", "reason": "越过高差后，目标点明确，最后应使用 navigation 精准抵达终点" }}}}
     ],
-    "summary": "使用 push_box 自动推箱、climb 登台，再通过 navigation 到达前方目标点"
+    "summary": "使用 push_box 自动推箱、climb_align 对正、climb 登台，再通过 navigation 到达前方目标点"
   }}}}
 
   输入："前往前方目标点"

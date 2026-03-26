@@ -1,12 +1,13 @@
 """
 四足导航技能模块 (Navigation Skills Module)
 
-当前只暴露 5 个技能给 LLM：
+当前只暴露 6 个技能给 LLM：
 1. walk
 2. navigation
-3. climb
-4. push_box
-5. way_select
+3. climb_align
+4. climb
+5. push_box
+6. way_select
 
 当前版本优先对接 IsaacLab EnvTest 的控制文件/UDP 协议，
 同时保留可选 ROS 执行反馈通道，避免破坏现有上层接口。
@@ -1057,6 +1058,95 @@ async def execute_navigation_skill(
     }
 
 
+async def execute_climb_align_skill(
+    stage: str = "高台",
+    target: str = DEFAULT_TARGET,
+    goal_command: list[float] | str | None = None,
+    speech: str = "",
+    wait_feedback: bool = True,
+) -> dict[str, Any]:
+    """攀爬前对正技能。"""
+    resolved_goal = _parse_goal_value(goal_command)
+    align_meta: dict[str, Any] | None = None
+
+    if resolved_goal is None or resolved_goal == "auto":
+        staging_goal = _build_climb_staging_goal(stage, target)
+        if staging_goal is None:
+            raise ValueError(f"无法为目标 {target} 计算攀爬前对正点")
+        resolved_goal, align_meta = staging_goal
+    else:
+        align_meta = {
+            "object_id": str(stage).strip() or "climb_staging_point",
+            "object_type": "explicit_goal",
+            "target_platform_id": str(target).strip() or target,
+        }
+
+    align_target = f"{align_meta.get('object_id', 'climb_staging_point')} 前对正点"
+    execution_time_sec = _estimate_goal_skill_duration(resolved_goal, DEFAULT_NAVIGATION_DURATION_SEC)
+    timeout_sec = max(20.0, execution_time_sec + DEFAULT_NAVIGATION_TIMEOUT_MARGIN_SEC)
+    config = _load_runtime_config()
+
+    if wait_feedback:
+        pre_climb_settle_sec = _read_env_float("FINALPROJECT_PRE_CLIMB_SETTLE_SEC", DEFAULT_PRE_CLIMB_SETTLE_SEC)
+        await _hold_idle_stability(
+            config,
+            wait_sec=pre_climb_settle_sec,
+            reason=f"climb_align 前稳定机身，目标={target}",
+        )
+
+    _speak(speech)
+    _log_skill(
+        "climb_align",
+        f"攀爬前对正到{align_target}，目标命令={resolved_goal}，预计执行 {execution_time_sec:.2f} 秒",
+    )
+    feedback = await _wait_skill_feedback(
+        "climb_align",
+        {
+            "stage": stage,
+            "target": target,
+            "goal_command": resolved_goal,
+            "align_target": align_target,
+        },
+        f"已完成攀爬前对正到{align_target}",
+        wait_feedback=wait_feedback,
+        timeout_sec=timeout_sec,
+        model_use=MODEL_USE_NAVIGATION,
+        goal_command=resolved_goal,
+        execution_time_sec=execution_time_sec,
+    )
+
+    if wait_feedback and feedback.get("signal") == "SUCCESS":
+        post_align_settle_sec = _read_env_float("FINALPROJECT_POST_ALIGN_SETTLE_SEC", DEFAULT_POST_ALIGN_SETTLE_SEC)
+        await _hold_idle_stability(
+            config,
+            wait_sec=post_align_settle_sec,
+            reason=f"对正完成后再次稳定机身，目标={target}",
+        )
+
+    status = "success" if feedback.get("signal") == "SUCCESS" else "failure"
+    backend_label = _resolve_feedback_backend(feedback)
+    return {
+        "skill": "climb_align",
+        "stage": stage,
+        "target": target,
+        "goal_command": resolved_goal,
+        "align_target": align_target,
+        "align_meta": align_meta,
+        "speech": speech,
+        "action_id": feedback.get("action_id"),
+        "execution_feedback": feedback,
+        "execution_result": feedback.get("result", {}),
+        "control_command": {
+            "model_use": MODEL_USE_NAVIGATION,
+            "goal": resolved_goal,
+            "estimated_execution_time_sec": round(execution_time_sec, 3),
+            "timeout_sec": round(timeout_sec, 3),
+        },
+        "backend": backend_label,
+        "status": status,
+    }
+
+
 async def execute_climb_skill(
     height: float,
     stage: str = "高台",
@@ -1076,42 +1166,6 @@ async def execute_climb_skill(
     climb_speed = abs(_read_env_float("FINALPROJECT_CLIMB_SPEED_MPS", DEFAULT_CLIMB_SPEED_MPS))
     velocity_command = [climb_speed, 0.0, 0.0]
     execution_time_sec = max(0.5, _read_env_float("FINALPROJECT_CLIMB_DURATION_SEC", DEFAULT_CLIMB_EXECUTION_SEC))
-    prealign_enabled = _read_env_bool("FINALPROJECT_CLIMB_PREALIGN_ENABLED", True)
-    prealign_result: dict[str, Any] | None = None
-
-    if wait_feedback:
-        pre_climb_settle_sec = _read_env_float("FINALPROJECT_PRE_CLIMB_SETTLE_SEC", DEFAULT_PRE_CLIMB_SETTLE_SEC)
-        await _hold_idle_stability(
-            config,
-            wait_sec=pre_climb_settle_sec,
-            reason=f"climb 前稳定机身，目标={target}",
-        )
-
-        if prealign_enabled:
-            staging_goal = _build_climb_staging_goal(stage, target)
-            if staging_goal is not None:
-                align_goal_command, align_meta = staging_goal
-                align_target = f"{align_meta['object_id']} 前对正点"
-                _log_skill(
-                    "climb_align",
-                    f"climb 前先对正到 {align_target}，goal={align_goal_command}",
-                )
-                prealign_result = await execute_navigation_skill(
-                    goal_command=align_goal_command,
-                    target=align_target,
-                    speech="",
-                    wait_feedback=True,
-                )
-                if prealign_result.get("status") != "success":
-                    feedback = prealign_result.get("execution_feedback") or {}
-                    raise RuntimeError(f"climb 前对正失败: {feedback.get('message', 'navigation pre-align failed')}")
-
-                post_align_settle_sec = _read_env_float("FINALPROJECT_POST_ALIGN_SETTLE_SEC", DEFAULT_POST_ALIGN_SETTLE_SEC)
-                await _hold_idle_stability(
-                    config,
-                    wait_sec=post_align_settle_sec,
-                    reason=f"对正完成后再次稳定机身，目标={target}",
-                )
 
     _speak(speech)
     _log_skill(
@@ -1155,7 +1209,6 @@ async def execute_climb_skill(
         "action_id": feedback.get("action_id"),
         "execution_feedback": feedback,
         "execution_result": feedback.get("result", {}),
-        "prealign_result": prealign_result,
         "control_command": {
             "model_use": MODEL_USE_CLIMB,
             "velocity": velocity_command,
@@ -1451,7 +1504,7 @@ async def execute_case_4_flow(
 
 
 def register_tools(mcp):
-    """注册 5 个导航技能。"""
+    """注册 6 个导航技能。"""
 
     @mcp.tool()
     async def walk(
@@ -1487,6 +1540,26 @@ def register_tools(mcp):
         result = await execute_navigation_skill(
             goal_command=goal_command,
             target=target,
+            speech=speech,
+        )
+        return json.dumps(result, ensure_ascii=False)
+
+    @mcp.tool()
+    async def climb_align(
+        stage: str = "高台",
+        target: str = DEFAULT_TARGET,
+        goal_command: str = "",
+        speech: str = "",
+    ) -> str:
+        """攀爬前对正技能。
+
+        用于在正式 climb 前，先导航到箱子或平台前的对正点。
+        `goal_command` 可选；若留空，执行层会根据 stage/target 自动计算对正点。
+        """
+        result = await execute_climb_align_skill(
+            stage=stage,
+            target=target,
+            goal_command=goal_command,
             speech=speech,
         )
         return json.dumps(result, ensure_ascii=False)
@@ -1549,11 +1622,12 @@ def register_tools(mcp):
         )
         return json.dumps(result, ensure_ascii=False)
 
-    print("[navigation.py:register_tools] 导航技能模块已注册 (5 个工具)", file=sys.stderr)
+    print("[navigation.py:register_tools] 导航技能模块已注册 (6 个工具)", file=sys.stderr)
 
     return {
         "walk": walk,
         "navigation": navigation,
+        "climb_align": climb_align,
         "climb": climb,
         "push_box": push_box,
         "way_select": way_select,

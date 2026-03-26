@@ -38,7 +38,7 @@
 - 技能执行反馈默认等待 `20 秒`
 - 支持的核心场景：
   - 单侧可攀爬：`way_select -> climb`
-  - 箱子辅助攀爬：`push_box -> climb -> navigation`
+  - 箱子辅助攀爬：`push_box -> climb_align -> climb -> navigation`
 
 ## 提示词
 

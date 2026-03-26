@@ -117,6 +117,26 @@ class ParameterCalculator:
                     "target_position": "auto",
                 }
                 current_pose = [target_position[0], target_position[1], current_pose[2]]
+            elif function_name == "climb_align" and selected_platform:
+                if selected_can_use_box_assist and selected_support_box:
+                    parameter_context.update(
+                        {
+                            "support_object": selected_support_box["id"],
+                            "target_object": selected_platform["id"],
+                            "assisted_by_push_box": True,
+                        }
+                    )
+                else:
+                    parameter_context.update(
+                        {
+                            "target_object": selected_platform["id"],
+                        }
+                    )
+                annotated["parameter_context"] = parameter_context
+                annotated["calculated_parameters"] = {
+                    "stage": selected_platform["id"],
+                    "target": selected_platform["id"],
+                }
             elif function_name == "climb" and selected_platform:
                 climb_count += 1
                 task_targets_box = self._task_targets_box(task, selected_support_box)

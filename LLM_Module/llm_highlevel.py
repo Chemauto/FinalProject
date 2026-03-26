@@ -164,7 +164,7 @@ class HighLevelPlanner:
                     "selected_plan_id": "rule_override_box_assist",
                     "summary": override_summary,
                 }
-                print("⚠️  [规则修正] 检测到箱子辅助攀爬场景，已将任务链修正为 push_box -> climb -> navigation")
+                print("⚠️  [规则修正] 检测到箱子辅助攀爬场景，已将任务链修正为 push_box -> climb_align -> climb -> navigation")
                 return override_tasks, override_summary, override_meta
 
         single_climb = self._detect_single_climb_side(scene_facts)
@@ -187,7 +187,7 @@ class HighLevelPlanner:
     @staticmethod
     def _should_override_box_assisted_plan(tasks: list[dict]) -> bool:
         function_chain = [str(task.get("function", "")) for task in tasks]
-        if function_chain[:3] == ["push_box", "climb", "navigation"] and function_chain.count("climb") == 1:
+        if function_chain[:4] == ["push_box", "climb_align", "climb", "navigation"] and function_chain.count("climb") == 1:
             return False
         return True
 
@@ -325,25 +325,35 @@ class HighLevelPlanner:
                     self._normalize_task(
                         {
                             "step": 2,
-                            "task": "利用已推到位的箱子辅助攀爬到高台",
-                            "type": "攀爬",
-                            "function": "climb",
-                            "reason": "push_box 完成后，借助箱子降低相对高度，只需一次 climb 即可登上高台",
+                            "task": "调用 climb_align，对正到箱子后方的攀爬起点",
+                            "type": "攀爬对正",
+                            "function": "climb_align",
+                            "reason": "push_box 完成后，先单独对正到箱子后方，再执行 climb，避免把对正和攀爬混在同一步里",
                         },
                         2,
                     ),
                     self._normalize_task(
                         {
                             "step": 3,
+                            "task": "利用已推到位的箱子辅助攀爬到高台",
+                            "type": "攀爬",
+                            "function": "climb",
+                            "reason": "完成 climb_align 后，借助箱子降低相对高度，只需一次 climb 即可登上高台",
+                        },
+                        3,
+                    ),
+                    self._normalize_task(
+                        {
+                            "step": 4,
                             "task": "登上高台后，使用 navigation 前往前方目标点",
                             "type": "导航",
                             "function": "navigation",
                             "reason": "越过高差后，目标点明确，最后应使用 navigation 精准抵达终点",
                         },
-                        3,
+                        4,
                     ),
                 ],
-                f"根据视觉上下文判断，{side_label}箱子可作为中间支撑，先 push_box，再 climb，最后 navigation 到达目标点",
+                f"根据视觉上下文判断，{side_label}箱子可作为中间支撑，先 push_box，再 climb_align，对正后 climb，最后 navigation 到达目标点",
             )
 
         right_obstacle = self._has_side_obstacle(context, "right")
@@ -555,25 +565,35 @@ class HighLevelPlanner:
                 self._normalize_task(
                     {
                         "step": 2,
-                        "task": f"利用已推到位的箱子辅助攀爬约{remaining_height_label}米到高台 {platform_id}",
-                        "type": "攀爬",
-                        "function": "climb",
-                        "reason": f"push_box 完成后，借助箱子降低相对高度，剩余约{remaining_height_label}米，单次 climb 即可登上高台",
+                        "task": f"调用 climb_align，先对正到箱子 {box_id} 后方的攀爬起点",
+                        "type": "攀爬对正",
+                        "function": "climb_align",
+                        "reason": f"push_box 完成后，应先单独对正到箱子 {box_id} 后方，再执行 climb，避免把对正和攀爬混在同一个技能里",
                     },
                     2,
                 ),
                 self._normalize_task(
                     {
                         "step": 3,
+                        "task": f"利用已推到位的箱子辅助攀爬约{remaining_height_label}米到高台 {platform_id}",
+                        "type": "攀爬",
+                        "function": "climb",
+                        "reason": f"完成 climb_align 后，借助箱子降低相对高度，剩余约{remaining_height_label}米，单次 climb 即可登上高台",
+                    },
+                    3,
+                ),
+                self._normalize_task(
+                    {
+                        "step": 4,
                         "task": "登上高台后，使用 navigation 前往前方目标点",
                         "type": "导航",
                         "function": "navigation",
                         "reason": "越过高差后，目标点明确，最后应使用 navigation 精准抵达终点",
                     },
-                    3,
+                    4,
                 ),
             ],
-            f"根据结构化物体几何信息，{side_label}箱子可作为中间支撑，流程应为 push_box -> climb -> navigation 到达目标点",
+            f"根据结构化物体几何信息，{side_label}箱子可作为中间支撑，流程应为 push_box -> climb_align -> climb -> navigation 到达目标点",
         )
 
     @staticmethod
