@@ -1,6 +1,6 @@
 {
   "navigation_goal": [
-    5.0,
+    4.0,
     0.0,
     0.0
   ],
@@ -123,8 +123,16 @@
       0.0,
       0.0
     ],
-    "pose_command": null,
-    "goal": null,
+    "pose_command": [
+      4.0,
+      0.0,
+      0.0
+    ],
+    "goal": [
+      4.0,
+      0.0,
+      0.0
+    ],
     "robot_pose": [
       0.0,
       0.0,
@@ -132,7 +140,7 @@
     ],
     "skill": "idle",
     "navigation_goal_override": [
-      5.0,
+      4.0,
       0.0,
       0.0
     ]

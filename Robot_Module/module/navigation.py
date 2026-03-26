@@ -803,24 +803,25 @@ async def execute_push_box_skill(
     if box_height <= 0:
         raise ValueError("box_height 必须大于 0")
 
-    goal_command = _parse_goal_value(target_position)
-    if goal_command is None:
-        goal_command = "auto"
+    parsed_goal_command = _parse_goal_value(target_position)
+    auto_target = parsed_goal_command is None or parsed_goal_command == "auto"
+    goal_command = None if auto_target else parsed_goal_command
+    target_label = "默认自动目标" if auto_target else str(target_position)
     execution_time_sec = _estimate_goal_skill_duration(goal_command, DEFAULT_PUSH_BOX_DURATION_SEC)
 
     _speak(speech)
     _log_skill(
         "push_box",
-        f"推动高度 {box_height:.2f} 米的箱子到{target_position}，目标命令={goal_command}",
+        f"推动高度 {box_height:.2f} 米的箱子到{target_label}，目标命令={goal_command if goal_command is not None else 'auto(default)'}",
     )
     feedback = await _wait_skill_feedback(
         "push_box",
         {
             "box_height": box_height,
-            "target_position": target_position,
+            "target_position": "auto" if auto_target else target_position,
             "goal_command": goal_command,
         },
-        f"已完成推箱子到{target_position}",
+        f"已完成推箱子到{target_label}",
         wait_feedback=wait_feedback,
         model_use=MODEL_USE_PUSH_BOX,
         goal_command=goal_command,
@@ -831,7 +832,7 @@ async def execute_push_box_skill(
     return {
         "skill": "push_box",
         "box_height": box_height,
-        "target_position": target_position,
+        "target_position": "auto" if auto_target else target_position,
         "speech": speech,
         "action_id": feedback.get("action_id"),
         "execution_feedback": feedback,

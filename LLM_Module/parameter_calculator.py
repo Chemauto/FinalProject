@@ -39,6 +39,7 @@ class ParameterCalculator:
             and platform_height > climb_limit
             and 0 < remaining_height <= climb_limit
         )
+        total_climb_steps = sum(1 for task in tasks if task.get("function") == "climb")
 
         climb_count = 0
         annotated_tasks = []
@@ -106,13 +107,14 @@ class ParameterCalculator:
                     {
                         "support_object": active_box["id"],
                         "target_object": active_platform["id"],
-                        "target_position_xyz": target_position,
+                        "auto_target_position_xyz": target_position,
+                        "push_box_mode": "auto",
                     }
                 )
                 annotated["parameter_context"] = parameter_context
                 annotated["calculated_parameters"] = {
                     "box_height": self._object_height(active_box),
-                    "target_position": str(target_position),
+                    "target_position": "auto",
                 }
                 current_pose = [target_position[0], target_position[1], current_pose[2]]
             elif function_name == "climb" and selected_platform:
@@ -120,7 +122,28 @@ class ParameterCalculator:
                 task_targets_box = self._task_targets_box(task, selected_support_box)
                 task_targets_platform = self._task_targets_platform(task, selected_platform)
 
-                if selected_can_use_box_assist and selected_support_box and (
+                if selected_can_use_box_assist and selected_support_box and total_climb_steps <= 1:
+                    parameter_context.update(
+                        {
+                            "support_object": selected_support_box["id"],
+                            "target_object": selected_platform["id"],
+                            "relative_height_m": selected_remaining_height,
+                            "assisted_by_push_box": True,
+                        }
+                    )
+                    annotated["parameter_context"] = parameter_context
+                    annotated["calculated_parameters"] = {
+                        "height": selected_remaining_height,
+                        "stage": selected_platform["id"],
+                        "target": selected_platform["id"],
+                    }
+                    current_pose = self._estimate_pose_after_climb(
+                        current_pose,
+                        selected_platform,
+                        selected_remaining_height,
+                    )
+                    current_route_side = self._infer_route_side(selected_platform) or current_route_side
+                elif selected_can_use_box_assist and selected_support_box and (
                     task_targets_box or (climb_count == 1 and not task_targets_platform)
                 ):
                     parameter_context.update(

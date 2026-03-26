@@ -20,9 +20,9 @@ system_prompt: |
   8. way_select 的 direction 参数优先填写 left 或 right；机器人从中间出发时，先 way_select，再执行后续技能
   9. 对于“左侧高台0.2米，右侧无障碍”的场景，优先使用 way_select(direction=\"right\")，然后 navigation 到目标点
   10. climb 的 height 必须填写“当前这一步要爬的相对高度”，不是目标平台绝对高度；单步高度必须 <= 0.3 米
-  11. 对于“左右高台0.4米且存在0.2米箱子”的场景，顺序是 way_select -> push_box -> climb(0.2) -> climb(0.2) -> climb
+  11. 对于“高台0.4米且存在0.2米箱子”的场景，顺序优先是 push_box(auto) -> climb(0.2) -> navigation
   12. 如果只有一侧高台高度 <= 0.3 米、另一侧超过 0.3 米且没有箱子，则先调用 way_select 到可攀爬侧，再调用 climb，不要误判为 walk
-  13. 如果给出了 `calculated_parameters`，优先使用它们；尤其是 navigation.goal_command、climb.height、push_box.target_position、way_select.direction 不要擅自改写
+  13. 如果给出了 `calculated_parameters`，优先使用它们；尤其是 navigation.goal_command、climb.height、push_box.target_position=auto、way_select.direction 不要擅自改写
   14. 如果给出了 `parameter_context`，先理解对象关系，再决定是否补充缺省参数
   15. 在调用工具前，先用一句中文简要说明“为什么调用这个函数”，然后再发起工具调用
 

@@ -158,14 +158,13 @@ class HighLevelPlanner:
     ) -> tuple[list[dict], str, dict[str, object] | None]:
         box_assisted = self._detect_box_assisted_geometry(scene_facts, object_facts)
         if box_assisted:
-            has_box_plan = any(task.get("function") in {"push_box", "climb"} for task in tasks)
-            if not has_box_plan:
+            if self._should_override_box_assisted_plan(tasks):
                 override_tasks, override_summary = self._build_box_assisted_plan(box_assisted)
                 override_meta = {
                     "selected_plan_id": "rule_override_box_assist",
                     "summary": override_summary,
                 }
-                print("⚠️  [规则修正] 检测到箱子辅助攀爬场景，已将 walk 规划修正为 push_box + climb")
+                print("⚠️  [规则修正] 检测到箱子辅助攀爬场景，已将任务链修正为 push_box -> climb -> navigation")
                 return override_tasks, override_summary, override_meta
 
         single_climb = self._detect_single_climb_side(scene_facts)
@@ -184,6 +183,13 @@ class HighLevelPlanner:
         }
         print("⚠️  [规则修正] 检测到仅单侧可攀爬场景，已将 walk 规划修正为 climb")
         return override_tasks, override_summary, override_meta
+
+    @staticmethod
+    def _should_override_box_assisted_plan(tasks: list[dict]) -> bool:
+        function_chain = [str(task.get("function", "")) for task in tasks]
+        if function_chain[:3] == ["push_box", "climb", "navigation"] and function_chain.count("climb") == 1:
+            return False
+        return True
 
     def _prefer_climb_for_followup_travel(
         self,
@@ -309,55 +315,35 @@ class HighLevelPlanner:
                     self._normalize_task(
                         {
                             "step": 1,
-                            "task": f"根据视觉信息，{side_label}存在可利用箱子。先播报环境并选择{side_label}路线",
-                            "type": "路线选择",
-                            "function": "way_select",
-                            "reason": "机器人从中间出发，需要先切换到箱子所在路线",
+                            "task": "先调用 push_box，将箱子推到高台旁边",
+                            "type": "推箱子",
+                            "function": "push_box",
+                            "reason": "箱子辅助场景下，push_box 技能会自动接近箱子并计算默认推箱目标，无需先单独执行 way_select",
                         },
                         1,
                     ),
                     self._normalize_task(
                         {
                             "step": 2,
-                            "task": "将箱子推到高台旁边",
-                            "type": "推箱子",
-                            "function": "push_box",
-                            "reason": "高台超过直接攀爬能力，需要先创造中间支撑点",
+                            "task": "利用已推到位的箱子辅助攀爬到高台",
+                            "type": "攀爬",
+                            "function": "climb",
+                            "reason": "push_box 完成后，借助箱子降低相对高度，只需一次 climb 即可登上高台",
                         },
                         2,
                     ),
                     self._normalize_task(
                         {
                             "step": 3,
-                            "task": "先攀爬到箱子顶部",
-                            "type": "攀爬",
-                            "function": "climb",
-                            "reason": "先到达中间支撑点，为二段攀爬做准备",
+                            "task": "登上高台后，使用 navigation 前往前方目标点",
+                            "type": "导航",
+                            "function": "navigation",
+                            "reason": "越过高差后，目标点明确，最后应使用 navigation 精准抵达终点",
                         },
                         3,
                     ),
-                    self._normalize_task(
-                        {
-                            "step": 4,
-                            "task": "从箱子顶部继续攀爬到高台",
-                            "type": "攀爬",
-                            "function": "climb",
-                            "reason": "利用箱子降低实际攀爬高度到可执行范围内",
-                        },
-                        4,
-                    ),
-                    self._normalize_task(
-                        {
-                            "step": 5,
-                            "task": "在高台上继续使用 climb 前进到前方目标点",
-                            "type": "攀爬",
-                            "function": "climb",
-                            "reason": "当前路线已进入需要 climb 的运动模式，后续前进统一使用 climb 即可",
-                        },
-                        5,
-                    ),
                 ],
-                "根据视觉上下文判断需要先选择箱子所在路线，再执行推箱子和攀爬动作，后续前进统一使用 climb 到达目标点",
+                f"根据视觉上下文判断，{side_label}箱子可作为中间支撑，先 push_box，再 climb，最后 navigation 到达目标点",
             )
 
         right_obstacle = self._has_side_obstacle(context, "right")
@@ -550,10 +536,8 @@ class HighLevelPlanner:
         side = str(box_plan["side"])
         side_label = "左侧" if side == "left" else "右侧"
         box_id = str(box_plan["box_id"])
-        box_height = float(box_plan["box_height"])
         platform_id = str(box_plan["platform_id"])
         remaining_height = float(box_plan["remaining_height"])
-        box_height_label = f"{box_height:.1f}".rstrip("0").rstrip(".")
         remaining_height_label = f"{remaining_height:.1f}".rstrip("0").rstrip(".")
 
         return (
@@ -561,55 +545,35 @@ class HighLevelPlanner:
                 self._normalize_task(
                     {
                         "step": 1,
-                        "task": f"{side_label}存在可利用箱子 {box_id}。先播报环境并选择{side_label}路线",
-                        "type": "路线选择",
-                        "function": "way_select",
-                        "reason": f"机器人需要先切换到{side_label}箱子所在路线，后续才能执行推箱子和攀爬",
+                        "task": f"先调用 push_box，将箱子 {box_id} 推到高台 {platform_id} 旁边",
+                        "type": "推箱子",
+                        "function": "push_box",
+                        "reason": f"{side_label}箱子辅助场景下，push_box 技能会自动接近箱子并使用默认目标完成推箱，无需先执行 way_select",
                     },
                     1,
                 ),
                 self._normalize_task(
                     {
                         "step": 2,
-                        "task": f"推箱子 {box_id} 到高台 {platform_id} 旁边",
-                        "type": "推箱子",
-                        "function": "push_box",
-                        "reason": "高台超过单步攀爬上限，需要先把箱子移动到高台边形成中间支撑",
+                        "task": f"利用已推到位的箱子辅助攀爬约{remaining_height_label}米到高台 {platform_id}",
+                        "type": "攀爬",
+                        "function": "climb",
+                        "reason": f"push_box 完成后，借助箱子降低相对高度，剩余约{remaining_height_label}米，单次 climb 即可登上高台",
                     },
                     2,
                 ),
                 self._normalize_task(
                     {
                         "step": 3,
-                        "task": f"先攀爬约{box_height_label}米到箱子 {box_id} 顶部",
-                        "type": "攀爬",
-                        "function": "climb",
-                        "reason": f"先到达箱子顶部，利用 {box_id} 作为中间支撑点",
+                        "task": "登上高台后，使用 navigation 前往前方目标点",
+                        "type": "导航",
+                        "function": "navigation",
+                        "reason": "越过高差后，目标点明确，最后应使用 navigation 精准抵达终点",
                     },
                     3,
                 ),
-                self._normalize_task(
-                    {
-                        "step": 4,
-                        "task": f"再攀爬约{remaining_height_label}米到高台 {platform_id}",
-                        "type": "攀爬",
-                        "function": "climb",
-                        "reason": f"利用箱子后，剩余相对高度约{remaining_height_label}米，满足单步攀爬上限",
-                    },
-                    4,
-                ),
-                self._normalize_task(
-                    {
-                        "step": 5,
-                        "task": "在高台上继续使用 climb 前进到前方目标点",
-                        "type": "攀爬",
-                        "function": "climb",
-                        "reason": "当前路线已进入需要 climb 的运动模式，后续前进统一使用 climb 即可",
-                    },
-                    5,
-                ),
             ],
-            f"根据结构化物体几何信息，需先选择{side_label}路线，推动箱子并分两段攀爬，后续前进统一使用 climb 到达目标点",
+            f"根据结构化物体几何信息，{side_label}箱子可作为中间支撑，流程应为 push_box -> climb -> navigation 到达目标点",
         )
 
     @staticmethod

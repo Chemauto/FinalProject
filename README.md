@@ -120,7 +120,7 @@ VLM 当前输出结构化 JSON，核心字段：
 `LLM_Module/parameter_calculator.py` 负责：
 - `navigation`：目标点与 `goal_command`
 - `way_select`：左右方向
-- `push_box`：目标位置
+- `push_box`：默认自动推箱模式
 - `climb`：真实高度与目标平台
 - `walk`：沿当前路线继续前进时的距离、路线侧别、目标点
 
@@ -133,7 +133,7 @@ VLM 当前输出结构化 JSON，核心字段：
 - `navigation`：通过 `goal_command` 下发目标点，使用 EnvTest `model_use=4` 自动导航到目标位置
 - `way_select`：默认是横向 `walk`；左侧 `velocity=[0.0,0.5,0.0]`，右侧 `velocity=[0.0,-0.5,0.0]`，固定 `3s`
 - `climb`：最大 `0.3m`，默认速度 `0.6 m/s`，默认执行 `15s`，默认通过 `Socket/envtest_socket_client.py` 下发 `model_use=2`
-- `push_box`：通过目标点或自动模式下发推箱子命令
+- `push_box`：箱子辅助场景下默认使用自动模式，不显式下发推箱目标点
 
 ## 最短运行方式
 1. 启动 IsaacLab player
@@ -154,6 +154,7 @@ python interactive.py
 说明：
 - 当用户说“前往某个目标点/坐标/位置”时，高层规划会优先调用 `navigation`
 - `walk` 主要保留给沿路线直行、横向切换后的继续前进等速度式动作
+- 箱子辅助场景默认收敛为 `push_box -> climb -> navigation`
 
 ## 常用环境变量
 - `FINALPROJECT_OBJECT_FACTS_PATH`
@@ -165,7 +166,7 @@ python interactive.py
 
 ## 当前限制
 - `robot_pose` 目前主要只按位置使用
-- `push_box` 仍是规则式目标点，不是完整物理规划
+- `push_box` 当前默认依赖 EnvTest 自带的自动推箱目标推理
 - 若 `objects` 残留旧场景，规划会出错，所以同步必须发生在规划前
 - 若 live EnvTest 与本地 JSON 不一致，交互模式会以同步后的文件为准
 
