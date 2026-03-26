@@ -1,11 +1,12 @@
 """
 四足导航技能模块 (Navigation Skills Module)
 
-当前只暴露 4 个技能给 LLM：
+当前只暴露 5 个技能给 LLM：
 1. walk
-2. climb
-3. push_box
-4. way_select
+2. navigation
+3. climb
+4. push_box
+5. way_select
 
 当前版本优先对接 IsaacLab EnvTest 的控制文件/UDP 协议，
 同时保留可选 ROS 执行反馈通道，避免破坏现有上层接口。
@@ -53,6 +54,7 @@ DEFAULT_CLIMB_BASE_DURATION_SEC = 4.0
 DEFAULT_CLIMB_EXECUTION_SEC = 15.0
 DEFAULT_PUSH_BOX_DURATION_SEC = 15.0
 DEFAULT_NAVIGATION_DURATION_SEC = 6.0
+DEFAULT_NAVIGATION_TIMEOUT_MARGIN_SEC = 5.0
 DEFAULT_COMMAND_SETTLE_SEC = 0.15
 DEFAULT_STOP_SETTLE_SEC = 0.1
 
@@ -666,6 +668,59 @@ async def execute_walk_skill(
     }
 
 
+async def execute_navigation_skill(
+    goal_command: list[float] | str,
+    target: str = DEFAULT_TARGET,
+    speech: str = "",
+    wait_feedback: bool = True,
+) -> dict[str, Any]:
+    """导航技能。"""
+    normalized_goal = _parse_goal_value(goal_command)
+    if normalized_goal is None or normalized_goal == "auto":
+        raise ValueError("goal_command 必须是显式目标点，支持 [x, y, z] / \"x,y,z\" / [x, y, z, yaw] 格式")
+
+    execution_time_sec = _estimate_goal_skill_duration(normalized_goal, DEFAULT_NAVIGATION_DURATION_SEC)
+    timeout_sec = max(20.0, execution_time_sec + DEFAULT_NAVIGATION_TIMEOUT_MARGIN_SEC)
+
+    _speak(speech)
+    _log_skill(
+        "navigation",
+        f"导航到{target}，目标命令={normalized_goal}，预计执行 {execution_time_sec:.2f} 秒",
+    )
+    feedback = await _wait_skill_feedback(
+        "navigation",
+        {
+            "goal_command": normalized_goal,
+            "target": target,
+        },
+        f"已完成导航到{target}",
+        wait_feedback=wait_feedback,
+        timeout_sec=timeout_sec,
+        model_use=MODEL_USE_NAVIGATION,
+        goal_command=normalized_goal,
+        execution_time_sec=execution_time_sec,
+    )
+    status = "success" if feedback.get("signal") == "SUCCESS" else "failure"
+    backend_label = _resolve_feedback_backend(feedback)
+    return {
+        "skill": "navigation",
+        "goal_command": normalized_goal,
+        "target": target,
+        "speech": speech,
+        "action_id": feedback.get("action_id"),
+        "execution_feedback": feedback,
+        "execution_result": feedback.get("result", {}),
+        "control_command": {
+            "model_use": MODEL_USE_NAVIGATION,
+            "goal": normalized_goal,
+            "estimated_execution_time_sec": round(execution_time_sec, 3),
+            "timeout_sec": round(timeout_sec, 3),
+        },
+        "backend": backend_label,
+        "status": status,
+    }
+
+
 async def execute_climb_skill(
     height: float,
     stage: str = "高台",
@@ -1015,7 +1070,7 @@ async def execute_case_4_flow(
 
 
 def register_tools(mcp):
-    """注册 4 个导航技能。"""
+    """注册 5 个导航技能。"""
 
     @mcp.tool()
     async def walk(
@@ -1032,6 +1087,24 @@ def register_tools(mcp):
         result = await execute_walk_skill(
             route_side=route_side,
             distance=distance,
+            target=target,
+            speech=speech,
+        )
+        return json.dumps(result, ensure_ascii=False)
+
+    @mcp.tool()
+    async def navigation(
+        goal_command: str,
+        target: str = DEFAULT_TARGET,
+        speech: str = "",
+    ) -> str:
+        """导航技能。
+
+        用于机器人根据目标点调用 EnvTest navigation 策略自动前往目标位置。
+        `goal_command` 支持 `[x, y, z]` / `"x,y,z"` / `[x, y, z, yaw]`。
+        """
+        result = await execute_navigation_skill(
+            goal_command=goal_command,
             target=target,
             speech=speech,
         )
@@ -1095,10 +1168,11 @@ def register_tools(mcp):
         )
         return json.dumps(result, ensure_ascii=False)
 
-    print("[navigation.py:register_tools] 导航技能模块已注册 (4 个工具)", file=sys.stderr)
+    print("[navigation.py:register_tools] 导航技能模块已注册 (5 个工具)", file=sys.stderr)
 
     return {
         "walk": walk,
+        "navigation": navigation,
         "climb": climb,
         "push_box": push_box,
         "way_select": way_select,

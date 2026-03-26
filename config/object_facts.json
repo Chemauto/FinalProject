@@ -1,6 +1,6 @@
 {
   "navigation_goal": [
-    20.0,
+    5.0,
     0.0,
     0.0
   ],
@@ -16,8 +16,8 @@
   },
   "objects": [
     {
-      "id": "platform_left_low",
-      "source_name": "left_low_obstacle",
+      "id": "platform_left_high",
+      "source_name": "left_high_obstacle",
       "type": "platform",
       "center": [
         3.0,
@@ -27,7 +27,7 @@
       "size": [
         2.0,
         1.5,
-        0.3
+        0.5
       ],
       "movable": false
     },
@@ -46,12 +46,28 @@
         0.5
       ],
       "movable": false
+    },
+    {
+      "id": "box1",
+      "source_name": "support_box",
+      "type": "box",
+      "center": [
+        1.0,
+        0.0,
+        0.0
+      ],
+      "size": [
+        0.6,
+        0.8,
+        0.2
+      ],
+      "movable": true
     }
   ],
   "scene_objects": [
     {
-      "id": "platform_left_low",
-      "source_name": "left_low_obstacle",
+      "id": "platform_left_high",
+      "source_name": "left_high_obstacle",
       "type": "platform",
       "center": [
         3.0,
@@ -61,7 +77,7 @@
       "size": [
         2.0,
         1.5,
-        0.3
+        0.5
       ],
       "movable": false
     },
@@ -80,10 +96,26 @@
         0.5
       ],
       "movable": false
+    },
+    {
+      "id": "box1",
+      "source_name": "support_box",
+      "type": "box",
+      "center": [
+        1.0,
+        0.0,
+        0.0
+      ],
+      "size": [
+        0.6,
+        0.8,
+        0.2
+      ],
+      "movable": true
     }
   ],
   "runtime_state": {
-    "scene_id": 3,
+    "scene_id": 4,
     "model_use": 0,
     "start": false,
     "vel_command": [
@@ -100,7 +132,7 @@
     ],
     "skill": "idle",
     "navigation_goal_override": [
-      20.0,
+      5.0,
       0.0,
       0.0
     ]

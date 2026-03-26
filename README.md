@@ -2,7 +2,7 @@
 基于 LLM 决策的四足机器人导航项目，面向 Unitree Go2，当前主执行后端是 IsaacLab EnvTest。
 
 ## 当前能力
-- 只对外暴露 4 个技能：`walk`、`climb`、`push_box`、`way_select`
+- 只对外暴露 5 个技能：`walk`、`navigation`、`climb`、`push_box`、`way_select`
 - 最大单步攀爬高度：`0.3 m`
 - 几何真值优先级高于 VLM
 - 任一步失败后直接停止后续任务，不自动重规划
@@ -31,7 +31,7 @@
 - `LLM_Module/parameter_calculator.py`：参数计算
 - `LLM_Module/llm_lowlevel.py`：低层执行
 - `VLM_Module/vlm_core.py`：VLM 输出、`scene_facts` 构建与融合
-- `Robot_Module/module/navigation.py`：4 个技能的真实执行逻辑
+- `Robot_Module/module/navigation.py`：5 个技能的真实执行逻辑
 
 ## 输入与优先级
 - 用户文本：任务目标与可选覆盖参数
@@ -67,7 +67,7 @@
 说明：
 - `objects`：当前规划真正使用的物体
 - `runtime_state`：EnvTest 运行态和用户覆盖值
-- `navigation_goal`：`walk` 参数计算的最终目标点
+- `navigation_goal`：`navigation` 参数计算的最终目标点；当规划仍需短距路线前进时也可供 `walk` 使用
 
 ## live EnvTest 同步
 交互模式下，每次用户输入后、规划前，系统会优先同步 live EnvTest。
@@ -118,17 +118,19 @@ VLM 当前输出结构化 JSON，核心字段：
 
 ## 参数计算
 `LLM_Module/parameter_calculator.py` 负责：
+- `navigation`：目标点与 `goal_command`
 - `way_select`：左右方向
 - `push_box`：目标位置
 - `climb`：真实高度与目标平台
-- `walk`：距离、路线侧别、目标点
+- `walk`：沿当前路线继续前进时的距离、路线侧别、目标点
 
 当前约束：
 - `way_select` 后，后续 `climb` 会继承当前已选路线
 - 任务文本里若明确写了平台名，例如 `platform_left_low`，会优先选该平台
 
 ## 技能当前行为
-- `walk`：默认速度 `0.6 m/s`
+- `walk`：默认速度 `0.6 m/s`，用于沿当前路线继续前进
+- `navigation`：通过 `goal_command` 下发目标点，使用 EnvTest `model_use=4` 自动导航到目标位置
 - `way_select`：默认是横向 `walk`；左侧 `velocity=[0.0,0.5,0.0]`，右侧 `velocity=[0.0,-0.5,0.0]`，固定 `3s`
 - `climb`：最大 `0.3m`，默认速度 `0.6 m/s`，默认执行 `15s`，默认通过 `Socket/envtest_socket_client.py` 下发 `model_use=2`
 - `push_box`：通过目标点或自动模式下发推箱子命令
@@ -148,6 +150,10 @@ python interactive.py
 ```text
 前往20,0,0
 ```
+
+说明：
+- 当用户说“前往某个目标点/坐标/位置”时，高层规划会优先调用 `navigation`
+- `walk` 主要保留给沿路线直行、横向切换后的继续前进等速度式动作
 
 ## 常用环境变量
 - `FINALPROJECT_OBJECT_FACTS_PATH`

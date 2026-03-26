@@ -193,6 +193,18 @@ class ParameterCalculator:
                     annotated["parameter_context"] = parameter_context
                     annotated["calculated_parameters"] = walk_parameters
                     current_pose = list(navigation_goal)
+            elif function_name == "navigation":
+                navigation_parameters = self._build_navigation_parameters(navigation_goal)
+                if navigation_parameters:
+                    parameter_context.update(
+                        {
+                            "start_pose_xyz": [round(value, 3) for value in current_pose],
+                            "goal_pose_xyz": navigation_goal,
+                        }
+                    )
+                    annotated["parameter_context"] = parameter_context
+                    annotated["calculated_parameters"] = navigation_parameters
+                    current_pose = list(navigation_goal)
 
             annotated_tasks.append(annotated)
 
@@ -214,6 +226,19 @@ class ParameterCalculator:
         return {
             "route_side": route_side,
             "distance": distance,
+            "target": cls._format_navigation_target(navigation_goal),
+        }
+
+    @classmethod
+    def _build_navigation_parameters(
+        cls,
+        navigation_goal: list[float] | None,
+    ) -> dict[str, Any] | None:
+        if not navigation_goal:
+            return None
+
+        return {
+            "goal_command": cls._format_navigation_goal_command(navigation_goal),
             "target": cls._format_navigation_target(navigation_goal),
         }
 
@@ -283,6 +308,11 @@ class ParameterCalculator:
     def _format_navigation_target(navigation_goal: list[float]) -> str:
         x, y, z = navigation_goal
         return f"目标点[{x:g}, {y:g}, {z:g}]"
+
+    @staticmethod
+    def _format_navigation_goal_command(navigation_goal: list[float]) -> str:
+        x, y, z = navigation_goal
+        return f"[{x:g}, {y:g}, {z:g}]"
 
     @staticmethod
     def _infer_way_select_route_side(

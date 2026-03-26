@@ -75,6 +75,13 @@ class HighLevelPlanner:
             tasks, summary, climb_override_meta = self._prefer_climb_for_followup_travel(tasks, summary)
             if climb_override_meta:
                 plan_meta.update(climb_override_meta)
+            tasks, summary, navigation_override_meta = self._prefer_navigation_for_goal_travel(
+                tasks,
+                summary,
+                user_input,
+            )
+            if navigation_override_meta:
+                plan_meta.update(navigation_override_meta)
             if not tasks:
                 tasks, summary = self._build_navigation_fallback(
                     user_input,
@@ -221,6 +228,47 @@ class HighLevelPlanner:
             "summary": updated_summary,
         }
 
+    def _prefer_navigation_for_goal_travel(
+        self,
+        tasks: list[dict],
+        summary: str,
+        user_input: str,
+    ) -> tuple[list[dict], str, dict[str, object] | None]:
+        if not self._is_navigation_request(user_input):
+            return tasks, summary, None
+
+        converted = False
+        rewritten_tasks: list[dict] = []
+        for idx, task in enumerate(tasks, 1):
+            normalized = self._normalize_task(task, idx)
+            if normalized.get("function") == "walk" and self._is_goal_travel_task(normalized):
+                normalized = {
+                    **normalized,
+                    "type": "导航",
+                    "function": "navigation",
+                    "task": self._rewrite_goal_walk_as_navigation(normalized.get("task", "")),
+                    "reason": "用户请求前往目标点或目标坐标时，应优先调用 navigation 技能，通过 goal_command 自动导航到目标位置",
+                }
+                converted = True
+            rewritten_tasks.append(normalized)
+
+        if not converted:
+            return tasks, summary, None
+
+        updated_summary = summary.rstrip("。")
+        if updated_summary:
+            updated_summary = updated_summary.replace("walk", "navigation")
+            if "navigation" not in updated_summary and "导航" not in updated_summary:
+                updated_summary = f"{updated_summary}，前往目标点阶段改用 navigation 技能"
+        else:
+            updated_summary = "检测到目标点导航请求，前往目标点阶段改用 navigation 技能"
+
+        print("⚠️  [规则修正] 检测到前往目标点请求，已将目标点前进步骤改为 navigation")
+        return rewritten_tasks, updated_summary, {
+            "selected_plan_id": "rule_override_navigation_goal",
+            "summary": updated_summary,
+        }
+
     @staticmethod
     def _normalize_task(task: dict, default_step: int) -> dict:
         """补齐规划字段，保证执行层可以稳定读取。"""
@@ -331,15 +379,15 @@ class HighLevelPlanner:
                     self._normalize_task(
                         {
                             "step": 2,
-                            "task": "沿左侧路线行走到前方目标点",
-                            "type": "行走",
-                            "function": "walk",
-                            "reason": "完成路线切换后，沿左侧继续前进即可到达目标点",
+                            "task": "切换到左侧路线后，调用 navigation 前往前方目标点",
+                            "type": "导航",
+                            "function": "navigation",
+                            "reason": "完成路线切换后，应通过 navigation 技能按目标点自动导航到终点",
                         },
                         2,
                     ),
                 ],
-                "基于右侧障碍和左侧可通行条件，选择左侧路线前往目标点",
+                "基于右侧障碍和左侧可通行条件，先选择左侧路线，再调用 navigation 前往目标点",
             )
 
         if left_obstacle and not right_obstacle:
@@ -358,15 +406,15 @@ class HighLevelPlanner:
                     self._normalize_task(
                         {
                             "step": 2,
-                            "task": "沿右侧路线行走到前方目标点",
-                            "type": "行走",
-                            "function": "walk",
-                            "reason": "完成路线切换后，沿右侧继续前进即可到达目标点",
+                            "task": "切换到右侧路线后，调用 navigation 前往前方目标点",
+                            "type": "导航",
+                            "function": "navigation",
+                            "reason": "完成路线切换后，应通过 navigation 技能按目标点自动导航到终点",
                         },
                         2,
                     ),
                 ],
-                "基于左侧障碍和右侧可通行条件，选择右侧路线前往目标点",
+                "基于左侧障碍和右侧可通行条件，先选择右侧路线，再调用 navigation 前往目标点",
             )
 
         return (
@@ -374,15 +422,15 @@ class HighLevelPlanner:
                 self._normalize_task(
                     {
                         "step": 1,
-                        "task": "前方路径可通行，直接沿当前路线行走到目标点",
-                        "type": "行走",
-                        "function": "walk",
-                        "reason": "视觉信息未显示必须换道或使用复杂技能，直接前进最快",
+                        "task": "前方路径可通行，直接调用 navigation 前往目标点",
+                        "type": "导航",
+                        "function": "navigation",
+                        "reason": "视觉信息未显示必须换道或使用复杂技能，直接使用 navigation 技能前往目标点最快",
                     },
                     1,
                 )
             ],
-            "基于当前视觉上下文未发现必须换道的关键障碍，直接行走到目标点",
+            "基于当前视觉上下文未发现必须换道的关键障碍，直接调用 navigation 前往目标点",
         )
 
     def _detect_box_assisted_geometry(
@@ -586,6 +634,39 @@ class HighLevelPlanner:
                 break
         if "climb" not in rewritten:
             rewritten = f"继续使用 climb 执行：{rewritten}"
+        return rewritten
+
+    @staticmethod
+    def _is_goal_travel_task(task: dict[str, str]) -> bool:
+        task_text = f"{task.get('task', '')} {task.get('reason', '')}".lower()
+        if any(keyword in task_text for keyword in ("目标点", "前往", "到达", "导航", "坐标")):
+            return True
+        return re.search(r"[-+]?\d*\.?\d+\s*,\s*[-+]?\d*\.?\d+\s*,\s*[-+]?\d*\.?\d+", task_text) is not None
+
+    @staticmethod
+    def _rewrite_goal_walk_as_navigation(task_text: str) -> str:
+        text = str(task_text).strip()
+        if not text:
+            return "调用 navigation 前往目标点"
+
+        replacements = (
+            ("沿当前路线行走到", "调用 navigation 前往"),
+            ("沿当前路线直行到", "调用 navigation 前往"),
+            ("沿当前中线路线直行到", "调用 navigation 前往"),
+            ("沿左侧路线行走到", "切换到左侧路线后，调用 navigation 前往"),
+            ("沿右侧路线行走到", "切换到右侧路线后，调用 navigation 前往"),
+            ("继续行走到", "继续调用 navigation 前往"),
+            ("行走到", "调用 navigation 前往"),
+            ("直行到", "调用 navigation 前往"),
+            ("walk", "navigation"),
+        )
+        rewritten = text
+        for source, target in replacements:
+            if source in rewritten:
+                rewritten = rewritten.replace(source, target, 1)
+                break
+        if "navigation" not in rewritten:
+            rewritten = f"调用 navigation 执行：{rewritten}"
         return rewritten
 
     def _has_side_obstacle(self, context: str, side: str) -> bool:

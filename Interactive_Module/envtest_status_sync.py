@@ -378,7 +378,7 @@ def extract_navigation_goal_override(user_input: str) -> list[float] | None:
 
     navigation_patterns = (
         r"(?:前往|去往|去到|到达|导航到|移动到|走到)\s*(?:坐标)?\s*(\[[^\]]+\]|\([^\)]+\)|[-+]?\d*\.?\d+(?:\s*,\s*[-+]?\d*\.?\d+){{2,3}})",
-        r"(?:前往|去往|去到|到达|导航到|移动到|走到)\s*([-\d\.,\s]+?)\s*(?:处|位置|坐标处|坐标点|点位|附近|$)",
+        r"(?:前往|去往|去到|到达|导航到|移动到|走到)\s*([-\d\.,\s]+?)\s*(?:处|位置|坐标处|坐标点|点位|点|附近|$)",
     )
     for pattern in navigation_patterns:
         match = re.search(pattern, normalized, flags=re.IGNORECASE)
@@ -498,7 +498,9 @@ def sync_runtime_overrides_from_user_input(
     *,
     user_input: str = "",
 ) -> dict[str, Any] | None:
-    if not extract_runtime_overrides(user_input):
+    runtime_overrides = extract_runtime_overrides(user_input)
+    navigation_goal_override = extract_navigation_goal_override(user_input)
+    if not runtime_overrides and navigation_goal_override is None:
         return None
     return update_object_facts_runtime(object_facts_path, user_input=user_input)
 
