@@ -231,33 +231,57 @@ def _find_envtest_player_process() -> tuple[int, list[str]] | None:
     return candidates[0]
 
 
-def _load_scene_layout_module(repo_root: Path):
-    scene_layout_path = (
-        repo_root
-        / "source"
-        / "MyProject"
-        / "MyProject"
-        / "tasks"
-        / "manager_based"
-        / "EnvTest"
-        / "scene_layout.py"
-    )
-    if not scene_layout_path.exists():
-        raise FileNotFoundError(f"未找到 EnvTest scene_layout.py: {scene_layout_path}")
+def _load_envtest_module(module_path: Path, module_name: str):
+    if not module_path.exists():
+        raise FileNotFoundError(f"未找到 EnvTest 模块文件: {module_path}")
 
-    module_name = "_finalproject_envtest_scene_layout"
-    spec = importlib.util.spec_from_file_location(module_name, scene_layout_path)
+    spec = importlib.util.spec_from_file_location(module_name, module_path)
     if spec is None or spec.loader is None:
-        raise ImportError(f"无法加载 EnvTest scene_layout.py: {scene_layout_path}")
+        raise ImportError(f"无法加载 EnvTest 模块文件: {module_path}")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
 
 
+def _load_scene_layout_module(repo_root: Path):
+    envtest_dir = repo_root / "source" / "MyProject" / "MyProject" / "tasks" / "manager_based" / "EnvTest"
+    layout_path_candidates = (
+        envtest_dir / "config" / "layout.py",
+        envtest_dir / "scene_layout.py",
+    )
+    last_error: Exception | None = None
+    for layout_path in layout_path_candidates:
+        try:
+            return _load_envtest_module(layout_path, "_finalproject_envtest_scene_layout")
+        except (FileNotFoundError, ImportError) as error:
+            last_error = error
+    raise FileNotFoundError(
+        f"未找到可用的 EnvTest layout 配置: {[str(path) for path in layout_path_candidates]}"
+    ) from last_error
+
+
+def _load_scene_assets_module(repo_root: Path):
+    envtest_dir = repo_root / "source" / "MyProject" / "MyProject" / "tasks" / "manager_based" / "EnvTest"
+    assets_path_candidates = (
+        envtest_dir / "config" / "assets.py",
+        envtest_dir / "scene_layout.py",
+    )
+    last_error: Exception | None = None
+    for assets_path in assets_path_candidates:
+        try:
+            return _load_envtest_module(assets_path, "_finalproject_envtest_scene_assets")
+        except (FileNotFoundError, ImportError) as error:
+            last_error = error
+    raise FileNotFoundError(
+        f"未找到可用的 EnvTest assets 配置: {[str(path) for path in assets_path_candidates]}"
+    ) from last_error
+
+
 def _build_scene_objects(scene_id: int, repo_root: Path) -> list[dict[str, Any]]:
-    module = _load_scene_layout_module(repo_root)
-    scene_layouts = tuple(getattr(module, "SCENE_LAYOUTS", ()))
-    active_positions = dict(getattr(module, "ACTIVE_LAYOUT_POSITIONS", {}))
+    layout_module = _load_scene_layout_module(repo_root)
+    assets_module = _load_scene_assets_module(repo_root)
+    scene_layouts = tuple(getattr(layout_module, "SCENE_LAYOUTS", ()))
+    active_positions = dict(getattr(assets_module, "ACTIVE_LAYOUT_POSITIONS", {}))
     if not (0 <= scene_id < len(scene_layouts)):
         return []
 
@@ -267,13 +291,13 @@ def _build_scene_objects(scene_id: int, repo_root: Path) -> list[dict[str, Any]]
         if not layout.get(asset_name, False):
             continue
         position = active_positions.get(asset_name)
-        size = getattr(module, asset_name.upper().replace("SUPPORT_BOX", "BOX") + "_SIZE", None)
+        size = getattr(assets_module, asset_name.upper().replace("SUPPORT_BOX", "BOX") + "_SIZE", None)
         if asset_name == "support_box":
-            size = getattr(module, "BOX_SIZE", size)
+            size = getattr(assets_module, "BOX_SIZE", size)
         if asset_name == "left_low_obstacle" or asset_name == "right_low_obstacle":
-            size = getattr(module, "LOW_OBSTACLE_SIZE", size)
+            size = getattr(assets_module, "LOW_OBSTACLE_SIZE", size)
         if asset_name == "left_high_obstacle" or asset_name == "right_high_obstacle":
-            size = getattr(module, "HIGH_OBSTACLE_SIZE", size)
+            size = getattr(assets_module, "HIGH_OBSTACLE_SIZE", size)
         if position is None or size is None:
             continue
 

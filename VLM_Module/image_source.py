@@ -1,5 +1,6 @@
 from __future__ import annotations
-"""图片输入模块：优先读取摄像头，否则回退到默认图片。"""
+"""图片输入模块：优先读取 live EnvTest 图片，其次摄像头，最后回退默认图片。"""
+import os
 from pathlib import Path
 
 try:
@@ -8,16 +9,23 @@ except Exception:
     cv2 = None
 
 Video_Port = "video3"
-image_path = str(Path(__file__).resolve().parent / "assets" / "1.png")
+image_path = str(Path(__file__).resolve().parent / "assets" / "2.png")
+envtest_image_path = os.getenv("FINALPROJECT_VLM_IMAGE_PATH", "/tmp/envtest_front_camera.png")
 
 
 class ImageSource:
     """负责提供最终可用的图片路径。"""
 
-    def __init__(self, Video_Port: int | str = Video_Port, default_image: str | None = image_path):
-        """初始化摄像头端口和默认图片路径。"""
+    def __init__(
+        self,
+        Video_Port: int | str = Video_Port,
+        default_image: str | None = image_path,
+        live_image: str | None = envtest_image_path,
+    ):
+        """初始化摄像头端口、默认图片路径和 live EnvTest 图片路径。"""
         self.Video_Port = Video_Port
         self.default_image = Path(default_image or image_path)
+        self.live_image = Path(live_image).expanduser() if live_image else None
         self.assets_dir = Path(__file__).resolve().parent / "assets"
 
     def _capture_from_camera(self) -> Path | None:
@@ -57,12 +65,27 @@ class ImageSource:
         return None
 
 
+    def _read_live_envtest_image(self) -> Path | None:
+        """优先读取正在运行的 EnvTest player 导出的当前相机图片。"""
+        if self.live_image is None:
+            return None
+
+        path = self.live_image.expanduser().resolve()
+        if path.is_file() and path.stat().st_size > 0:
+            print(f"[ImageSource] 使用 live EnvTest 图片: {path}")
+            return path
+        return None
+
     def get_image(self, image_path: str | None = None) -> Path:
-        """优先使用输入图片，否则尝试摄像头，失败后回退到默认图片。"""
+        """优先使用输入图片，其次 live EnvTest 图片，再尝试摄像头，失败后回退默认图片。"""
         if image_path:
             path = Path(image_path).expanduser().resolve()
             if path.is_file():
                 return path
+
+        live_envtest_image = self._read_live_envtest_image()
+        if live_envtest_image:
+            return live_envtest_image
 
         camera_image = self._capture_from_camera()
         if camera_image:

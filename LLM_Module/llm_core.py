@@ -30,7 +30,7 @@ class LLMAgent:
         prompt_path: str | None = None,
     ):
         self.client = OpenAI(api_key=api_key, base_url=base_url)
-        self.model = "qwen3-max-2025-09-23"
+        self.model = "qwen3.6-plus"
         self.highlevel = HighLevelPlanner(self.client, self.model, prompt_path=prompt_path)
         self.lowlevel = LowLevelExecutor(self.client, self.model)
         self.parameter_calculator = ParameterCalculator()
