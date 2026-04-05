@@ -236,7 +236,7 @@ class ParameterCalculator:
                     annotated["parameter_context"] = parameter_context
                     annotated["calculated_parameters"] = walk_parameters
                     current_pose = list(navigation_goal)
-            elif function_name == "navigation":
+            elif function_name in {"navigation", "nav_climb"}:
                 navigation_parameters = self._build_navigation_parameters(navigation_goal)
                 if navigation_parameters:
                     parameter_context.update(

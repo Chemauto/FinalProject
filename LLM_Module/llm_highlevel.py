@@ -193,7 +193,16 @@ class HighLevelPlanner:
         front_climb = self._detect_front_blocked_climb_plan(scene_facts, object_facts)
         if front_climb:
             function_chain = [str(task.get("function", "")) for task in tasks]
-            if function_chain != ["climb"] and function_chain != ["way_select", "climb"]:
+            if self._is_navigation_request(user_input):
+                if function_chain != ["nav_climb"]:
+                    override_tasks, override_summary = self._build_front_blocked_nav_climb_plan(front_climb)
+                    override_meta = {
+                        "selected_plan_id": "rule_override_front_nav_climb",
+                        "summary": override_summary,
+                    }
+                    print("⚠️  [规则修正] 检测到前方无地面通路，已将目标点规划修正为 nav_climb")
+                    return override_tasks, override_summary, override_meta
+            elif function_chain != ["climb"] and function_chain != ["way_select", "climb"]:
                 override_tasks, override_summary = self._build_front_blocked_climb_plan(front_climb)
                 override_meta = {
                     "selected_plan_id": "rule_override_front_climb",
@@ -667,6 +676,28 @@ class HighLevelPlanner:
         chosen_platform = min(climbable_platforms, key=lambda item: abs(item["center_y"] - robot_y))
         chosen_platform["need_way_select"] = abs(chosen_platform["center_y"] - robot_y) > 0.45
         return chosen_platform
+
+    def _build_front_blocked_nav_climb_plan(self, plan: dict[str, object]) -> tuple[list[dict], str]:
+        side = str(plan.get("side", "left"))
+        side_label = "左侧" if side == "left" else "右侧"
+        platform_id = str(plan.get("platform_id", f"platform_{side}"))
+        height = float(plan.get("height", 0.3))
+        height_label = f"{height:.1f}".rstrip("0").rstrip(".")
+
+        tasks = [
+            self._normalize_task(
+                {
+                    "step": 1,
+                    "task": f"前方没有地面通路，需要直接翻越{side_label}约{height_label}米平台 {platform_id}，调用 nav_climb 前往目标点",
+                    "type": "翻越导航",
+                    "function": "nav_climb",
+                    "reason": f"当前不存在可直接 ground-navigation 的通路；navigation 不能通过该高差，而 nav_climb 是目标点导航技能，可直接翻越{side_label}平台后继续前往目标点",
+                },
+                1,
+            )
+        ]
+        summary = f"前方没有地面通路，应直接使用 nav_climb 翻越{side_label}约{height_label}米平台前往目标点"
+        return tasks, summary
 
     def _build_front_blocked_climb_plan(self, plan: dict[str, object]) -> tuple[list[dict], str]:
         side = str(plan.get("side", "left"))

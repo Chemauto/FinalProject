@@ -20,10 +20,12 @@ prompt: |
 
   重要规则：
   - 如果环境中存在障碍、人员或不可通行区域，优先加入观察、绕行、避障、接近目标等步骤
-  - 当前四足导航只允许使用 6 个技能：walk、navigation、climb_align、climb、push_box、way_select
+  - 当前四足导航只允许使用 7 个技能：walk、navigation、nav_climb、climb_align、climb、push_box、way_select
   - 先给出 2 到 3 个可达目标点的候选方案，再按“技能复杂度 + 风险”选择最简单的一条
-  - 技能复杂度优先级默认是：navigation 最简单，climb 次之，push_box + climb_align + climb 最复杂
+  - 技能复杂度优先级默认是：navigation 最简单，nav_climb / climb 次之，push_box + climb_align + climb 最复杂
   - navigation 具备自动导航和绕障能力；只要存在地面可达路线，就优先直接使用 navigation，不要因为某一侧存在可攀爬平台就主动选择 climb
+  - nav_climb 也是目标点导航技能，但它不做常规绕障；只有当地面路线不存在、必须直接翻越高台才能继续前往目标点时，才使用 nav_climb
+  - climb 仍然是局部单步攀爬技能，用于爬箱子、爬低平台或完成 box_assist / climb_align 之后的明确登台动作；不要用 climb 代替 nav_climb 做目标点导航
   - 如果提供了 object_facts，其中的 navigation_goal、robot_pose、objects、constraints 都是高可信几何真值
   - 如果 object_facts 与 visual_context 或 scene_facts 冲突，以 object_facts 为准
   - 机器人初始位于中间位置，因此遇到左右分路时，第一步优先使用 way_select 选择左侧或右侧路线
@@ -34,7 +36,7 @@ prompt: |
   - 当前 demo 最大单步攀爬高度是 0.3 米；若高台 0.4 米且先上 0.2 米箱子，第二次攀爬应描述为“再攀爬约 0.2 米到高台”
   - 如果只有一侧高台高度小于等于 0.3 米、另一侧高度超过 0.3 米、且没有可推动箱子，则不能把该场景误判为 walk；应先 way_select 到可攀爬侧，再调用 climb
   - 如果 object_facts 表明存在可推动箱子、高台高度超过 0.3 米、且“高台高度 - 箱子高度 <= 0.3 米”，则优先规划为 push_box -> climb_align -> climb -> navigation，而不是 walk
-  - 只有当所有地面导航方案都不可行，或者目标明确位于高台/箱子上时，才考虑 climb
+  - 当用户目标是前往某个目标点、且所有地面导航方案都不可行时，优先考虑 nav_climb；climb 只用于局部单步攀爬，而不是完整目标点导航
   - 当用户明确说“前往某个目标点/坐标/位置”时，最终到目标点的动作优先使用 navigation，而不是 walk
   - 高层只负责决定策略和技能顺序，不要在 tasks 中编造精确坐标；坐标会由后续 parameter calculation 处理
   - 对“前往目标点”类导航任务，要按技能调用顺序拆分，不要把多个技能压缩成一步
@@ -136,13 +138,23 @@ prompt: |
   }}}}
 
   输入："前往5,0,0"
+  如果结构化物体信息说明前方是高台阻挡、没有地面通路、也不是箱子辅助登台场景
+  输出：
+  {{{{
+    "tasks": [
+      {{{{ "step": 1, "task": "前方没有地面通路，需直接翻越高台才能前往目标点，调用 nav_climb 前往目标点 [5,0,0]", "type": "翻越导航", "function": "nav_climb", "reason": "navigation 只能在存在地面路线时绕障前进；当前必须直接翻越高台，因此应调用具备翻越能力但不做常规绕障的 nav_climb" }}}}
+    ],
+    "summary": "前方没有地面通路，使用 nav_climb 直接翻越高台前往目标点"
+  }}}}
+
+  输入："前往5,0,0"
   如果结构化物体信息说明前方左右两侧都是约0.3米低平台，没有 ground-clear 通路
   输出：
   {{{{
     "tasks": [
-      {{{{ "step": 1, "task": "前方地面路线被低平台阻挡，调用 climb 攀爬约0.3米通过低平台", "type": "攀爬", "function": "climb", "reason": "低平台虽然高度在 climb 上限内，但对 navigation 来说仍然没有地面通路，因此应调用 climb 模型而不是 navigation" }}}}
+      {{{{ "step": 1, "task": "前方没有地面通路，需要直接翻越低平台前往目标点，调用 nav_climb 前往目标点", "type": "翻越导航", "function": "nav_climb", "reason": "当前目标是前往目标点；虽然低平台高度在 climb 上限内，但这里应优先使用目标点导航技能 nav_climb，而不是把整段目标点移动拆成单步 climb" }}}}
     ],
-    "summary": "前方地面路线被低平台阻挡，使用 climb 通过低平台"
+    "summary": "前方没有地面通路，直接使用 nav_climb 翻越低平台前往目标点"
   }}}}
 
   输入："前往前方目标点"

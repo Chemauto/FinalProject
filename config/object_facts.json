@@ -1,13 +1,13 @@
 {
   "navigation_goal": [
-    5.0,
+    5.5,
     0.0,
     0.0
   ],
   "robot_pose": [
-    1.872,
-    0.237,
-    0.371
+    -0.061,
+    0.0,
+    0.286
   ],
   "constraints": {
     "max_climb_height_m": 0.3,
@@ -115,8 +115,8 @@
     }
   ],
   "runtime_state": {
-    "scene_id": 3,
-    "model_use": 2,
+    "scene_id": 4,
+    "model_use": 0,
     "start": false,
     "vel_command": [
       0.0,
@@ -126,13 +126,13 @@
     "pose_command": null,
     "goal": null,
     "robot_pose": [
-      1.872,
-      0.237,
-      0.371
+      -0.061,
+      0.0,
+      0.286
     ],
-    "skill": "climb",
+    "skill": "idle",
     "navigation_goal_override": [
-      5.0,
+      5.5,
       0.0,
       0.0
     ],

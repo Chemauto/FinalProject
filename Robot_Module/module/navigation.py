@@ -1,13 +1,14 @@
 """
 四足导航技能模块 (Navigation Skills Module)
 
-当前只暴露 6 个技能给 LLM：
+当前只暴露 7 个技能给 LLM：
 1. walk
 2. navigation
-3. climb_align
-4. climb
-5. push_box
-6. way_select
+3. nav_climb
+4. climb_align
+5. climb
+6. push_box
+7. way_select
 
 当前版本优先对接 IsaacLab EnvTest 的控制文件/UDP 协议，
 同时保留可选 ROS 执行反馈通道，避免破坏现有上层接口。
@@ -45,6 +46,8 @@ MODEL_USE_WALK = 1
 MODEL_USE_CLIMB = 2
 MODEL_USE_PUSH_BOX = 3
 MODEL_USE_NAVIGATION = 4
+MODEL_USE_NAV_CLIMB = 5
+NAVIGATION_MODEL_USES = {MODEL_USE_NAVIGATION, MODEL_USE_NAV_CLIMB}
 
 DEFAULT_WALK_SPEED_MPS = 0.6
 DEFAULT_LATERAL_SPEED_MPS = 0.5
@@ -880,7 +883,7 @@ async def _wait_navigation_arrival_status(
         else:
             stable_hits = 0
 
-        if start_flag is False or (current_model_use is not None and current_model_use != MODEL_USE_NAVIGATION):
+        if start_flag is False or (current_model_use is not None and current_model_use not in NAVIGATION_MODEL_USES):
             if latest_dist_xy is None or latest_dist_xy > arrival_tol_m:
                 return {
                     "ok": False,
@@ -965,7 +968,7 @@ async def _wait_skill_feedback(
     await asyncio.sleep(config.command_settle_sec)
     _apply_envtest_command(config, start=True)
 
-    if model_use == MODEL_USE_NAVIGATION and isinstance(goal_command, list) and len(goal_command) >= 3:
+    if model_use in NAVIGATION_MODEL_USES and isinstance(goal_command, list) and len(goal_command) >= 3:
         arrival_result = await _wait_navigation_arrival_status(
             config,
             goal_command=goal_command,
@@ -1090,13 +1093,16 @@ async def execute_walk_skill(
     }
 
 
-async def execute_navigation_skill(
+async def _execute_goal_navigation_skill(
+    *,
+    skill_name: str,
+    model_use: int,
     goal_command: list[float] | str,
     target: str = DEFAULT_TARGET,
     speech: str = "",
     wait_feedback: bool = True,
+    log_label: str,
 ) -> dict[str, Any]:
-    """导航技能。"""
     normalized_goal = _parse_goal_value(goal_command)
     if normalized_goal is None or normalized_goal == "auto":
         raise ValueError("goal_command 必须是显式目标点，支持 [x, y, z] / \"x,y,z\" / [x, y, z, yaw] 格式")
@@ -1106,26 +1112,26 @@ async def execute_navigation_skill(
 
     _speak(speech)
     _log_skill(
-        "navigation",
-        f"导航到{target}，目标命令={normalized_goal}，预计执行 {execution_time_sec:.2f} 秒",
+        skill_name,
+        f"{log_label}到{target}，目标命令={normalized_goal}，预计执行 {execution_time_sec:.2f} 秒",
     )
     feedback = await _wait_skill_feedback(
-        "navigation",
+        skill_name,
         {
             "goal_command": normalized_goal,
             "target": target,
         },
-        f"已完成导航到{target}",
+        f"已完成{log_label}到{target}",
         wait_feedback=wait_feedback,
         timeout_sec=timeout_sec,
-        model_use=MODEL_USE_NAVIGATION,
+        model_use=model_use,
         goal_command=normalized_goal,
         execution_time_sec=execution_time_sec,
     )
     status = "success" if feedback.get("signal") == "SUCCESS" else "failure"
     backend_label = _resolve_feedback_backend(feedback)
     return {
-        "skill": "navigation",
+        "skill": skill_name,
         "goal_command": normalized_goal,
         "target": target,
         "speech": speech,
@@ -1133,7 +1139,7 @@ async def execute_navigation_skill(
         "execution_feedback": feedback,
         "execution_result": feedback.get("result", {}),
         "control_command": {
-            "model_use": MODEL_USE_NAVIGATION,
+            "model_use": model_use,
             "goal": normalized_goal,
             "estimated_execution_time_sec": round(execution_time_sec, 3),
             "timeout_sec": round(timeout_sec, 3),
@@ -1141,6 +1147,42 @@ async def execute_navigation_skill(
         "backend": backend_label,
         "status": status,
     }
+
+
+async def execute_navigation_skill(
+    goal_command: list[float] | str,
+    target: str = DEFAULT_TARGET,
+    speech: str = "",
+    wait_feedback: bool = True,
+) -> dict[str, Any]:
+    """地面导航技能。"""
+    return await _execute_goal_navigation_skill(
+        skill_name="navigation",
+        model_use=MODEL_USE_NAVIGATION,
+        goal_command=goal_command,
+        target=target,
+        speech=speech,
+        wait_feedback=wait_feedback,
+        log_label="导航",
+    )
+
+
+async def execute_nav_climb_skill(
+    goal_command: list[float] | str,
+    target: str = DEFAULT_TARGET,
+    speech: str = "",
+    wait_feedback: bool = True,
+) -> dict[str, Any]:
+    """高台翻越导航技能。"""
+    return await _execute_goal_navigation_skill(
+        skill_name="nav_climb",
+        model_use=MODEL_USE_NAV_CLIMB,
+        goal_command=goal_command,
+        target=target,
+        speech=speech,
+        wait_feedback=wait_feedback,
+        log_label="翻越导航",
+    )
 
 
 async def execute_climb_align_skill(
@@ -1577,7 +1619,7 @@ async def execute_case_4_flow(
 
 
 def register_tools(mcp):
-    """注册 6 个导航技能。"""
+    """注册 7 个导航技能。"""
 
     @mcp.tool()
     async def walk(
@@ -1605,12 +1647,32 @@ def register_tools(mcp):
         target: str = DEFAULT_TARGET,
         speech: str = "",
     ) -> str:
-        """导航技能。
+        """地面导航技能。
 
-        用于机器人根据目标点调用 EnvTest navigation 策略自动前往目标位置。
+        用于机器人根据目标点调用 EnvTest `model_use=4 / NavigationWalk` 自动前往目标位置。
+        该技能具备绕障能力，但不能直接翻越高台。
         `goal_command` 支持 `[x, y, z]` / `"x,y,z"` / `[x, y, z, yaw]`。
         """
         result = await execute_navigation_skill(
+            goal_command=goal_command,
+            target=target,
+            speech=speech,
+        )
+        return json.dumps(result, ensure_ascii=False)
+
+    @mcp.tool()
+    async def nav_climb(
+        goal_command: str,
+        target: str = DEFAULT_TARGET,
+        speech: str = "",
+    ) -> str:
+        """高台翻越导航技能。
+
+        用于机器人根据目标点调用 EnvTest `model_use=5 / NavigationClimb` 前进。
+        该技能可以直接翻越高台，但不负责常规绕障导航；只有当前方没有地面通路、必须直接翻越高差时才使用。
+        `goal_command` 支持 `[x, y, z]` / `"x,y,z"` / `[x, y, z, yaw]`。
+        """
+        result = await execute_nav_climb_skill(
             goal_command=goal_command,
             target=target,
             speech=speech,
@@ -1695,11 +1757,12 @@ def register_tools(mcp):
         )
         return json.dumps(result, ensure_ascii=False)
 
-    print("[navigation.py:register_tools] 导航技能模块已注册 (6 个工具)", file=sys.stderr)
+    print("[navigation.py:register_tools] 导航技能模块已注册 (7 个工具)", file=sys.stderr)
 
     return {
         "walk": walk,
         "navigation": navigation,
+        "nav_climb": nav_climb,
         "climb_align": climb_align,
         "climb": climb,
         "push_box": push_box,

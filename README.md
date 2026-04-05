@@ -2,7 +2,7 @@
 基于 LLM 决策的四足机器人导航项目，面向 Unitree Go2，当前主执行后端是 IsaacLab EnvTest。
 
 ## 当前能力
-- 只对外暴露 6 个技能：`walk`、`navigation`、`climb_align`、`climb`、`push_box`、`way_select`
+- 只对外暴露 7 个技能：`walk`、`navigation`、`nav_climb`、`climb_align`、`climb`、`push_box`、`way_select`
 - 规划优先级：`navigation` 最简单，`climb` 次之，`push_box + climb_align + climb` 最复杂
 - 最大单步攀爬高度：`0.3 m`
 - 几何真值优先级高于 VLM
@@ -33,7 +33,7 @@
 - `LLM_Module/parameter_calculator.py`：参数计算
 - `LLM_Module/llm_lowlevel.py`：低层执行
 - `VLM_Module/vlm_core.py`：VLM 输出、`scene_facts` 构建与融合
-- `Robot_Module/module/navigation.py`：6 个技能的真实执行逻辑
+- `Robot_Module/module/navigation.py`：7 个技能的真实执行逻辑
 
 ## 输入与优先级
 - 用户文本：任务目标与可选覆盖参数
@@ -133,7 +133,8 @@ VLM 当前输出结构化 JSON，核心字段：
 
 ## 技能当前行为
 - `walk`：默认速度 `0.6 m/s`，用于沿当前路线继续前进
-- `navigation`：通过 `goal_command` 下发目标点，使用 EnvTest `model_use=4` 自动导航到目标位置
+- `navigation`：通过 `goal_command` 下发目标点，使用 EnvTest `model_use=4 / NavigationWalk` 自动导航到目标位置；具备绕障能力，但不能直接翻越高台
+- `nav_climb`：通过 `goal_command` 下发目标点，使用 EnvTest `model_use=5 / NavigationClimb` 直接翻越高台前进；不负责常规绕障
 - `navigation`：默认每 `0.5s` 轮询 `/tmp/envtest_live_status.json`，按“目标距离 + 连续位置稳定”判定 SUCCESS，而不是仅按预计时间返回成功
 - `climb_align`：在正式 `climb` 前，使用 `model_use=4` 导航到箱子或平台前的攀爬起点
 - `way_select`：默认是横向 `walk`；左侧 `velocity=[0.0,0.5,0.0]`，右侧 `velocity=[0.0,-0.5,0.0]`，固定 `3s`
