@@ -135,6 +135,16 @@ prompt: |
     "summary": "使用 push_box 自动推箱、climb_align 对正、climb 登台，再通过 navigation 到达前方目标点"
   }}}}
 
+  输入："前往5,0,0"
+  如果结构化物体信息说明前方左右两侧都是约0.3米低平台，没有 ground-clear 通路
+  输出：
+  {{{{
+    "tasks": [
+      {{{{ "step": 1, "task": "前方地面路线被低平台阻挡，调用 climb 攀爬约0.3米通过低平台", "type": "攀爬", "function": "climb", "reason": "低平台虽然高度在 climb 上限内，但对 navigation 来说仍然没有地面通路，因此应调用 climb 模型而不是 navigation" }}}}
+    ],
+    "summary": "前方地面路线被低平台阻挡，使用 climb 通过低平台"
+  }}}}
+
   输入："前往前方目标点"
   如果视觉上下文说明“左侧高台约0.2米，右侧高台约0.4米，没有箱子”
   输出：

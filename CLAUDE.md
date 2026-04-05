@@ -201,7 +201,7 @@ VLM 当前必须尽量输出结构化 JSON，核心字段：
 - 最大允许高度：`0.3 m`
 - 默认速度：`0.6 m/s`
 - 默认执行时间：`12.0 秒`
-- 当前默认通过 `Socket/envtest_socket_client.py` 下发
+- 当前通过统一 EnvTest 控制后端下发
 - 使用 `model_use=2`
 
 ### `push_box`
@@ -214,7 +214,6 @@ VLM 当前必须尽量输出结构化 JSON，核心字段：
 - `FINALPROJECT_NAV_BACKEND`
 - `FINALPROJECT_CLIMB_DURATION_SEC`
 - `FINALPROJECT_CLIMB_SPEED_MPS`
-- `FINALPROJECT_CLIMB_USE_SOCKET_CLIENT`
 
 改执行行为前，先确认是不是环境变量覆盖了默认值。
 

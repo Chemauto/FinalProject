@@ -317,20 +317,22 @@ class VLMCore:
             side_label = "左侧" if side == "left" else "右侧" if side == "right" else "当前侧"
 
             if obj_type == "platform":
+                climbable = 0 < height <= climb_limit
                 terrain_features.append(
                     {
                         "side": side,
                         "type": "platform",
                         "height_m": height,
-                        "traversable": height <= climb_limit,
+                        "traversable": climbable,
                         "description": f"{side_label}平台 {obj_id}",
                         "object_id": obj_id,
                     }
                 )
                 route_options_by_side[side] = {
                     "direction": side,
-                    "status": "clear" if height <= climb_limit else "blocked",
+                    "status": "blocked",
                     "reason": f"{side_label}{cls._format_height_label(height)}米高台 {obj_id}",
+                    "requires_climb": climbable,
                 }
                 platform_summaries.append(f"{side_label}存在约{cls._format_height_label(height)}米高台")
             elif obj_type == "box":
@@ -355,6 +357,17 @@ class VLMCore:
                     },
                 )
                 object_summaries.append(f"{side_label}有可推动箱子 {obj_id}")
+
+        for side, side_label in (("left", "左侧"), ("right", "右侧")):
+            route_options_by_side.setdefault(
+                side,
+                {
+                    "direction": side,
+                    "status": "clear",
+                    "reason": f"{side_label}无结构化障碍，地面可通行",
+                    "requires_climb": False,
+                },
+            )
 
         return {
             "summary": "，".join([*platform_summaries, *object_summaries]) if platform_summaries or object_summaries else "已加载结构化物体信息",

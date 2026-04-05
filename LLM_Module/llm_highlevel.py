@@ -166,6 +166,42 @@ class HighLevelPlanner:
         scene_facts: dict | None,
         object_facts: dict | None,
     ) -> tuple[list[dict], str, dict[str, object] | None]:
+        box_assisted = self._detect_box_assisted_geometry(scene_facts, object_facts)
+        if box_assisted:
+            if self._should_override_box_assisted_plan(tasks):
+                override_tasks, override_summary = self._build_box_assisted_plan(box_assisted)
+                override_meta = {
+                    "selected_plan_id": "rule_override_box_assist",
+                    "summary": override_summary,
+                }
+                print("⚠️  [规则修正] 检测到箱子辅助攀爬场景，已将任务链修正为 push_box -> climb_align -> climb -> navigation")
+                return override_tasks, override_summary, override_meta
+
+        single_climb = self._detect_single_climb_side(scene_facts)
+        if single_climb:
+            climb_side, climb_height = single_climb
+            has_climb = any(task.get("function") == "climb" for task in tasks)
+            if not has_climb:
+                override_tasks, override_summary = self._build_single_climb_plan(climb_side, climb_height)
+                override_meta = {
+                    "selected_plan_id": "rule_override_single_climb",
+                    "summary": override_summary,
+                }
+                print("⚠️  [规则修正] 检测到仅单侧可攀爬场景，已将 walk 规划修正为 climb")
+                return override_tasks, override_summary, override_meta
+
+        front_climb = self._detect_front_blocked_climb_plan(scene_facts, object_facts)
+        if front_climb:
+            function_chain = [str(task.get("function", "")) for task in tasks]
+            if function_chain != ["climb"] and function_chain != ["way_select", "climb"]:
+                override_tasks, override_summary = self._build_front_blocked_climb_plan(front_climb)
+                override_meta = {
+                    "selected_plan_id": "rule_override_front_climb",
+                    "summary": override_summary,
+                }
+                print("⚠️  [规则修正] 检测到前方地面路线被低平台阻挡，已将 navigation 规划修正为 climb")
+                return override_tasks, override_summary, override_meta
+
         direct_navigation = self._detect_direct_navigation_route(
             user_input=user_input,
             visual_context=visual_context,
@@ -181,33 +217,7 @@ class HighLevelPlanner:
             print("⚠️  [规则修正] 检测到目标点存在可直接导航路线，已将任务链修正为 navigation")
             return override_tasks, override_summary, override_meta
 
-        box_assisted = self._detect_box_assisted_geometry(scene_facts, object_facts)
-        if box_assisted:
-            if self._should_override_box_assisted_plan(tasks):
-                override_tasks, override_summary = self._build_box_assisted_plan(box_assisted)
-                override_meta = {
-                    "selected_plan_id": "rule_override_box_assist",
-                    "summary": override_summary,
-                }
-                print("⚠️  [规则修正] 检测到箱子辅助攀爬场景，已将任务链修正为 push_box -> climb_align -> climb -> navigation")
-                return override_tasks, override_summary, override_meta
-
-        single_climb = self._detect_single_climb_side(scene_facts)
-        if not single_climb:
-            return tasks, summary, None
-
-        climb_side, climb_height = single_climb
-        has_climb = any(task.get("function") == "climb" for task in tasks)
-        if has_climb:
-            return tasks, summary, None
-
-        override_tasks, override_summary = self._build_single_climb_plan(climb_side, climb_height)
-        override_meta = {
-            "selected_plan_id": "rule_override_single_climb",
-            "summary": override_summary,
-        }
-        print("⚠️  [规则修正] 检测到仅单侧可攀爬场景，已将 walk 规划修正为 climb")
-        return override_tasks, override_summary, override_meta
+        return tasks, summary, None
 
     @staticmethod
     def _should_override_box_assisted_plan(tasks: list[dict]) -> bool:
@@ -603,6 +613,102 @@ class HighLevelPlanner:
             "platform_height": platform_height,
             "remaining_height": remaining_height,
         }
+
+    def _detect_front_blocked_climb_plan(
+        self,
+        scene_facts: dict | None,
+        object_facts: dict | None,
+    ) -> dict[str, object] | None:
+        if not scene_facts or not object_facts:
+            return None
+
+        if scene_facts.get("interactive_objects"):
+            return None
+
+        route_options = scene_facts.get("route_options") or []
+        if not route_options:
+            return None
+        if any(str(option.get("status", "")).lower() == "clear" for option in route_options):
+            return None
+
+        constraints = object_facts.get("constraints") or scene_facts.get("constraints") or {}
+        climb_limit = float(constraints.get("max_climb_height_m", 0.3))
+        robot_pose = object_facts.get("robot_pose") or [0.0, 0.0, 0.0]
+        robot_y = float(robot_pose[1]) if len(robot_pose) > 1 else 0.0
+
+        climbable_platforms = []
+        for obj in object_facts.get("objects") or []:
+            if str(obj.get("type", "")).lower() != "platform":
+                continue
+            center = obj.get("center") or [0.0, 0.0, 0.0]
+            size = obj.get("size") or [0.0, 0.0, 0.0]
+            if len(center) < 2 or len(size) < 3:
+                continue
+            try:
+                height = float(size[2])
+                center_y = float(center[1])
+            except (TypeError, ValueError):
+                continue
+            if not (0 < height <= climb_limit):
+                continue
+            side = "left" if center_y >= 0 else "right"
+            climbable_platforms.append(
+                {
+                    "platform_id": str(obj.get("id", side)),
+                    "side": side,
+                    "height": round(height, 3),
+                    "center_y": center_y,
+                }
+            )
+
+        if not climbable_platforms:
+            return None
+
+        chosen_platform = min(climbable_platforms, key=lambda item: abs(item["center_y"] - robot_y))
+        chosen_platform["need_way_select"] = abs(chosen_platform["center_y"] - robot_y) > 0.45
+        return chosen_platform
+
+    def _build_front_blocked_climb_plan(self, plan: dict[str, object]) -> tuple[list[dict], str]:
+        side = str(plan.get("side", "left"))
+        side_label = "左侧" if side == "left" else "右侧"
+        platform_id = str(plan.get("platform_id", f"platform_{side}"))
+        height = float(plan.get("height", 0.3))
+        height_label = f"{height:.1f}".rstrip("0").rstrip(".")
+        need_way_select = bool(plan.get("need_way_select"))
+
+        tasks: list[dict] = []
+        if need_way_select:
+            tasks.append(
+                self._normalize_task(
+                    {
+                        "step": 1,
+                        "task": f"前方地面被低平台阻挡，先切换到{side_label}可攀爬路线入口",
+                        "type": "路线选择",
+                        "function": "way_select",
+                        "reason": f"前方没有可直接 ground-navigation 的通路，需要先贴近{side_label}低平台，再执行 climb",
+                    },
+                    1,
+                )
+            )
+            step = 2
+        else:
+            step = 1
+
+        tasks.append(
+            self._normalize_task(
+                {
+                    "step": step,
+                    "task": f"前方地面路线被低平台阻挡，调用 climb 攀爬约{height_label}米通过{side_label}平台 {platform_id}",
+                    "type": "攀爬",
+                    "function": "climb",
+                    "reason": f"navigation 只能在存在地面路线时绕障前进；当前需要通过{side_label}约{height_label}米低平台，因此应调用 climb 模型",
+                },
+                step,
+            )
+        )
+
+        summary = f"前方地面路线被低平台阻挡，应通过{side_label}约{height_label}米平台执行 climb，而不是直接 navigation"
+        return tasks, summary
 
     def _detect_single_climb_side(self, scene_facts: dict | None) -> tuple[str, float] | None:
         if not scene_facts:

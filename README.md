@@ -137,7 +137,7 @@ VLM 当前输出结构化 JSON，核心字段：
 - `navigation`：默认每 `0.5s` 轮询 `/tmp/envtest_live_status.json`，按“目标距离 + 连续位置稳定”判定 SUCCESS，而不是仅按预计时间返回成功
 - `climb_align`：在正式 `climb` 前，使用 `model_use=4` 导航到箱子或平台前的攀爬起点
 - `way_select`：默认是横向 `walk`；左侧 `velocity=[0.0,0.5,0.0]`，右侧 `velocity=[0.0,-0.5,0.0]`，固定 `3s`
-- `climb`：最大 `0.3m`，默认速度 `0.6 m/s`，默认执行 `12s`，默认通过 `Socket/envtest_socket_client.py` 下发 `model_use=2`
+- `climb`：最大 `0.3m`，默认速度 `0.6 m/s`，默认执行 `12s`，通过统一 EnvTest 控制后端下发 `model_use=2`
 - `push_box`：箱子辅助场景下默认使用自动模式，不显式下发推箱目标点
 
 ## 最短运行方式
@@ -175,7 +175,6 @@ python interactive.py
 - `FINALPROJECT_STATUS_STALE_SEC`
 - `FINALPROJECT_CLIMB_DURATION_SEC`
 - `FINALPROJECT_CLIMB_SPEED_MPS`
-- `FINALPROJECT_CLIMB_USE_SOCKET_CLIENT`
 - `FINALPROJECT_POST_PUSH_SETTLE_SEC`
 - `FINALPROJECT_PRE_CLIMB_SETTLE_SEC`
 - `FINALPROJECT_POST_ALIGN_SETTLE_SEC`
