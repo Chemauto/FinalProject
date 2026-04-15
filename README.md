@@ -7,26 +7,47 @@
 - 规划优先级：`navigation` 最简单，`climb` 次之，`push_box + climb_align + climb` 最复杂
 - 最大单步攀爬高度：`0.3 m`
 - 几何真值优先级高于 VLM
-- 任一步失败后直接停止后续任务，不自动重规划
+- 失败时最多重规划 1 次，仍失败则停止后续任务
 
 ## 主链路
 ```text
 用户输入
--> Interactive_Module/interactive.py
--> 顶层 LLM 判断
-   -> 直接回复
-   -> 或调用 vlm_observe
-   -> 或调用 robot_act
--> robot_act 内部再复用原有规划/参数计算/执行链
+-> Interactive_Module/interactive.py（顶层 agent，基于 qwen3.6-plus）
+   -> 顶层 LLM 判断
+      -> 直接回复
+      -> 或调用 vlm_observe（环境观测）
+      -> 或调用 robot_act（动作执行）
+-> robot_act 内部：
+   -> 同步 live EnvTest 状态
+   -> 加载 object_facts
+   -> HighLevelPlanner.plan_tasks()（高层规划）
+   -> ParameterCalculator.annotate_tasks()（参数计算）
+   -> LowLevelExecutor.execute_single_task()（低层执行）
+   -> Robot_Module/module/navigation.py（技能执行）
+   -> IsaacLab EnvTest
+```
+
+## TUI 渐进式渲染
+交互模式下，输出按执行顺序实时显示：
+
+```text
+1. Thinking 面板        — agent 思考过程
+2. vlm_observe 面板    — 环境观测结果
+3. Thinking 面板        — 基于观测的动作规划思考
+4. robot_act 内部日志  — ████ 规划块、⚙️🔧 执行信息（流式）
+5. robot_act 摘要面板  — total_tasks / success_count / failure_count
+6. Assistant 面板      — 最终回复
 ```
 
 ## 核心模块
-- `Interactive_Module/interactive.py`：基于 `rich` 的 TUI 入口
+- `Interactive_Module/interactive.py`：基于 `rich` 的 TUI 入口，顶层 agent 循环与渐进式渲染
 - `Comm_Module/Status/envtest_status_sync.py`：同步 EnvTest 状态并写回 `object_facts.json`
-- `LLM_Module/llm_highlevel.py`：高层规划
+- `LLM_Module/llm_core.py`：`HighLevelPlanner`（高层规划）+ `LLMAgent`（动作规划与执行代理）
 - `LLM_Module/parameter_calculator.py`：参数计算
 - `LLM_Module/llm_lowlevel.py`：低层执行
 - `VLM_Module/vlm_core.py`：VLM 输出、`scene_facts` 构建与融合
+- `Robot_Module/agent_tools.py`：`robot_act` 封装，`_StreamingBuffer` 日志转发
+- `Robot_Module/skill.py`：统一技能注册
 - `Robot_Module/module/navigation.py`：7 个技能的真实执行逻辑
 
 ## 输入与优先级
@@ -66,7 +87,7 @@
 - `navigation_goal`：`navigation` 参数计算的最终目标点；当规划仍需短距路线前进时也可供 `walk` 使用
 
 ## live EnvTest 同步
-交互模式下，每次用户输入后、规划前，系统会优先同步 live EnvTest。
+交互模式下，每次 `robot_act` 调用前，系统会优先同步 live EnvTest。
 同步内容包括：
 - `scene_id / model_use / start`
 - `/tmp/model_use.txt`
@@ -77,7 +98,7 @@
 
 手动同步：
 ```bash
-cd /home/xcj/work/FinalProject/Comm_Module/Status
+cd /home/robot/work/FinalProject/Comm_Module/Status
 python sync_envtest_status.py --live-envtest
 ```
 
@@ -129,7 +150,7 @@ VLM 当前输出结构化 JSON，核心字段：
 - `walk`：默认速度 `0.6 m/s`，用于沿当前路线继续前进
 - `navigation`：通过 `goal_command` 下发目标点，使用 EnvTest `model_use=4 / NavigationWalk` 自动导航到目标位置；具备绕障能力，但不能直接翻越高台
 - `nav_climb`：通过 `goal_command` 下发目标点，使用 EnvTest `model_use=5 / NavigationClimb` 直接翻越高台前进；不负责常规绕障
-- `navigation`：默认每 `0.5s` 轮询 `/tmp/envtest_live_status.json`，按“目标距离 + 连续位置稳定”判定 SUCCESS，而不是仅按预计时间返回成功
+- `navigation`：默认每 `0.5s` 轮询 `/tmp/envtest_live_status.json`，按"目标距离 + 连续位置稳定"判定 SUCCESS，而不是仅按预计时间返回成功
 - `climb_align`：在正式 `climb` 前，使用 `model_use=4` 导航到箱子或平台前的攀爬起点
 - `way_select`：默认是横向 `walk`；左侧 `velocity=[0.0,0.5,0.0]`，右侧 `velocity=[0.0,-0.5,0.0]`，固定 `3s`
 - `climb`：最大 `0.3m`，默认速度 `0.6 m/s`，默认执行 `12s`，通过统一 EnvTest 控制后端下发 `model_use=2`
@@ -138,13 +159,13 @@ VLM 当前输出结构化 JSON，核心字段：
 ## 最短运行方式
 1. 启动 IsaacLab player
 ```bash
-cd /home/xcj/work/IsaacLab/IsaacLabBisShe
+cd /home/robot/work/IsaacLab/IsaacLabBisShe
 python NewTools/envtest_model_use_player.py --scene_id 3
 ```
 默认会持续写出 `/tmp/envtest_live_status.json`，供 FinalProject 轮询导航完成状态。
 2. 启动交互入口
 ```bash
-cd /home/xcj/work/FinalProject/Interactive_Module
+cd /home/robot/work/FinalProject/Interactive_Module
 python interactive.py
 ```
 启动后可使用 `/help`、`/tools`、`/reset`、`/status`、`/vlm`、`/quit` 管理当前会话。
@@ -176,6 +197,7 @@ python interactive.py
 - `FINALPROJECT_PRE_CLIMB_SETTLE_SEC`
 - `FINALPROJECT_POST_ALIGN_SETTLE_SEC`
 - `FINALPROJECT_CLIMB_PREALIGN_OFFSET_M`
+- `FINALPROJECT_AGENT_MODEL`
 
 ## 当前限制
 - `robot_pose` 目前主要只按位置使用
@@ -189,3 +211,6 @@ python interactive.py
 - `CLAUDE.md`
 - `VLM_Module/README.md`
 - `Robot_Module/README.md`
+- `LLM_Module/README.md`
+- `Interactive_Module/README.md`
+- `Comm_Module/README.md`

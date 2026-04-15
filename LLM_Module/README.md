@@ -7,11 +7,11 @@
 
 `user_input -> plan -> parameter calculation -> lowlevel execution -> tool result`
 
-失败时不再重规划，当前策略是直接停止后续任务。
+失败时最多重规划 1 次（`max_replans=1`），仍失败则停止后续任务。
 
 ## 主要文件
 
-- `llm_core.py`：总控，包含高层规划并串联参数计算、执行
+- `llm_core.py`：总控，包含 `HighLevelPlanner`（高层规划）和 `LLMAgent`（动作规划与执行代理）
 - `llm_lowlevel.py`：低层执行，调用工具
 - `object_facts_loader.py`：读取并归一化 `object_facts.json`
 - `parameter_calculator.py`：把抽象任务补成具体参数
@@ -32,7 +32,7 @@
 
 ## 当前行为
 
-- 规划层只规划一次，不接受 `replan_context`
+- 规划层失败时会重规划最多 1 次（`max_replans=1`）
 - 低层若看到 `calculated_parameters`，优先直接执行，不再重新猜参数
 - 技能执行反馈默认等待 `20 秒`
 - 当前以通用动作为主，不再在高层写死特定场景修正规则
@@ -50,8 +50,12 @@
 
 ## 入口
 
-通常由 `Interactive_Module/interactive.py` 调用：
+通常由 `Interactive_Module/interactive.py` 通过 `robot_act` 间接调用：
 
 ```bash
 python3 Interactive_Module/interactive.py
 ```
+
+## stdout 输出
+
+`llm_core.py` 和 `llm_lowlevel.py` 的 print 输出（████ 规划块、⚙️🔧 执行信息等）通过 `agent_tools.py` 的 `_StreamingBuffer` 机制捕获，经 `log_callback` 转发到交互终端实时显示。
