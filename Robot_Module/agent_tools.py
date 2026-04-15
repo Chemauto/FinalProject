@@ -4,6 +4,7 @@ import asyncio
 import io
 import json
 import os
+import threading
 from contextlib import redirect_stdout
 from pathlib import Path
 from typing import Any
@@ -11,13 +12,37 @@ from typing import Any
 from LLM_Module.llm_core import LLMAgent
 from LLM_Module.object_facts_loader import load_object_facts
 from VLM_Module.vlm_core import VLMCore
-from Interactive_Module.envtest_status_sync import (
+from Comm_Module.Status.envtest_status_sync import (
     sync_object_facts_from_live_envtest,
     sync_runtime_overrides_from_user_input,
 )
 DEFAULT_OBJECT_FACTS_PATH = Path(
-    os.getenv("FINALPROJECT_OBJECT_FACTS_PATH", str(Path(__file__).resolve().parents[2] / "config" / "object_facts.json"))
+    os.getenv("FINALPROJECT_OBJECT_FACTS_PATH", str(Path(__file__).resolve().parents[1] / "config" / "object_facts.json"))
 )
+
+
+class _StreamingBuffer(io.StringIO):
+    def __init__(self, log_callback=None):
+        super().__init__()
+        self._log_callback = log_callback
+        self._partial = ""
+
+    def write(self, text: str) -> int:
+        count = super().write(text)
+        if not self._log_callback or not text:
+            return count
+
+        self._partial += text
+        while "\n" in self._partial:
+            line, self._partial = self._partial.split("\n", 1)
+            if line.strip():
+                self._log_callback(line)
+        return count
+
+    def flush_pending(self) -> None:
+        if self._log_callback and self._partial.strip():
+            self._log_callback(self._partial)
+        self._partial = ""
 
 
 def _format_available_skills(tools: list[dict[str, Any]]) -> str:
@@ -32,16 +57,9 @@ def _format_available_skills(tools: list[dict[str, Any]]) -> str:
 def _load_robot_prompt(tools: list[dict[str, Any]]) -> str:
     import yaml
 
-    prompt_path = Path(__file__).resolve().parents[2] / "LLM_Module" / "prompts" / "highlevel_prompt.yaml"
+    prompt_path = Path(__file__).resolve().parents[1] / "LLM_Module" / "prompts" / "highlevel_prompt.yaml"
     data = yaml.safe_load(prompt_path.read_text(encoding="utf-8")) or {}
-    return str(data.get("prompt", "")).format(
-        robot_config="机器人智能体内部动作执行链",
-        available_skills=_format_available_skills(tools),
-        visual_context="{visual_context}",
-        scene_facts="{scene_facts}",
-        object_facts="{object_facts}",
-        user_input="{user_input}",
-    )
+    return str(data.get("prompt", "")).strip()
 
 
 def _normalize_tool_result(function_name: str, raw_result: Any) -> dict[str, Any]:
@@ -73,7 +91,7 @@ def _execute_registered_tool(function_name: str, function_args: dict[str, Any]) 
     skill_func = get_skill_function(function_name)
     if not skill_func:
         return {"success": False, "error": f"Unknown tool: {function_name}"}
-    raw_result = asyncio.run(skill_func(**function_args))
+    raw_result = _run_async_blocking(skill_func(**function_args))
     normalized = _normalize_tool_result(function_name, raw_result)
     return {
         "success": normalized["success"],
@@ -82,11 +100,36 @@ def _execute_registered_tool(function_name: str, function_args: dict[str, Any]) 
     }
 
 
+def _run_async_blocking(coro):
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+
+    result: dict[str, Any] = {}
+    error: dict[str, BaseException] = {}
+
+    def _runner():
+        try:
+            result["value"] = asyncio.run(coro)
+        except BaseException as exc:  # pragma: no cover
+            error["value"] = exc
+
+    thread = threading.Thread(target=_runner, daemon=True)
+    thread.start()
+    thread.join()
+    if "value" in error:
+        raise error["value"]
+    return result.get("value")
+
+
 def run_robot_act_pipeline(
     user_intent: str,
+    agent_thought: str = "",
     observation_context: dict[str, Any] | None = None,
     scene_facts: dict[str, Any] | None = None,
     object_facts_path: str | Path | None = None,
+    log_callback=None,
 ) -> dict[str, Any]:
     from Robot_Module.skill import get_action_tool_definitions, register_all_modules
 
@@ -105,20 +148,25 @@ def run_robot_act_pipeline(
         merged_scene_facts = VLMCore.merge_scene_facts(scene_facts, object_facts)
 
     api_key = os.getenv("Test_API_KEY")
-    llm_agent = LLMAgent(api_key=api_key, prompt_path=str(Path(__file__).resolve().parents[2] / "LLM_Module" / "prompts" / "highlevel_prompt.yaml"))
+    llm_agent = LLMAgent(
+        api_key=api_key,
+        prompt_path=str(Path(__file__).resolve().parents[1] / "LLM_Module" / "prompts" / "highlevel_prompt.yaml"),
+    )
     action_tools = get_action_tool_definitions()
     llm_agent.planning_prompt_template = _load_robot_prompt(action_tools)
 
-    pipeline_stdout = io.StringIO()
+    pipeline_stdout = _StreamingBuffer(log_callback=log_callback)
     with redirect_stdout(pipeline_stdout):
         results = llm_agent.run_pipeline(
             user_input=user_intent,
+            agent_thought=agent_thought,
             tools=action_tools,
             execute_tool_fn=_execute_registered_tool,
             visual_context=visual_context_text,
             scene_facts=merged_scene_facts,
             object_facts=object_facts,
         )
+    pipeline_stdout.flush_pending()
 
     success_count = sum(1 for item in results if item.get("success"))
     runtime_state = (synced_payload or {}).get("runtime_state") or {}
@@ -143,6 +191,7 @@ def run_robot_act_pipeline(
 
 async def robot_act(
     user_intent: str,
+    agent_thought: str = "",
     observation_context: str = "",
     scene_facts_json: str = "",
 ) -> dict[str, Any]:
@@ -163,6 +212,7 @@ async def robot_act(
 
     return run_robot_act_pipeline(
         user_intent=user_intent,
+        agent_thought=agent_thought,
         observation_context=observation_payload,
         scene_facts=scene_facts,
     )

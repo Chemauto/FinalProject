@@ -7,11 +7,18 @@ import argparse
 import sys
 from pathlib import Path
 
-from envtest_status_sync import (
-    DEFAULT_OBJECT_FACTS_PATH,
-    sync_object_facts_from_live_envtest,
-    sync_object_facts_from_status_text,
-)
+try:
+    from .envtest_status_sync import (
+        DEFAULT_OBJECT_FACTS_PATH,
+        sync_object_facts_from_live_envtest,
+        sync_object_facts_from_status_text,
+    )
+except ImportError:
+    from envtest_status_sync import (
+        DEFAULT_OBJECT_FACTS_PATH,
+        sync_object_facts_from_live_envtest,
+        sync_object_facts_from_status_text,
+    )
 
 
 def _read_status_text(args: argparse.Namespace) -> str:

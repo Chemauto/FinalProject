@@ -22,7 +22,7 @@
 
 ## 核心模块
 - `Interactive_Module/interactive.py`：基于 `rich` 的 TUI 入口
-- `Interactive_Module/envtest_status_sync.py`：同步 EnvTest 状态并写回 `object_facts.json`
+- `Comm_Module/Status/envtest_status_sync.py`：同步 EnvTest 状态并写回 `object_facts.json`
 - `LLM_Module/llm_highlevel.py`：高层规划
 - `LLM_Module/parameter_calculator.py`：参数计算
 - `LLM_Module/llm_lowlevel.py`：低层执行
@@ -77,7 +77,7 @@
 
 手动同步：
 ```bash
-cd /home/xcj/work/FinalProject/Interactive_Module
+cd /home/xcj/work/FinalProject/Comm_Module/Status
 python sync_envtest_status.py --live-envtest
 ```
 

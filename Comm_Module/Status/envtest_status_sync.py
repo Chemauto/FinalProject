@@ -9,7 +9,7 @@ from typing import Any
 
 
 STATUS_HEADER = "=== EnvTest Live Status ==="
-DEFAULT_OBJECT_FACTS_PATH = Path(__file__).resolve().parents[1] / "config" / "object_facts.json"
+DEFAULT_OBJECT_FACTS_PATH = Path(__file__).resolve().parents[2] / "config" / "object_facts.json"
 DEFAULT_CONSTRAINTS = {
     "max_climb_height_m": 0.3,
     "push_only_on_ground": True,

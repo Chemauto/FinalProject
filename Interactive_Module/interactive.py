@@ -7,6 +7,7 @@ import io
 import json
 import logging
 import os
+import re
 import sys
 from contextlib import redirect_stderr
 from dataclasses import dataclass, field
@@ -45,7 +46,7 @@ from Robot_Module.skill import (
     register_all_modules,
 )
 
-WELCOME_TITLE = "FinalProject Interactive TUI"
+WELCOME_TITLE = "LQN Claw TUI"
 AGENT_SYSTEM_PROMPT = """你是一个机器人智能体，不是机器人本体。
 你可以直接和用户对话，也可以调用技能。
 可用技能只有两类：
@@ -53,10 +54,11 @@ AGENT_SYSTEM_PROMPT = """你是一个机器人智能体，不是机器人本体�
 - robot_act：在需要动作时，调用机器人内部规划与执行链
 
 规则：
-- 纯寒暄、解释、问答时，直接回答，不调用技能
+- 一般机器人的执行流程会根据这个任务是否需要观测先判断，如果一个动作执行前是需要和环境交互或者是在环境中运动一般需要先观测再执行
 - 需要环境信息但不需要动作时，调用 vlm_observe
 - 需要物理动作时，必要时先调用 vlm_observe，再调用 robot_act
-- 不要为了简单问候或聊天调用任何技能
+- 调用 robot_act 时，附带一个简短的 agent_thought，说明你为什么要执行这个动作、当前如何理解任务
+- 如果已经调用过 vlm_observe，再调用 robot_act 时，应优先把 visual_context 传入 observation_context，把 scene_facts 传入 scene_facts_json
 - 回复简洁、自然、直接
 """
 
@@ -75,6 +77,7 @@ class InteractiveSessionState:
     last_summary: dict[str, Any] = field(default_factory=dict)
     last_sync: dict[str, Any] = field(default_factory=dict)
     last_result: dict[str, Any] = field(default_factory=dict)
+    last_observation: dict[str, Any] = field(default_factory=dict)
     messages: list[dict[str, Any]] = field(default_factory=list)
 
     def reset_runtime_state(self) -> None:
@@ -82,6 +85,7 @@ class InteractiveSessionState:
         self.last_summary = {}
         self.last_sync = {}
         self.last_result = {}
+        self.last_observation = {}
         self.messages = []
 
     def record_interaction(self, user_input: str, result: dict[str, Any]) -> None:
@@ -131,7 +135,48 @@ def _normalize_tool_result(function_name: str, raw_result: Any) -> dict[str, Any
     }
 
 
-def execute_tool(function_name: str, function_args: dict[str, Any]) -> dict[str, Any]:
+def execute_tool(function_name: str, function_args: dict[str, Any], event_callback=None) -> dict[str, Any]:
+    if function_name == "robot_act":
+        from Robot_Module.agent_tools import run_robot_act_pipeline
+
+        try:
+            observation_context = None
+            if function_args.get("observation_context"):
+                try:
+                    observation_context = json.loads(function_args.get("observation_context") or "null")
+                except json.JSONDecodeError:
+                    observation_context = {"text": function_args.get("observation_context")}
+
+            scene_facts = None
+            if function_args.get("scene_facts_json"):
+                try:
+                    scene_facts = json.loads(function_args.get("scene_facts_json") or "null")
+                except json.JSONDecodeError:
+                    scene_facts = None
+
+            result = run_robot_act_pipeline(
+                user_intent=function_args.get("user_intent", ""),
+                agent_thought=function_args.get("agent_thought", ""),
+                observation_context=observation_context,
+                scene_facts=scene_facts,
+                log_callback=event_callback,
+            )
+            return {
+                "success": result.get("status") == "success",
+                "result": result,
+                "tool_name": function_name,
+                "tool_args": function_args,
+                "feedback_summary": f"robot_act finished with {result.get('summary', {}).get('success_count', 0)} success steps",
+            }
+        except Exception as error:
+            return {
+                "success": False,
+                "error": str(error),
+                "tool_name": function_name,
+                "tool_args": function_args,
+                "feedback_summary": str(error),
+            }
+
     skill_func = get_skill_function(function_name)
     if not skill_func:
         return {
@@ -221,6 +266,24 @@ def run_agent_turn(
         session.messages.append(_assistant_message_to_dict(message))
         for tool_call in tool_calls:
             args = json.loads(tool_call.function.arguments or "{}")
+            if tool_call.function.name == "robot_act" and session.last_observation:
+                if not args.get("observation_context"):
+                    args["observation_context"] = json.dumps(
+                        session.last_observation.get("visual_context", {}),
+                        ensure_ascii=False,
+                    )
+                if not args.get("scene_facts_json"):
+                    args["scene_facts_json"] = json.dumps(
+                        session.last_observation.get("scene_facts", {}),
+                        ensure_ascii=False,
+                    )
+            if tool_call.function.name == "robot_act" and not args.get("agent_thought"):
+                thought = (content or "").strip()
+                if not thought:
+                    thought = f"用户要求执行动作：{user_input}"
+                    if session.last_observation:
+                        thought += "；已有最近一次环境观测"
+                args["agent_thought"] = thought
             if tool_call.function.name == "vlm_observe" and not session.vlm_enabled:
                 result = {
                     "success": False,
@@ -239,11 +302,14 @@ def run_agent_turn(
                     "success": result.get("success", False),
                     "summary": result.get("feedback_summary", ""),
                     "payload": result.get("result", {}),
+                    "error": result.get("error", ""),
                 }
             )
             payload = result.get("result", result)
             if isinstance(payload, dict):
                 session_snapshot = payload.get("session_snapshot", session_snapshot)
+                if tool_call.function.name == "vlm_observe" and payload.get("status") == "success":
+                    session.last_observation = payload
             session.messages.append(
                 {
                     "role": "tool",
@@ -355,6 +421,12 @@ def show_status(console: Console, runtime: AgentRuntime, session: InteractiveSes
     )
 
 
+def render_stream_line(console: Console, line: str) -> None:
+    cleaned = _strip_ansi(line).rstrip()
+    if cleaned:
+        print(cleaned, file=sys.__stdout__)
+
+
 def _build_tool_table(title: str, tools: list[dict[str, Any]]) -> Table:
     table = Table(title=title, show_lines=True)
     table.add_column("Tool", style="bold cyan")
@@ -387,10 +459,62 @@ def render_command_result(console: Console, message: str, title: str = "Command"
     console.print(Panel(message, title=title, border_style="cyan", expand=False))
 
 
+def _strip_ansi(text: str) -> str:
+    return re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", text or "")
+
+
+def _summarize_robot_act_results(payload: dict[str, Any]) -> str:
+    lines = []
+    for index, item in enumerate(payload.get("results", []), start=1):
+        action = item.get("action", "未调用")
+        task = item.get("task", "未记录任务")
+        if item.get("success"):
+            lines.append(f"{index}. {task} -> {action} [SUCCESS]")
+        else:
+            error = item.get("error") or item.get("feedback", {}).get("message", "执行失败")
+            lines.append(f"{index}. {task} -> {action} [FAILURE] {error}")
+    return "\n".join(lines)
+
+
+def _render_robot_act_payload(console: Console, tool_call: dict[str, Any]) -> None:
+    payload = tool_call.get("payload", {}) if isinstance(tool_call.get("payload", {}), dict) else {}
+    summary = payload.get("summary", {})
+    summary_text = (
+        f"args={json.dumps(tool_call.get('tool_args', {}), ensure_ascii=False)}\n\n"
+        f"total_tasks={summary.get('total_tasks', 0)}\n"
+        f"success_count={summary.get('success_count', 0)}\n"
+        f"failure_count={summary.get('failure_count', 0)}"
+    )
+    if tool_call.get("error"):
+        summary_text += f"\nerror={tool_call['error']}"
+    console.print(
+        Panel(
+            summary_text,
+            title=f"{tool_call.get('tool_name')} {'SUCCESS' if tool_call.get('success') else 'FAILURE'}",
+            border_style="green" if tool_call.get("success") else "yellow",
+            expand=False,
+        )
+    )
+
+    log_text = _strip_ansi(payload.get("log", "")).strip()
+    if log_text:
+        console.print(Panel(log_text, title="Robot Planning / Execution", border_style="cyan", expand=False))
+
+    result_summary = _summarize_robot_act_results(payload)
+    if result_summary:
+        console.print(Panel(result_summary, title="Robot Results", border_style="magenta", expand=False))
+
+
 def render_agent_result(console: Console, result: dict[str, Any]) -> None:
     for tool_call in result.get("tool_calls", []):
+        if tool_call.get("tool_name") == "robot_act" and isinstance(tool_call.get("payload"), dict):
+            _render_robot_act_payload(console, tool_call)
+            continue
+
         payload = tool_call.get("payload", {})
         details = json.dumps(payload, ensure_ascii=False, indent=2) if isinstance(payload, dict) else str(payload)
+        if tool_call.get("error"):
+            details = f"error={tool_call['error']}\n\n{details}"
         console.print(
             Panel(
                 f"args={json.dumps(tool_call.get('tool_args', {}), ensure_ascii=False)}\n\n{details}",
@@ -435,12 +559,18 @@ def main() -> None:
                     break
                 continue
 
-        with console.status("[bold green]FinalProject is thinking...[/bold green]", spinner="dots"):
-            try:
-                result = run_agent_turn(user_input, runtime, tools, session)
-            except Exception as error:
-                render_command_result(console, f"请求失败: {error}", title="Error")
-                continue
+        console.print("[dim]FinalProject is thinking...[/dim]")
+        try:
+            result = run_agent_turn(
+                user_input,
+                runtime,
+                tools,
+                session,
+                execute_tool_fn=lambda name, args: execute_tool(name, args, event_callback=lambda line: render_stream_line(console, line)),
+            )
+        except Exception as error:
+            render_command_result(console, f"请求失败: {error}", title="Error")
+            continue
 
         render_agent_result(console, result)
         session.record_interaction(user_input, result)

@@ -9,6 +9,17 @@ class ParameterCalculator:
     DEFAULT_LATERAL_DISTANCE = 0.5
     WALK_DISTANCE_EPSILON = 0.05
 
+    @staticmethod
+    def _extract_requested_distance(task: dict[str, Any]) -> float | None:
+        text = f"{task.get('task', '')} {task.get('reason', '')}"
+        matches = re.findall(r"(\d+(?:\.\d+)?)\s*米", text)
+        if not matches:
+            return None
+        try:
+            return max(float(value) for value in matches)
+        except ValueError:
+            return None
+
     def annotate_tasks(
         self,
         tasks: list[dict[str, Any]],
@@ -260,6 +271,13 @@ class ParameterCalculator:
         current_pose: list[float],
         navigation_goal: list[float] | None,
     ) -> dict[str, Any] | None:
+        requested_distance = cls._extract_requested_distance(task)
+        if requested_distance is not None:
+            return {
+                "route_side": "前方",
+                "distance": max(cls.WALK_DISTANCE_EPSILON, round(requested_distance, 3)),
+                "target": task.get("task", "前方"),
+            }
         if not navigation_goal:
             return None
 

@@ -6,6 +6,7 @@ import asyncio
 import signal
 import sys
 from pathlib import Path
+from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
@@ -17,6 +18,7 @@ sys.path.insert(0, str(_project_root))
 mcp = FastMCP("robot")
 
 _tool_registry = {}
+_tool_definitions = []
 _modules_registered = False
 
 AGENT_TOOL_NAMES = {"vlm_observe", "robot_act"}
@@ -40,13 +42,11 @@ def get_skill_function(name: str):
     return _tool_registry.get(name)
 
 
-def get_tool_definitions(allowed_names: set[str] | None = None):
+def _snapshot_tool_definitions() -> list[dict[str, Any]]:
     async def _get_tools():
         tools_list = await mcp.list_tools()
         tools = []
         for tool in tools_list:
-            if allowed_names and tool.name not in allowed_names:
-                continue
             tools.append(
                 {
                     "type": "function",
@@ -62,6 +62,12 @@ def get_tool_definitions(allowed_names: set[str] | None = None):
         return tools
 
     return asyncio.run(_get_tools())
+
+
+def get_tool_definitions(allowed_names: set[str] | None = None):
+    if allowed_names is None:
+        return list(_tool_definitions)
+    return [tool for tool in _tool_definitions if tool.get("function", {}).get("name") in allowed_names]
 
 
 def get_agent_tool_definitions():
@@ -85,13 +91,14 @@ signal.signal(signal.SIGTERM, signal_handler)
 
 
 def register_all_modules():
-    global _modules_registered
+    global _modules_registered, _tool_definitions
     if _modules_registered:
         return
 
     _tool_registry.update(register_navigation_tools(mcp))
     _tool_registry.update(register_vision_tools(mcp))
     _tool_registry.update(register_agent_tools(mcp))
+    _tool_definitions = _snapshot_tool_definitions()
     _modules_registered = True
 
 
