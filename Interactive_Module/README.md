@@ -2,17 +2,23 @@
 
 ## 作用
 
-`Interactive_Module/interactive.py` 是整个项目的命令行交互入口。
-它负责接收用户指令，调用 `LLM_Module` 做任务规划与执行，再调用 `Robot_Module` 的工具完成动作。
-`Interactive_Module/voice_interactive.py` 提供语音输入入口，先把语音转文字，再复用同样的执行流程。
-如果把 `Interactive_Module/interactive.py` 里的 `ENABLE_VLM_CONTEXT` 改成 `True`，则每次输入前都会先调用 `VLM_Module/vlm_core.py` 生成视觉描述，并把该描述作为 LLM 的上下文。
+`Interactive_Module/interactive.py` 是整个项目的统一终端交互入口。
+它现在使用 `rich` 构建 TUI，负责：
+
+- 显示欢迎面板、状态栏和 slash 命令
+- 接收用户任务输入
+- 以“机器人智能体”身份决定直接回复，还是调用技能
+- 最外层只暴露两个高层技能：`vlm_observe` 和 `robot_act`
+- 展示工具调用结果和最终回复
+
+当前只保留文字 TUI 入口，不再提供语音交互模式。
 
 ## 依赖
 
 - `openai`
 - `pyyaml`
+- `rich`
 - 可选：`python-dotenv`
-- 系统录音命令 `arecord`
 - 项目根目录 `.env` 中需要有 `Test_API_KEY`
 
 ## 使用
@@ -21,10 +27,20 @@
 
 ```bash
 python3 Interactive_Module/interactive.py
-python3 Interactive_Module/voice_interactive.py
 ```
+
+## 命令
+
+- `/help`
+  显示命令说明和当前 `Agent Tools -> Skills` 分层关系
+- `/tools`
+  展示上层 `Perception Tool / Action Tool`，以及下层 `Vision Skills / Action Skills`
+- `/reset`
+- `/status`
+- `/vlm`
+- `/quit`
 
 ## 输入输出
 
-- 输入：终端文字指令或麦克风语音
-- 输出：识别文本、任务规划、工具调用和执行结果
+- 输入：终端文字指令
+- 输出：TUI 面板化展示的工具调用结果与最终回复

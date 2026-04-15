@@ -1,350 +1,449 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
-Interactive Interface - 交互界面
-连接 LLM_Module 和 Robot_Module，集成任务规划和工具执行
-"""
+from __future__ import annotations
+
+import asyncio
+import io
+import json
+import logging
 import os
 import sys
-import asyncio
-import json
+from contextlib import redirect_stderr
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
-# 取消代理设置（避免 OpenAI 客户端使用错误的代理）
-for var in ['http_proxy', 'https_proxy', 'HTTP_PROXY', 'HTTPS_PROXY',
-            'ALL_PROXY', 'all_proxy', 'no_proxy', 'NO_PROXY']:
-    if var in os.environ:
-        del os.environ[var]
+from openai import OpenAI
+from rich.console import Console
+from rich.panel import Panel
+from rich.table import Table
+from rich.text import Text
 
-# 添加项目根目录到路径
+for logger_name in ("openai", "httpx"):
+    logging.getLogger(logger_name).setLevel(logging.WARNING)
+
+for var in ("http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "all_proxy", "no_proxy", "NO_PROXY"):
+    os.environ.pop(var, None)
+
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-# 加载 .env 文件
 try:
     from dotenv import load_dotenv
+
     env_file = project_root / ".env"
     if env_file.exists():
         load_dotenv(env_file)
-        print(f"[加载 .env 文件] {env_file}", file=sys.stderr)
 except ImportError:
-    pass  # python-dotenv 未安装，跳过
+    pass
 
-from LLM_Module.llm_core import LLMAgent
-from LLM_Module.object_facts_loader import load_object_facts
-from envtest_status_sync import (
-    sync_object_facts_from_live_envtest,
-    sync_runtime_overrides_from_user_input,
-)
 from Robot_Module.skill import (
+    get_action_tool_definitions,
+    get_agent_tool_definitions,
     get_skill_function,
-    get_tool_definitions,
-    register_all_modules
-)
-from VLM_Module.vlm_core import VLMCore
-
-ENABLE_VLM_CONTEXT = True
-DEFAULT_OBJECT_FACTS_PATH = Path(
-    os.getenv("FINALPROJECT_OBJECT_FACTS_PATH", str(project_root / "config" / "object_facts.json"))
+    get_vision_tool_definitions,
+    register_all_modules,
 )
 
+WELCOME_TITLE = "FinalProject Interactive TUI"
+AGENT_SYSTEM_PROMPT = """你是一个机器人智能体，不是机器人本体。
+你可以直接和用户对话，也可以调用技能。
+可用技能只有两类：
+- vlm_observe：观察当前环境，只返回观测结果
+- robot_act：在需要动作时，调用机器人内部规划与执行链
 
-def _report_object_facts_status(object_facts_path: str | Path) -> None:
-    path = Path(object_facts_path)
-    if path.exists():
-        return
+规则：
+- 纯寒暄、解释、问答时，直接回答，不调用技能
+- 需要环境信息但不需要动作时，调用 vlm_observe
+- 需要物理动作时，必要时先调用 vlm_observe，再调用 robot_act
+- 不要为了简单问候或聊天调用任何技能
+- 回复简洁、自然、直接
+"""
 
-    example_path = path.with_name(f"{path.stem}.example{path.suffix}")
-    if example_path.exists():
-        print(
-            f"[ObjectFacts] 未找到结构化物体信息文件: {path}；示例文件 {example_path} 不会自动加载，本次仅使用 VLM",
-            file=sys.stderr,
+
+@dataclass
+class AgentRuntime:
+    client: Any
+    model: str
+    system_prompt: str
+
+
+@dataclass
+class InteractiveSessionState:
+    vlm_enabled: bool = True
+    recent_inputs: list[str] = field(default_factory=list)
+    last_summary: dict[str, Any] = field(default_factory=dict)
+    last_sync: dict[str, Any] = field(default_factory=dict)
+    last_result: dict[str, Any] = field(default_factory=dict)
+    messages: list[dict[str, Any]] = field(default_factory=list)
+
+    def reset_runtime_state(self) -> None:
+        self.recent_inputs.clear()
+        self.last_summary = {}
+        self.last_sync = {}
+        self.last_result = {}
+        self.messages = []
+
+    def record_interaction(self, user_input: str, result: dict[str, Any]) -> None:
+        self.recent_inputs.append(user_input)
+        self.recent_inputs = self.recent_inputs[-5:]
+        self.last_result = result
+        self.last_summary = result.get("summary") or {}
+        self.last_sync = result.get("session_snapshot", {}).get("sync") or {}
+
+
+def _assistant_message_to_dict(message: Any) -> dict[str, Any]:
+    tool_calls = []
+    for tool_call in getattr(message, "tool_calls", []) or []:
+        tool_calls.append(
+            {
+                "id": tool_call.id,
+                "type": "function",
+                "function": {
+                    "name": tool_call.function.name,
+                    "arguments": tool_call.function.arguments,
+                },
+            }
         )
-        return
-
-    print(f"[ObjectFacts] 未找到结构化物体信息文件: {path}，本次仅使用 VLM", file=sys.stderr)
+    return {"role": "assistant", "content": getattr(message, "content", "") or "", "tool_calls": tool_calls}
 
 
-def _normalize_tool_result(function_name: str, raw_result):
-    """把工具原始返回统一转换为结构化结果。"""
-    parsed_result = raw_result
+def _normalize_tool_result(function_name: str, raw_result: Any) -> dict[str, Any]:
+    parsed = raw_result
     if isinstance(raw_result, str):
         try:
-            parsed_result = json.loads(raw_result)
+            parsed = json.loads(raw_result)
         except json.JSONDecodeError:
-            parsed_result = {"raw_result": raw_result}
+            parsed = {"raw_result": raw_result}
+    if not isinstance(parsed, dict):
+        parsed = {"raw_result": parsed}
 
-    if not isinstance(parsed_result, dict):
-        parsed_result = {"raw_result": parsed_result}
-
-    status = parsed_result.get("status", "success")
-    feedback = parsed_result.get("execution_feedback") or {
+    status = parsed.get("status", "success")
+    feedback = parsed.get("execution_feedback") or {
         "signal": "SUCCESS" if status == "success" else "FAILURE",
         "skill": function_name,
         "message": f"{function_name} 执行{'成功' if status == 'success' else '失败'}",
     }
-    success = status == "success" and feedback.get("signal") == "SUCCESS"
-
     return {
-        "success": success,
-        "result": parsed_result,
-        "raw_result": raw_result,
+        "success": status == "success" and feedback.get("signal") == "SUCCESS",
+        "result": parsed,
         "feedback": feedback,
     }
 
 
-def execute_tool(function_name: str, function_args: dict) -> dict:
-    """执行 Robot_Module 中的工具函数"""
+def execute_tool(function_name: str, function_args: dict[str, Any]) -> dict[str, Any]:
     skill_func = get_skill_function(function_name)
-
     if not skill_func:
-        return {"error": f"Unknown tool: {function_name}"}
+        return {
+            "success": False,
+            "error": f"Unknown tool: {function_name}",
+            "tool_name": function_name,
+            "tool_args": function_args,
+            "feedback_summary": f"{function_name} 未注册",
+        }
 
     try:
-        # 调用异步技能函数
-        raw_result = asyncio.run(skill_func(**function_args))
-        normalized = _normalize_tool_result(function_name, raw_result)
-
-        # 估算执行时间
-        if function_name in ['move_forward', 'move_backward']:
-            distance = function_args.get('distance', 1.0)
-            speed = function_args.get('speed', 0.3)
-            delay = distance / speed if speed > 0 else 0
-        elif function_name == 'detect_color_and_act':
-            delay = 3.3  # 颜色检测+移动约3.3秒
-        elif function_name == 'turn':
-            angle = abs(function_args.get('angle', 90.0))
-            angular_speed = function_args.get('angular_speed', 0.5)
-            delay = (angle / 180.0 * 3.14159) / angular_speed if angular_speed > 0 else 0
-        else:
-            delay = 0
-
+        normalized = _normalize_tool_result(function_name, asyncio.run(skill_func(**function_args)))
         return {
             "success": normalized["success"],
             "result": normalized["result"],
-            "raw_result": normalized["raw_result"],
             "feedback": normalized["feedback"],
-            "delay": delay,
+            "tool_name": function_name,
+            "tool_args": function_args,
+            "feedback_summary": normalized["feedback"].get("message", ""),
         }
-    except Exception as e:
-        return {"error": str(e)}
+    except Exception as error:
+        return {
+            "success": False,
+            "error": str(error),
+            "tool_name": function_name,
+            "tool_args": function_args,
+            "feedback_summary": str(error),
+        }
 
 
-def format_robot_config(tools):
-    """格式化机器人配置信息"""
-    config_lines = ["机器人类型: 2D仿真机器人（差速驱动）"]
-    config_lines.append("\n可用技能:")
-
-    for tool in tools:
-        func = tool.get("function", {})
-        name = func.get("name", "")
-        desc = func.get("description", "")
-        params = func.get("parameters", {}).get("properties", {})
-
-        # 转义大括号
-        desc = desc.replace("{", "{{").replace("}", "}}")
-
-        config_lines.append(f"- {name}({', '.join(params.keys())}): {desc}")
-
-    return "\n".join(config_lines)
-
-
-def format_available_skills(tools):
-    """格式化可用技能列表"""
-    skills = []
-    for tool in tools:
-        func = tool.get("function", {})
-        name = func.get("name", "")
-        desc = func.get("description", "")
-        params = func.get("parameters", {}).get("properties", {})
-
-        # 转义大括号，避免被当作模板占位符
-        desc = desc.replace("{", "{{").replace("}", "}}")
-
-        param_str = ", ".join([f"{k}: {v.get('type', '')}" for k, v in params.items()])
-        skills.append(f"  - {name}({param_str}): {desc}")
-
-    return "\n".join(skills)
-
-
-def load_dynamic_prompt(prompt_path, tools):
-    """加载并动态填充提示词"""
-    import yaml
-
-    with open(prompt_path, 'r', encoding='utf-8') as f:
-        data = yaml.safe_load(f)
-
-    # 获取模板
-    prompt_template = data.get("prompt", "")
-
-    # 动态生成配置信息
-    robot_config = format_robot_config(tools)
-    available_skills = format_available_skills(tools)
-
-    # 填充模板
-    prompt = prompt_template.format(
-        robot_config=robot_config,
-        available_skills=available_skills,
-        visual_context="{visual_context}",
-        scene_facts="{scene_facts}",
-        object_facts="{object_facts}",
-        user_input="{user_input}"  # 保留占位符
+def build_agent_runtime(client: Any) -> AgentRuntime:
+    return AgentRuntime(
+        client=client,
+        model=os.getenv("FINALPROJECT_AGENT_MODEL", "qwen3.6-plus"),
+        system_prompt=AGENT_SYSTEM_PROMPT,
     )
 
-    return prompt
 
-
-def build_llm_agent():
-    """初始化工具列表和 LLM Agent。"""
-    register_all_modules()
-
-    api_key = os.getenv('Test_API_KEY')
+def build_llm_agent() -> tuple[AgentRuntime, list[dict[str, Any]]]:
+    api_key = os.getenv("Test_API_KEY")
     if not api_key:
         print("❌ 错误: 未设置 Test_API_KEY 环境变量", file=sys.stderr)
-        print("请设置: export Test_API_KEY=your_api_key_here", file=sys.stderr)
         sys.exit(1)
 
-    tools = get_tool_definitions()
-    prompt_path = project_root / "LLM_Module" / "prompts" / "highlevel_prompt.yaml"
-    llm_agent = LLMAgent(api_key=api_key, prompt_path=str(prompt_path))
-    llm_agent.planning_prompt_template = load_dynamic_prompt(prompt_path, tools)
-    return llm_agent, tools
+    client = OpenAI(
+        api_key=api_key,
+        base_url=os.getenv("FINALPROJECT_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
+    )
+    with redirect_stderr(io.StringIO()):
+        register_all_modules()
+        tools = get_agent_tool_definitions()
+    return build_agent_runtime(client), tools
 
 
-def build_vlm_core():
-    """按开关初始化 VLM。"""
-    if not ENABLE_VLM_CONTEXT:
-        return None
-    try:
-        return VLMCore()
-    except Exception as error:
-        print(f"[VLM] 初始化失败，已跳过: {error}", file=sys.stderr)
-        return None
+def run_agent_turn(
+    user_input: str,
+    runtime: AgentRuntime,
+    tools: list[dict[str, Any]],
+    session: InteractiveSessionState,
+    execute_tool_fn=execute_tool,
+) -> dict[str, Any]:
+    if not session.messages:
+        session.messages = [{"role": "system", "content": runtime.system_prompt}]
 
+    session.messages.append({"role": "user", "content": user_input})
+    tool_events = []
+    final_reply = ""
+    session_snapshot = {"sync": dict(session.last_sync)}
 
-def show_welcome(llm_agent, tools, title="LLM Interactive Interface", input_hint="输入 'quit' 或 'exit' 退出"):
-    """打印欢迎信息。"""
-    print("="*60, file=sys.stderr)
-    print(title, file=sys.stderr)
-    print("="*60, file=sys.stderr)
-    print(f"API: {llm_agent.client.base_url}", file=sys.stderr)
-    print(f"Model: {llm_agent.model}", file=sys.stderr)
-    print(f"VLM上下文: {'开启' if ENABLE_VLM_CONTEXT else '关闭'}", file=sys.stderr)
-    print(f"可用工具: {len(tools)} 个", file=sys.stderr)
-    print("-"*60, file=sys.stderr)
-
-    for tool in tools:
-        func = tool.get("function", {})
-        name = func.get("name", "")
-        desc = func.get("description", "")
-        params = func.get("parameters", {}).get("properties", {})
-
-        print(f"  • {name}", file=sys.stderr)
-        if params:
-            param_list = [f"{k}({v.get('type', '')})" for k, v in params.items()]
-            print(f"    参数: {', '.join(param_list)}", file=sys.stderr)
-        print(f"    描述: {desc}", file=sys.stderr)
-        print("", file=sys.stderr)
-
-    print("-"*60, file=sys.stderr)
-    print("提示: 确保已在另一个窗口启动仿真器", file=sys.stderr)
-    print("  python3 Sim_Module/sim2d/simulator.py", file=sys.stderr)
-    print("", file=sys.stderr)
-    print(input_hint, file=sys.stderr)
-    print("="*60, file=sys.stderr)
-
-
-def process_user_input(user_input: str, llm_agent, tools, vlm_core=None, object_facts_path: str | Path | None = None) -> bool:
-    """处理一条用户输入。返回 False 表示退出。"""
-    if not user_input:
-        return True
-
-    if user_input.lower() in ['quit', 'exit', 'q']:
-        print("👋 再见!", file=sys.stderr)
-        return False
-
-    visual_context = None
-    scene_facts = None
-    object_facts = None
-
-    try:
-        effective_object_facts_path = object_facts_path or DEFAULT_OBJECT_FACTS_PATH
-        synced_payload = sync_object_facts_from_live_envtest(
-            effective_object_facts_path,
-            user_input=user_input,
+    for _ in range(4):
+        response = runtime.client.chat.completions.create(
+            model=runtime.model,
+            messages=session.messages,
+            tools=tools,
+            tool_choice="auto",
+            extra_body={"enable_thinking": False},
         )
-        if synced_payload is not None:
-            runtime_state = synced_payload.get("runtime_state") or {}
-            print(
-                "[EnvTestSync] 已同步实时场景: "
-                f"scene_id={runtime_state.get('scene_id')}, "
-                f"model_use={runtime_state.get('model_use')}, "
-                f"objects={len(synced_payload.get('objects') or [])}",
-                file=sys.stderr,
-            )
-        else:
-            sync_runtime_overrides_from_user_input(
-                effective_object_facts_path,
-                user_input=user_input,
-            )
-        object_facts = load_object_facts(effective_object_facts_path)
-        if object_facts is not None:
-            print(f"[ObjectFacts] 已加载结构化物体信息: {effective_object_facts_path}", file=sys.stderr)
-        else:
-            _report_object_facts_status(effective_object_facts_path)
-    except Exception as error:
-        print(f"[ObjectFacts] 读取失败，忽略结构化物体信息: {error}", file=sys.stderr)
+        message = response.choices[0].message
+        tool_calls = getattr(message, "tool_calls", None) or []
+        content = getattr(message, "content", "") or ""
 
-    if vlm_core is not None:
-        try:
-            if hasattr(vlm_core, "describe_structured"):
-                structured_context = vlm_core.describe_structured()
-                visual_context = json.dumps(structured_context, ensure_ascii=False)
-                print(f"[VLM] 当前视觉描述: {visual_context}", file=sys.stderr)
-                scene_facts = VLMCore.build_scene_facts(structured_context)
+        if not tool_calls:
+            final_reply = content
+            session.messages.append({"role": "assistant", "content": final_reply})
+            break
+
+        session.messages.append(_assistant_message_to_dict(message))
+        for tool_call in tool_calls:
+            args = json.loads(tool_call.function.arguments or "{}")
+            if tool_call.function.name == "vlm_observe" and not session.vlm_enabled:
+                result = {
+                    "success": False,
+                    "result": {"status": "failure", "message": "当前会话已关闭 VLM"},
+                    "tool_name": "vlm_observe",
+                    "tool_args": args,
+                    "feedback_summary": "当前会话已关闭 VLM",
+                }
             else:
-                visual_context = vlm_core.describe()
-                print(f"[VLM] 当前视觉描述: {visual_context}", file=sys.stderr)
-        except Exception as error:
-            print(f"[VLM] 视觉描述失败，继续仅使用文字输入: {error}", file=sys.stderr)
+                result = execute_tool_fn(tool_call.function.name, args)
 
-    if object_facts is not None:
-        scene_facts = VLMCore.merge_scene_facts(scene_facts, object_facts)
+            tool_events.append(
+                {
+                    "tool_name": result.get("tool_name", tool_call.function.name),
+                    "tool_args": result.get("tool_args", args),
+                    "success": result.get("success", False),
+                    "summary": result.get("feedback_summary", ""),
+                    "payload": result.get("result", {}),
+                }
+            )
+            payload = result.get("result", result)
+            if isinstance(payload, dict):
+                session_snapshot = payload.get("session_snapshot", session_snapshot)
+            session.messages.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": tool_call.id,
+                    "content": json.dumps(payload, ensure_ascii=False),
+                }
+            )
 
-    results = llm_agent.run_pipeline(
-        user_input=user_input,
-        tools=tools,
-        execute_tool_fn=execute_tool,
-        visual_context=visual_context,
-        scene_facts=scene_facts,
-        object_facts=object_facts,
+    summary = {
+        "tool_calls": len(tool_events),
+        "success_count": sum(1 for item in tool_events if item.get("success")),
+    }
+    return {
+        "reply": final_reply,
+        "tool_calls": tool_events,
+        "summary": summary,
+        "session_snapshot": session_snapshot,
+    }
+
+
+def render_session_snapshot(session: InteractiveSessionState) -> str:
+    return json.dumps(
+        {
+            "vlm_enabled": session.vlm_enabled,
+            "recent_inputs": session.recent_inputs,
+            "last_sync": session.last_sync,
+            "last_summary": session.last_summary,
+        },
+        ensure_ascii=False,
+        indent=2,
     )
 
-    if results:
-        success_count = sum(1 for result in results if result.get("success"))
-        print(f"\n📊 [完成] {success_count}/{len(results)} 个任务成功", file=sys.stderr)
-    return True
+
+def handle_command(command: str, session: InteractiveSessionState, llm_builder) -> dict[str, Any]:
+    normalized = command.strip().lower()
+    if normalized == "/help":
+        return {
+            "handled": True,
+            "message": (
+                "Commands:\n"
+                "/help   查看帮助\n"
+                "/tools  查看分层能力结构\n"
+                "/reset  重置当前会话上下文\n"
+                "/status 查看最近一次会话状态\n"
+                "/vlm    开关顶层感知能力\n"
+                "/quit   退出程序\n\n"
+                "Hierarchy:\n"
+                "Agent Tools:\n"
+                "Perception Tool -> Vision Skills\n"
+                "Action Tool -> Action Skills"
+            ),
+        }
+    if normalized == "/status":
+        return {"handled": True, "message": render_session_snapshot(session)}
+    if normalized == "/vlm":
+        session.vlm_enabled = not session.vlm_enabled
+        return {"handled": True, "message": f"VLM 已切换为{'开启' if session.vlm_enabled else '关闭'}"}
+    if normalized == "/reset":
+        agent, tools = llm_builder()
+        session.reset_runtime_state()
+        system_prompt = getattr(agent, "system_prompt", "")
+        if system_prompt:
+            session.messages = [{"role": "system", "content": system_prompt}]
+        return {"handled": True, "message": "会话上下文已重置", "agent": agent, "tools": tools}
+    if normalized == "/quit":
+        return {"handled": True, "continue_session": False, "message": "Bye!"}
+    return {"handled": False}
 
 
-def main():
-    """主函数"""
-    llm_agent, tools = build_llm_agent()
-    vlm_core = build_vlm_core()
-    show_welcome(llm_agent, tools)
+def make_console() -> Console:
+    return Console()
 
-    # 主循环
+
+def build_tool_summary(agent_tools: list[dict[str, Any]]) -> dict[str, int]:
+    return {
+        "agent_tools": len(agent_tools),
+        "vision_skills": len(get_vision_tool_definitions()),
+        "action_skills": len(get_action_tool_definitions()),
+    }
+
+
+def show_welcome(console: Console, runtime: AgentRuntime, tools: list[dict[str, Any]], session: InteractiveSessionState) -> None:
+    tool_summary = build_tool_summary(tools)
+    header = Text()
+    header.append("  Model: ", style="dim")
+    header.append(runtime.model, style="bold green")
+    header.append("\n  API: ", style="dim")
+    header.append(str(getattr(runtime.client, "base_url", "unknown")), style="bold cyan")
+    header.append("\n  VLM: ", style="dim")
+    header.append("ON" if session.vlm_enabled else "OFF", style="bold yellow")
+    header.append("\n  Agent Tools: ", style="dim")
+    header.append(str(tool_summary["agent_tools"]), style="bold magenta")
+    header.append("  (Perception / Action)", style="dim")
+    header.append("\n  Vision Skills: ", style="dim")
+    header.append(str(tool_summary["vision_skills"]), style="bold magenta")
+    header.append("  (inside Perception Tool)", style="dim")
+    header.append("\n  Action Skills: ", style="dim")
+    header.append(str(tool_summary["action_skills"]), style="bold magenta")
+    header.append("  (inside Action Tool)", style="dim")
+    header.append("\n\n")
+    header.append("/help /tools /reset /status /vlm /quit", style="bold cyan")
+    console.print(Panel(header, title=WELCOME_TITLE, border_style="bright_cyan"))
+
+
+def show_status(console: Console, runtime: AgentRuntime, session: InteractiveSessionState) -> None:
+    console.print(
+        f"[dim]{runtime.model}[/dim] │ [bold]scene:{session.last_sync.get('scene_id', '-')}[/bold] │ "
+        f"[dim]ctx:{len(session.recent_inputs)}[/dim] │ [dim]vlm:{'on' if session.vlm_enabled else 'off'}[/dim]"
+    )
+
+
+def _build_tool_table(title: str, tools: list[dict[str, Any]]) -> Table:
+    table = Table(title=title, show_lines=True)
+    table.add_column("Tool", style="bold cyan")
+    table.add_column("Parameters", style="green")
+    table.add_column("Description", style="white")
+    for tool in tools:
+        func = tool.get("function", {})
+        params = func.get("parameters", {}).get("properties", {})
+        table.add_row(func.get("name", "-"), ", ".join(params.keys()) or "-", func.get("description", "-"))
+    return table
+
+
+def _build_agent_tool_table() -> Table:
+    table = Table(title="Agent Tools", show_lines=True)
+    table.add_column("Tool", style="bold cyan")
+    table.add_column("Exposed Skill", style="green")
+    table.add_column("Owns Skills", style="white")
+    table.add_row("Perception Tool", "vlm_observe", "Vision Skills")
+    table.add_row("Action Tool", "robot_act", "Action Skills")
+    return table
+
+
+def render_tools(console: Console, tools: list[dict[str, Any]]) -> None:
+    console.print(_build_agent_tool_table())
+    console.print(_build_tool_table("Vision Skills", get_vision_tool_definitions()))
+    console.print(_build_tool_table("Action Skills", get_action_tool_definitions()))
+
+
+def render_command_result(console: Console, message: str, title: str = "Command") -> None:
+    console.print(Panel(message, title=title, border_style="cyan", expand=False))
+
+
+def render_agent_result(console: Console, result: dict[str, Any]) -> None:
+    for tool_call in result.get("tool_calls", []):
+        payload = tool_call.get("payload", {})
+        details = json.dumps(payload, ensure_ascii=False, indent=2) if isinstance(payload, dict) else str(payload)
+        console.print(
+            Panel(
+                f"args={json.dumps(tool_call.get('tool_args', {}), ensure_ascii=False)}\n\n{details}",
+                title=f"{tool_call.get('tool_name')} {'SUCCESS' if tool_call.get('success') else 'FAILURE'}",
+                border_style="green" if tool_call.get("success") else "yellow",
+                expand=False,
+            )
+        )
+
+    reply = result.get("reply") or "(empty response)"
+    console.print(Panel(reply, title="Assistant", border_style="bright_cyan", expand=False))
+
+
+def main() -> None:
+    console = make_console()
+    session = InteractiveSessionState()
+    runtime, tools = build_llm_agent()
+    session.messages = [{"role": "system", "content": runtime.system_prompt}]
+    show_welcome(console, runtime, tools, session)
+
     while True:
         try:
-            user_input = input("\n💬 请输入指令: ").strip()
-            if not process_user_input(user_input, llm_agent, tools, vlm_core):
-                break
-        except KeyboardInterrupt:
-            print("\n\n👋 再见!", file=sys.stderr)
+            show_status(console, runtime, session)
+            user_input = console.input("[bold cyan]You> [/bold cyan]").strip()
+        except (EOFError, KeyboardInterrupt):
+            console.print("\n[dim]Bye![/dim]")
             break
-        except Exception as e:
-            print(f"\n❌ [错误] {e}", file=sys.stderr)
-            import traceback
-            traceback.print_exc()
+
+        if not user_input:
+            continue
+
+        if user_input.startswith("/"):
+            if user_input.strip().lower() == "/tools":
+                render_tools(console, tools)
+                continue
+            command_result = handle_command(user_input, session, llm_builder=build_llm_agent)
+            if command_result.get("handled"):
+                runtime = command_result.get("agent", runtime)
+                tools = command_result.get("tools", tools)
+                render_command_result(console, command_result.get("message", ""))
+                if command_result.get("continue_session") is False:
+                    break
+                continue
+
+        with console.status("[bold green]FinalProject is thinking...[/bold green]", spinner="dots"):
+            try:
+                result = run_agent_turn(user_input, runtime, tools, session)
+            except Exception as error:
+                render_command_result(console, f"请求失败: {error}", title="Error")
+                continue
+
+        render_agent_result(console, result)
+        session.record_interaction(user_input, result)
 
 
 if __name__ == "__main__":

@@ -2,7 +2,8 @@
 基于 LLM 决策的四足机器人导航项目，面向 Unitree Go2，当前主执行后端是 IsaacLab EnvTest。
 
 ## 当前能力
-- 只对外暴露 7 个技能：`walk`、`navigation`、`nav_climb`、`climb_align`、`climb`、`push_box`、`way_select`
+- 最外层智能体只对外暴露 2 个高层技能：`vlm_observe`、`robot_act`
+- `robot_act` 内部继续复用 7 个动作技能：`walk`、`navigation`、`nav_climb`、`climb_align`、`climb`、`push_box`、`way_select`
 - 规划优先级：`navigation` 最简单，`climb` 次之，`push_box + climb_align + climb` 最复杂
 - 最大单步攀爬高度：`0.3 m`
 - 几何真值优先级高于 VLM
@@ -12,22 +13,15 @@
 ```text
 用户输入
 -> Interactive_Module/interactive.py
--> 同步 live EnvTest 到 config/object_facts.json
--> 读取 object_facts
--> 调用 VLM 输出结构化视觉
--> 融合 scene_facts + object_facts
--> 高层 LLM 规划 tasks
--> ParameterCalculator 生成参数 JSON
--> 低层执行器直接调用工具
--> Robot_Module/module/navigation.py
--> 写 /tmp 控制文件 或 调 Socket client
--> 轮询 /tmp/envtest_live_status.json
--> IsaacLab EnvTest 执行
--> 返回 execution_feedback
+-> 顶层 LLM 判断
+   -> 直接回复
+   -> 或调用 vlm_observe
+   -> 或调用 robot_act
+-> robot_act 内部再复用原有规划/参数计算/执行链
 ```
 
 ## 核心模块
-- `Interactive_Module/interactive.py`：CLI 入口
+- `Interactive_Module/interactive.py`：基于 `rich` 的 TUI 入口
 - `Interactive_Module/envtest_status_sync.py`：同步 EnvTest 状态并写回 `object_facts.json`
 - `LLM_Module/llm_highlevel.py`：高层规划
 - `LLM_Module/parameter_calculator.py`：参数计算
@@ -153,16 +147,18 @@ python NewTools/envtest_model_use_player.py --scene_id 3
 cd /home/xcj/work/FinalProject/Interactive_Module
 python interactive.py
 ```
+启动后可使用 `/help`、`/tools`、`/reset`、`/status`、`/vlm`、`/quit` 管理当前会话。
+
 3. 输入任务
 ```text
 前往20,0,0
 ```
 
 说明：
-- 当用户说“前往某个目标点/坐标/位置”时，高层规划会优先调用 `navigation`
-- 如果前方存在可通行地面路线，即使侧边存在低平台，规划也会优先直接 `navigation`，因为导航策略具备自动绕障能力
-- `walk` 主要保留给沿路线直行、横向切换后的继续前进等速度式动作
-- 箱子辅助场景默认收敛为 `push_box -> climb_align -> climb -> navigation`
+- 纯寒暄、解释、问答时，顶层智能体应直接回复，不调用技能
+- 需要环境信息时，优先调用 `vlm_observe`
+- 需要真实动作时，调用 `robot_act`
+- `robot_act` 内部仍会优先复用现有规划和动作执行逻辑
 
 ## 常用环境变量
 - `FINALPROJECT_OBJECT_FACTS_PATH`
@@ -186,6 +182,7 @@ python interactive.py
 - `push_box` 当前默认依赖 EnvTest 自带的自动推箱目标推理
 - 若 `objects` 残留旧场景，规划会出错，所以同步必须发生在规划前
 - 若 live EnvTest 与本地 JSON 不一致，交互模式会以同步后的文件为准
+- 当前只保留文字 TUI 交互入口，不再提供语音交互模式
 
 ## 相关文档
 - `Dataflow.md`

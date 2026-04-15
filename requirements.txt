@@ -17,6 +17,9 @@ python-dotenv>=1.0.0
 # YAML 配置解析
 pyyaml>=6.0
 
+# rich TUI 界面
+rich>=13.0.0
+
 # 数值计算
 numpy>=1.26.0
 
