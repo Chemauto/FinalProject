@@ -12,7 +12,7 @@ from typing import Any
 from LLM_Module.llm_core import LLMAgent
 from LLM_Module.object_facts_loader import load_object_facts
 from VLM_Module.vlm_core import VLMCore
-from Comm_Module.Status.envtest_status_sync import (
+from Comm_Module.Robot.Sim.envtest_status_sync import (
     sync_object_facts_from_live_envtest,
     sync_runtime_overrides_from_user_input,
 )
