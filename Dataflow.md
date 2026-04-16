@@ -8,15 +8,20 @@
    -> 顶层 agent 判断：直接回复 / vlm_observe / robot_act
 
 vlm_observe
--> Robot_Module/module/Vision/Task/Bishe/vlm_observe.py
+-> Robot_Module/agent_tools.py 顶层 Vision tool
+-> Robot_Module/module/Vision/Task/Bishe/vlm_observe.py 下层 vision skill: vlm
 -> VLM_Module/vlm_core.py
--> 返回 visual_context + scene_facts
+-> Comm_Module.get_state()
+-> 返回 visual_context + scene_facts + env_state
 
 robot_act
 -> Robot_Module/agent_tools.py
    -> Comm_Module 同步 live data 到 object_facts
    -> load_object_facts()
    -> VLMCore.merge_scene_facts()
+   -> build planner_context {
+        robot_state, envtest_alignment, constraints, objects, scene_facts
+      }
    -> LLM_Module/llm_core.py
       -> HighLevelPlanner.plan_tasks()
       -> ParameterCalculator.annotate_tasks()
@@ -48,10 +53,11 @@ robot_act
 
 1. Thinking 面板
 2. `vlm_observe` 面板
-3. 第二次 Thinking 面板
-4. `robot_act` 流式日志
-5. `robot_act` 摘要
-6. Assistant 面板
+3. `Env State` 面板
+4. 第二次 Thinking 面板
+5. `robot_act` 流式日志
+6. `robot_act` 摘要
+7. Assistant 面板
 
 `robot_act` 内部的 stdout 会被 `Robot_Module/agent_tools.py` 的 `_StreamingBuffer` 转成流式终端输出。
 
@@ -62,7 +68,7 @@ robot_act
 ```text
 interactive.py
 -> Robot_Module agent tool: vlm_observe
--> Robot_Module/module/Vision/Task/Bishe/vlm_observe.py
+-> Robot_Module 下层 vision skill: vlm
 -> VLM_Module/vlm_core.py
 ```
 
@@ -75,9 +81,14 @@ interactive.py
 VLM 产出两类数据：
 
 - `visual_context`
-  给终端显示，也可回传给顶层 agent。
+  纯视觉语义，给终端显示，也可回传给顶层 agent。
 - `scene_facts`
-  给 `robot_act` 规划阶段使用。
+  基于视觉描述抽取出的粗粒度场景事实。
+
+`vlm_observe` 还会补一份：
+
+- `env_state`
+  由 `VLM + Comm_Module` 合并得到的结构化环境理解，给上层 LLM 规划时优先参考。
 
 ## 4. 状态链路
 
@@ -104,8 +115,8 @@ Comm_Module/Task/Sim/get_data.py
 
 - `observation.agent_position`
 - `observation.environment.obstacles`
+- `observation.environment.envtest_alignment`
 - `runtime.timestamp`
-- `runtime.snapshot`
 - `runtime.skill`
 - `runtime.model_use`
 - `runtime.goal`
@@ -133,6 +144,7 @@ load_object_facts()
 ```
 
 这保证规划优先使用最新几何信息，而不是残留旧场景。
+如果前面已经执行过 `vlm_observe`，上层还会优先把 `env_state.scene_facts` 传入 `robot_act`。
 
 ## 6. 高层规划
 
@@ -207,6 +219,11 @@ Robot_Module/module/Action/skills.py
 
 - 定义该技能的输入和少量任务内逻辑
 - 调用 `Excu_Module`
+
+Vision 当前也采用同样结构：
+
+- 顶层工具：`vlm_observe`
+- 下层技能：`vlm`
 
 ## 10. 统一执行层
 

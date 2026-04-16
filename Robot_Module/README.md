@@ -11,6 +11,8 @@
 
 它不再承担通用执行管理；通用执行已经移到 `Excu_Module`。
 
+当前 `Action` 和 `Vision` 是平级模块，不存在额外的 `Perception` 包裹层。
+
 ## 当前结构
 
 - [agent_tools.py](agent_tools.py)
@@ -34,7 +36,12 @@
 - `vlm_observe`
 - `robot_act`
 
-`robot_act` 内部继续复用动作技能链。
+其中：
+
+- `robot_act` 是顶层 Action tool
+- `vlm_observe` 是顶层 Vision tool
+
+`robot_act` 内部继续复用动作技能链。`vlm_observe` 当前会调用 Vision 下层技能 `vlm`，并用 `Comm_Module` 补一份结构化 `env_state`。
 
 ## 当前注册结构
 
@@ -42,15 +49,22 @@
 
 ```text
 Robot_Module/agent_tools.py
--> register_action_tools(mcp)
--> Robot_Module/module/Action/skills.py
--> Robot_Module/module/Action/Task/Bishe/*.py
-
-Robot_Module/agent_tools.py
--> register_vision_tools(mcp)
--> Robot_Module/module/Vision/skills.py
--> Robot_Module/module/Vision/Task/Bishe/vlm_observe.py
+-> register_tools(mcp)
+   -> register_action_tools(mcp)
+   -> Robot_Module/module/Action/skills.py
+   -> Robot_Module/module/Action/Task/Bishe/*.py
+   -> register_vision_tools(mcp)
+   -> Robot_Module/module/Vision/skills.py
+   -> Robot_Module/module/Vision/Task/Bishe/vlm_observe.py  (skill: vlm)
+   -> vlm_observe  (top-level Vision tool)
+   -> robot_act
 ```
+
+也就是说：
+
+- `Action` 和 `Vision` 是并列注册
+- `agent_tools.py` 不再把 `Vision` 当成特殊嵌套层
+- `agent_tools.py` 通过一个统一的 `register_tools()` 一次性注册 `Action + Vision + robot_act`
 
 顶层 `agent_tools.py` 当前会注册：
 
@@ -70,6 +84,36 @@ Robot_Module/agent_tools.py
 - `climb`
 - `push_box`
 - `way_select`
+
+## 内部视觉技能
+
+当前 `Vision/Task/Bishe` 的下层视觉技能是：
+
+- `vlm`
+
+也就是说当前结构是：
+
+- 顶层 Vision tool：`vlm_observe`
+- 下层 Vision skill：`vlm`
+- 顶层 Action tool：`robot_act`
+- 下层 Action skills：7 个动作技能
+
+`vlm_observe` 当前返回三层结果：
+
+- `visual_context`
+  纯视觉语义
+- `scene_facts`
+  纯视觉抽取出的粗粒度场景事实
+- `env_state`
+  `VLM + Comm_Module` 合并后的最终环境理解
+
+`robot_act` 在进入 `LLM_Module` 之前，还会进一步组装固定格式的 `planner_context`，其中至少包含：
+
+- `robot_state`
+- `envtest_alignment`
+- `constraints`
+- `objects`
+- `scene_facts`
 
 这些文件当前只负责：
 

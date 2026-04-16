@@ -13,8 +13,10 @@
 
 - `Interactive_Module`
   顶层 TUI，对话、工具调度、渐进式渲染。
+
+在 `Robot_Module` 内部，`Vision` 和 `Action` 是并列模块，不存在 `Perception` 再包一层 `Vision` 的结构。
 - `VLM_Module`
-  读取图片并输出结构化视觉结果。
+  读取图片并输出结构化视觉语义，不负责真值状态。
 - `LLM_Module`
   负责任务规划、子任务分解、参数计算、低层工具调用。
 - `Robot_Module`
@@ -32,13 +34,16 @@
    -> 顶层 LLM 判断：直接回复 / vlm_observe / robot_act
 
 vlm_observe
--> Robot_Module/module/Vision/Task/Bishe/vlm_observe.py
+-> Robot_Module/agent_tools.py 顶层 Vision tool
+-> Robot_Module/module/Vision/Task/Bishe/vlm_observe.py 下层 vision skill: vlm
 -> VLM_Module/vlm_core.py
--> 返回 visual_context + scene_facts
+-> Comm_Module.get_state()
+-> 返回 visual_context + scene_facts + env_state
 
 robot_act
 -> Robot_Module/agent_tools.py
    -> Comm_Module 尝试同步 live data 到 object_facts
+   -> 组装固定格式 planner_context
    -> LLM_Module/llm_core.py 高层规划
    -> LLM_Module/parameter_calculator.py 参数计算
    -> LLM_Module/llm_lowlevel.py 低层执行
@@ -90,7 +95,22 @@ Excu_Module
 -> 真正负责执行和状态校验
 ```
 
+`Action` 和 `Vision` 当前都是由 `Robot_Module/agent_tools.py` 并列注册的。
+其中：
+
+- 顶层工具是 `robot_act` 和 `vlm_observe`
+- 下层 Action skills 当前是 `walk / navigation / ...`
+- 下层 Vision skills 当前是 `vlm`
+
 ## 状态原则
+
+当前遵循：
+
+- `VLM` 负责理解场景的大致样子
+- `Comm_Module` 负责提供真实状态和具体数值
+- `LLM` 同时参考两者做规划
+- `Excu_Module` 只用真实状态做执行验收
+- 给规划大模型的状态输入必须是固定 JSON 结构，而不是零散自然语言
 
 统一状态入口是：
 

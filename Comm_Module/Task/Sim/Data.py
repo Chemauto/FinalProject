@@ -33,12 +33,26 @@ STATE_SCHEMA = {
                 "default": None,
             },
             "obstacles": {
-                "source": "scene_objects",
+                "source": "runtime_objects",
                 "default": [],
             },
             "goal": {
                 "source": "snapshot.goal",
                 "default": None,
+            },
+            "envtest_alignment": {
+                "platform_1": {
+                    "source": "snapshot.platform_1",
+                    "default": None,
+                },
+                "platform_2": {
+                    "source": "snapshot.platform_2",
+                    "default": None,
+                },
+                "box": {
+                    "source": "snapshot.box",
+                    "default": None,
+                },
             },
         },
         "action_result": {
@@ -59,45 +73,11 @@ STATE_SCHEMA = {
                 "default": None,
             },
         },
-        "raw": {
-            "snapshot": {
-                "source": "snapshot",
-                "default": {},
-            },
-            "scene_objects": {
-                "source": "scene_objects",
-                "default": [],
-            },
-            "pose_command": {
-                "source": "snapshot.pose_command",
-                "default": None,
-            },
-            "status_file_available": {
-                "source": "status_file_available",
-                "default": False,
-            },
-            "process": {
-                "source": "process",
-                "default": None,
-            },
-            "control_files": {
-                "source": "control_files",
-                "default": {},
-            },
-            "repo_root": {
-                "source": "repo_root",
-                "default": None,
-            },
-        },
     },
     "runtime": {
         "timestamp": {
             "source": "snapshot.timestamp",
             "default": None,
-        },
-        "snapshot": {
-            "source": "snapshot",
-            "default": {},
         },
         "skill": {
             "source": "snapshot.skill",
@@ -116,8 +96,26 @@ STATE_SCHEMA = {
             "default": None,
         },
         "scene_objects": {
-            "source": "scene_objects",
+            "source": "runtime_objects",
             "default": [],
+        },
+        "scene_layout_objects": {
+            "source": "scene_layout_objects",
+            "default": [],
+        },
+        "envtest_alignment": {
+            "platform_1": {
+                "source": "snapshot.platform_1",
+                "default": None,
+            },
+            "platform_2": {
+                "source": "snapshot.platform_2",
+                "default": None,
+            },
+            "box": {
+                "source": "snapshot.box",
+                "default": None,
+            },
         },
     },
 }

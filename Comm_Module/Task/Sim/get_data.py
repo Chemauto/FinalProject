@@ -459,6 +459,19 @@ def _build_runtime_objects(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
     return runtime_objects
 
 
+def _round_asset_payload(asset: Any) -> dict[str, Any] | None:
+    if not isinstance(asset, dict):
+        return None
+
+    position = asset.get("position")
+    size = asset.get("size")
+    return {
+        "name": asset.get("name"),
+        "position": _round_list(position) if isinstance(position, list) else None,
+        "size": _round_list(size) if isinstance(size, list) else None,
+    }
+
+
 def _resolve_control_files(tokens: list[str]) -> dict[str, Path]:
     return {
         "model_use_file": Path(
@@ -503,10 +516,14 @@ def _build_live_snapshot(control_files: dict[str, Path], scene_id: int) -> tuple
         for key in ("model_use", "skill", "scene_id", "start", "unified_obs_dim", "policy_obs_dim"):
             if key in status_payload:
                 snapshot[key] = status_payload.get(key)
+        if "timestamp" in status_payload:
+            snapshot["timestamp"] = status_payload.get("timestamp")
         for key in ("pose_command", "vel_command", "robot_pose", "goal"):
             values = status_payload.get(key)
             if isinstance(values, list):
                 snapshot[key] = _round_list(values)
+        for key in ("platform_1", "platform_2", "box"):
+            snapshot[key] = _round_asset_payload(status_payload.get(key))
     return snapshot, status_file_available
 
 
@@ -540,9 +557,12 @@ def get_data() -> dict[str, Any]:
     snapshot, status_file_available = _build_live_snapshot(control_files, scene_id)
 
     try:
-        scene_objects = _build_scene_objects(scene_id, repo_root)
+        scene_layout_objects = _build_scene_objects(scene_id, repo_root)
     except Exception:
-        scene_objects = []
+        scene_layout_objects = []
+
+    runtime_objects = _build_runtime_objects(snapshot)
+    scene_objects = runtime_objects or scene_layout_objects
 
     return {
         "connected": True,
@@ -553,6 +573,8 @@ def get_data() -> dict[str, Any]:
         },
         "snapshot": snapshot,
         "scene_objects": scene_objects,
+        "runtime_objects": runtime_objects,
+        "scene_layout_objects": scene_layout_objects,
         "status_file_available": status_file_available,
         "control_files": {key: str(value) for key, value in control_files.items()},
         "repo_root": str(repo_root),
@@ -565,6 +587,8 @@ def update_object_facts_runtime(
     snapshot: dict[str, Any] | None = None,
     user_input: str = "",
     scene_objects: list[dict[str, Any]] | None = None,
+    runtime_objects: list[dict[str, Any]] | None = None,
+    scene_layout_objects: list[dict[str, Any]] | None = None,
     replace_objects: bool = False,
 ) -> dict[str, Any]:
     payload = _load_raw_object_facts(object_facts_path)
@@ -581,16 +605,21 @@ def update_object_facts_runtime(
         if model_use == 4 and isinstance(goal, list) and len(goal) >= 3:
             payload["navigation_goal"] = _round_list(goal[:3])
 
-        runtime_objects = _build_runtime_objects(snapshot)
-        if runtime_objects:
-            payload["runtime_objects"] = runtime_objects
-            if replace_objects:
-                payload["objects"] = runtime_objects
+        if runtime_objects is None:
+            runtime_objects = _build_runtime_objects(snapshot)
+
+    if runtime_objects is not None:
+        payload["runtime_objects"] = runtime_objects
+        if replace_objects and runtime_objects:
+            payload["objects"] = runtime_objects
 
     if scene_objects is not None:
         payload["scene_objects"] = scene_objects
-        if replace_objects:
+        if replace_objects and not (runtime_objects or []):
             payload["objects"] = scene_objects
+
+    if scene_layout_objects is not None:
+        payload["scene_layout_objects"] = scene_layout_objects
 
     overrides = extract_runtime_overrides(user_input)
     if overrides:
@@ -657,6 +686,8 @@ def sync_object_facts_from_live_data(
         snapshot=live_data.get("snapshot") or {},
         user_input=user_input,
         scene_objects=live_data.get("scene_objects") or [],
+        runtime_objects=live_data.get("runtime_objects") or [],
+        scene_layout_objects=live_data.get("scene_layout_objects") or [],
         replace_objects=True,
     )
 
@@ -680,7 +711,8 @@ def _print_live_data_summary(payload: dict[str, Any]) -> None:
     print(f"skill/model:    {snapshot.get('skill')} / {snapshot.get('model_use')}")
     print(f"robot_pose:     {snapshot.get('robot_pose')}")
     print(f"goal:           {snapshot.get('goal')}")
-    print(f"objects_count:  {len(payload.get('scene_objects') or [])}")
+    print(f"runtime_objs:   {len(payload.get('runtime_objects') or [])}")
+    print(f"layout_objs:    {len(payload.get('scene_layout_objects') or [])}")
 
 
 def main() -> int:

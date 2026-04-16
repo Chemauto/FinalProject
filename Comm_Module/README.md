@@ -93,9 +93,10 @@ register_task(
 
 - `observation.agent_position <- snapshot.robot_pose`
 - `observation.environment.goal <- snapshot.goal`
-- `observation.raw.process <- process`
-- `runtime.snapshot <- snapshot`
-- `runtime.scene_objects <- scene_objects`
+- `observation.environment.obstacles <- runtime_objects`
+- `observation.environment.envtest_alignment <- snapshot.platform_1/platform_2/box`
+- `runtime.scene_objects <- runtime_objects`
+- `runtime.scene_layout_objects <- scene_layout_objects`
 
 它不直接获取数据，也不自己拼状态。
 
@@ -125,16 +126,22 @@ state = {
             "scene_id": ...,
             "obstacles": [...],
             "goal": ...,
+            "envtest_alignment": {
+                "platform_1": ...,
+                "platform_2": ...,
+                "box": ...,
+            },
         },
     },
     "runtime": {
         "timestamp": ...,
-        "snapshot": {...},
         "skill": ...,
         "model_use": ...,
         "goal": ...,
         "start": ...,
         "scene_objects": [...],
+        "scene_layout_objects": [...],
+        "envtest_alignment": {...},
     },
 }
 ```

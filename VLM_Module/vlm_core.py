@@ -20,11 +20,6 @@ except ImportError:
 class VLMCore:
     """远程视觉描述器，只负责提示词读取与模型调用。"""
     MAX_CLIMB_HEIGHT_M = 0.3
-    DEFAULT_ENVTEST_ALIGNMENT = {
-        "platform_1": None,
-        "platform_2": None,
-        "box": None,
-    }
     DEFAULT_OUTPUT = {
         "ground": "unknown",
         "left_side": "unknown",
@@ -33,7 +28,6 @@ class VLMCore:
         "obstacles": [],
         "suspected_height_diff": False,
         "uncertainties": [],
-        "envtest_alignment": DEFAULT_ENVTEST_ALIGNMENT,
     }
 
     def __init__(
@@ -106,13 +100,6 @@ class VLMCore:
         return False
 
     @staticmethod
-    def _normalize_number(value: Any, default: float = 0.0) -> float:
-        try:
-            return float(value)
-        except (TypeError, ValueError):
-            return default
-
-    @staticmethod
     def _extract_height_meters(text: str) -> float | None:
         match = re.search(r"(\d+(?:\.\d+)?)\s*米", text)
         if not match:
@@ -124,56 +111,22 @@ class VLMCore:
         return any(keyword in text for keyword in ("无障碍", "可通行", "畅通", "开阔"))
 
     @staticmethod
+    def _is_wall_like(text: str) -> bool:
+        return any(keyword in text for keyword in ("墙", "墙体", "围墙", "垂直结构"))
+
+    @staticmethod
+    def _format_side_description(side_label: str, text: str) -> str:
+        stripped = text.strip()
+        if not stripped:
+            return ""
+        return stripped if stripped.startswith(side_label) else f"{side_label}{stripped}"
+
+    @staticmethod
     def _infer_side_from_y(y_value: Any) -> str:
         try:
             return "left" if float(y_value) >= 0 else "right"
         except (TypeError, ValueError):
             return "unknown"
-
-    @staticmethod
-    def _normalize_alignment_name(name: Any) -> str:
-        normalized = str(name or "").strip().lower()
-        allowed = {
-            "left_low_obstacle",
-            "left_high_obstacle",
-            "right_low_obstacle",
-            "right_high_obstacle",
-            "support_box",
-            "unknown_platform",
-            "unknown_box",
-        }
-        return normalized if normalized in allowed else "unknown"
-
-    @classmethod
-    def _normalize_alignment_slot(cls, payload: Any, slot_name: str) -> dict[str, Any] | None:
-        if payload is None:
-            return None
-        if not isinstance(payload, dict):
-            return None
-
-        normalized_type = str(payload.get("type", "")).strip().lower() or ("box" if slot_name == "box" else "platform")
-        normalized_side = str(payload.get("side", "")).strip().lower()
-        if normalized_side not in {"left", "right", "center", "unknown"}:
-            normalized_side = "center" if slot_name == "box" else ("left" if slot_name == "platform_1" else "right")
-
-        return {
-            "name": cls._normalize_alignment_name(payload.get("name")),
-            "type": normalized_type if normalized_type in {"platform", "box", "unknown"} else "unknown",
-            "side": normalized_side,
-            "height_m": round(cls._normalize_number(payload.get("height_m"), 0.0), 3),
-            "summary": cls._normalize_text(payload.get("summary")),
-        }
-
-    @classmethod
-    def _normalize_envtest_alignment(cls, payload: Any) -> dict[str, Any]:
-        normalized = dict(cls.DEFAULT_ENVTEST_ALIGNMENT)
-        if not isinstance(payload, dict):
-            return normalized
-
-        normalized["platform_1"] = cls._normalize_alignment_slot(payload.get("platform_1"), "platform_1")
-        normalized["platform_2"] = cls._normalize_alignment_slot(payload.get("platform_2"), "platform_2")
-        normalized["box"] = cls._normalize_alignment_slot(payload.get("box"), "box")
-        return normalized
 
     @staticmethod
     def _format_height_label(height: float) -> str:
@@ -184,66 +137,57 @@ class VLMCore:
         left_text = cls._normalize_text(payload.get("left_side"))
         right_text = cls._normalize_text(payload.get("right_side"))
         front_text = cls._normalize_text(payload.get("front_area"))
-        alignment = cls._normalize_envtest_alignment(payload.get("envtest_alignment"))
 
         terrain_features = []
         route_options = []
         interactive_objects = []
 
-        left_alignment = alignment.get("platform_1")
-        right_alignment = alignment.get("platform_2")
-        box_alignment = alignment.get("box")
-
-        left_height = (
-            cls._normalize_number(left_alignment.get("height_m"), 0.0) if isinstance(left_alignment, dict) and left_alignment.get("height_m") is not None
-            else cls._extract_height_meters(left_text)
-        )
-        right_height = (
-            cls._normalize_number(right_alignment.get("height_m"), 0.0) if isinstance(right_alignment, dict) and right_alignment.get("height_m") is not None
-            else cls._extract_height_meters(right_text)
-        )
+        left_height = cls._extract_height_meters(left_text)
+        right_height = cls._extract_height_meters(right_text)
         left_height = left_height if left_height and left_height > 0 else None
         right_height = right_height if right_height and right_height > 0 else None
 
-        if left_text != "unknown" or isinstance(left_alignment, dict):
-            left_type = "platform" if left_height is not None or isinstance(left_alignment, dict) else "path"
-            left_traversable = left_height is None or left_height <= cls.MAX_CLIMB_HEIGHT_M
+        if left_text != "unknown":
+            left_is_wall = cls._is_wall_like(left_text)
+            left_type = "wall" if left_is_wall else "platform" if left_height is not None else "path"
+            left_traversable = False if left_is_wall else (left_height is None or left_height <= cls.MAX_CLIMB_HEIGHT_M)
             terrain_features.append(
                 {
                     "side": "left",
                     "type": left_type,
                     "height_m": left_height or 0.0,
                     "traversable": left_traversable,
-                    "description": left_alignment.get("summary") if isinstance(left_alignment, dict) and left_alignment.get("summary") != "unknown" else left_text,
-                    "object_id": left_alignment.get("name") if isinstance(left_alignment, dict) else None,
+                    "description": left_text,
+                    "object_id": None,
                 }
             )
             route_options.append(
                 {
                     "direction": "left",
-                    "status": "clear" if cls._is_clear_path(left_text) or left_traversable else "blocked",
-                    "reason": left_alignment.get("summary") if isinstance(left_alignment, dict) and left_alignment.get("summary") != "unknown" else left_text,
+                    "status": "clear" if cls._is_clear_path(left_text) else "blocked" if left_is_wall or not left_traversable else "clear",
+                    "reason": left_text,
                 }
             )
 
-        if right_text != "unknown" or isinstance(right_alignment, dict):
-            right_type = "platform" if right_height is not None or isinstance(right_alignment, dict) else "path"
-            right_traversable = right_height is None or right_height <= cls.MAX_CLIMB_HEIGHT_M
+        if right_text != "unknown":
+            right_is_wall = cls._is_wall_like(right_text)
+            right_type = "wall" if right_is_wall else "platform" if right_height is not None else "path"
+            right_traversable = False if right_is_wall else (right_height is None or right_height <= cls.MAX_CLIMB_HEIGHT_M)
             terrain_features.append(
                 {
                     "side": "right",
                     "type": right_type,
                     "height_m": right_height or 0.0,
                     "traversable": right_traversable,
-                    "description": right_alignment.get("summary") if isinstance(right_alignment, dict) and right_alignment.get("summary") != "unknown" else right_text,
-                    "object_id": right_alignment.get("name") if isinstance(right_alignment, dict) else None,
+                    "description": right_text,
+                    "object_id": None,
                 }
             )
             route_options.append(
                 {
                     "direction": "right",
-                    "status": "clear" if cls._is_clear_path(right_text) or right_traversable else "blocked",
-                    "reason": right_alignment.get("summary") if isinstance(right_alignment, dict) and right_alignment.get("summary") != "unknown" else right_text,
+                    "status": "clear" if cls._is_clear_path(right_text) else "blocked" if right_is_wall or not right_traversable else "clear",
+                    "reason": right_text,
                 }
             )
 
@@ -259,40 +203,28 @@ class VLMCore:
                         "description": obstacle,
                     }
                 )
-        if isinstance(box_alignment, dict):
-            interactive_objects.append(
-                {
-                    "name": box_alignment.get("name", "support_box"),
-                    "side": box_alignment.get("side", "center"),
-                    "height_m": cls._normalize_number(box_alignment.get("height_m"), 0.0),
-                    "movable": True,
-                    "usable_as_step": cls._normalize_number(box_alignment.get("height_m"), 0.0) <= cls.MAX_CLIMB_HEIGHT_M,
-                    "description": box_alignment.get("summary", "箱子"),
-                }
-            )
 
         summary_parts = []
         if left_height is not None:
             summary_parts.append(f"左侧存在约{left_height:.1f}米高台")
         elif left_text != "unknown":
-            summary_parts.append(f"左侧{left_text}")
+            summary_parts.append(cls._format_side_description("左侧", left_text))
         if cls._is_clear_path(right_text):
             summary_parts.append("右侧可通行")
         elif right_height is not None:
             summary_parts.append(f"右侧存在约{right_height:.1f}米高差")
         elif right_text != "unknown":
-            summary_parts.append(f"右侧{right_text}")
+            summary_parts.append(cls._format_side_description("右侧", right_text))
         if not summary_parts and front_text != "unknown":
             summary_parts.append(front_text)
 
         return {
-            "summary": "，".join(summary_parts) if summary_parts else "环境信息不足",
+            "summary": "，".join(part.rstrip("。；，、 ") for part in summary_parts) if summary_parts else "环境信息不足",
             "terrain_features": terrain_features,
             "interactive_objects": interactive_objects,
             "route_options": route_options,
             "constraints": {"max_climb_height_m": cls.MAX_CLIMB_HEIGHT_M},
             "uncertainties": cls._normalize_list(payload.get("uncertainties")),
-            "envtest_alignment": alignment,
         }
 
     @classmethod
@@ -409,7 +341,6 @@ class VLMCore:
         normalized["obstacles"] = cls._normalize_list(payload.get("obstacles"))
         normalized["suspected_height_diff"] = cls._normalize_bool(payload.get("suspected_height_diff"))
         normalized["uncertainties"] = cls._normalize_list(payload.get("uncertainties"))
-        normalized["envtest_alignment"] = cls._normalize_envtest_alignment(payload.get("envtest_alignment"))
         return normalized
 
     @classmethod

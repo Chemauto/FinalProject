@@ -20,18 +20,29 @@
 ```text
 1. Thinking 面板        — agent 思考过程
 2. vlm_observe 面板    — 环境观测结果
-3. Thinking 面板        — 基于观测的进一步决策
-4. robot_act 内部日志  — 规划和执行过程的流式输出
-5. robot_act 摘要面板  — total_tasks / success_count / failure_count
-6. Assistant 面板      — 最终文本回复
+3. Env State 面板      — VLM + Comm 的结构化环境理解
+4. Thinking 面板        — 基于观测的进一步决策
+5. robot_act 内部日志  — 规划和执行过程的流式输出
+6. robot_act 摘要面板  — total_tasks / success_count / failure_count
+7. Assistant 面板      — 最终文本回复
 ```
 
 当前工具来源：
 
 - `vlm_observe`
-  来自 `Robot_Module` 的视觉注册链
+  来自 `Robot_Module` 的顶层 Vision tool
 - `robot_act`
   来自 `Robot_Module/agent_tools.py`
+
+当前术语上，`Vision` 和 `Action` 是并列模块：
+
+- `Vision Tool -> Vision Skills`
+- `Action Tool -> Action Skills`
+
+当前下层技能层级是：
+
+- `vlm_observe -> vlm`
+- `robot_act -> walk / climb / navigation / ...`
 
 ## 日志抑制
 
@@ -74,5 +85,6 @@ python3 Interactive_Module/interactive.py
 
 - 纯对话任务应直接回复
 - 涉及环境判断时优先调用 `vlm_observe`
+- 规划时优先参考 `vlm_observe` 返回的 `env_state`
 - 涉及真实动作时调用 `robot_act`
 - `robot_act` 内部会继续进入 `LLM_Module -> Robot_Module -> Excu_Module -> Comm_Module` 这条链

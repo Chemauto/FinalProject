@@ -42,8 +42,8 @@ def extract_scene_objects(state: dict[str, Any] | None) -> list[dict[str, Any]]:
     obstacles = environment.get("obstacles")
     if isinstance(obstacles, list):
         return [item for item in obstacles if isinstance(item, dict)]
-    raw = observation.get("raw") or {}
-    scene_objects = raw.get("scene_objects")
+    runtime = state.get("runtime") or {}
+    scene_objects = runtime.get("scene_objects")
     if isinstance(scene_objects, list):
         return [item for item in scene_objects if isinstance(item, dict)]
     return []
@@ -57,10 +57,40 @@ def extract_runtime_snapshot(state: dict[str, Any] | None) -> dict[str, Any]:
         snapshot = runtime.get("snapshot")
         if isinstance(snapshot, dict):
             return snapshot
+        compact_snapshot = {}
+        for key in ("timestamp", "goal", "skill", "model_use", "start", "pose_command", "vel_command"):
+            if key in runtime:
+                compact_snapshot[key] = runtime.get(key)
+        alignment = runtime.get("envtest_alignment")
+        if isinstance(alignment, dict):
+            compact_snapshot.update(
+                {
+                    "platform_1": alignment.get("platform_1"),
+                    "platform_2": alignment.get("platform_2"),
+                    "box": alignment.get("box"),
+                }
+            )
+        if compact_snapshot:
+            return compact_snapshot
     observation = state.get("observation") or {}
-    raw = observation.get("raw") or {}
-    snapshot = raw.get("snapshot")
-    return snapshot if isinstance(snapshot, dict) else {}
+    environment = observation.get("environment") or {}
+    action_result = observation.get("action_result") or {}
+    fallback_snapshot = {
+        "goal": environment.get("goal"),
+        "skill": action_result.get("skill"),
+        "model_use": action_result.get("model_use"),
+        "start": action_result.get("start"),
+    }
+    alignment = environment.get("envtest_alignment")
+    if isinstance(alignment, dict):
+        fallback_snapshot.update(
+            {
+                "platform_1": alignment.get("platform_1"),
+                "platform_2": alignment.get("platform_2"),
+                "box": alignment.get("box"),
+            }
+        )
+    return fallback_snapshot
 
 
 def extract_status_timestamp(state: dict[str, Any] | None) -> float | None:

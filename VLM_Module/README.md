@@ -2,14 +2,17 @@
 
 ## 作用
 
-`VLM_Module/vlm_core.py` 负责读取提示词、接收图片并调用远程视觉模型，输出结构化环境事实。
+`VLM_Module/vlm_core.py` 负责读取提示词、接收图片并调用远程视觉模型，输出结构化视觉语义。
 `VLM_Module/image_source.py` 负责取图：优先读取 live EnvTest 导出的 `/tmp/envtest_front_camera.png`，其次摄像头，最后回退到 `VLM_Module/assets`。
 
 当前视觉工具注册路径是：
 
 ```text
-Robot_Module/module/Vision/skills.py
+Robot_Module/agent_tools.py
+-> 顶层 Vision tool: vlm_observe
+-> Robot_Module/module/Vision/skills.py
 -> Robot_Module/module/Vision/Task/Bishe/vlm_observe.py
+-> 下层 Vision skill: vlm
 -> VLM_Module/vlm_core.py
 ```
 
@@ -39,8 +42,8 @@ python3 -c "from VLM_Module.vlm_core import VLMCore; print(VLMCore().describe('V
 ## 输入输出
 
 - 输入：摄像头图片、默认图片，或代码中传入的图片路径
-- 输出：终端打印 JSON 字符串，包含 `ground`、`left_side`、`right_side`、`front_area`、`obstacles`、`suspected_height_diff`、`uncertainties`、`envtest_alignment`
-- `envtest_alignment` 里的 `platform_1 / platform_2 / box` 用于和 IsaacLab `EnvTest Live Status` 槽位对齐
+- 输出：终端打印 JSON 字符串，包含 `ground`、`left_side`、`right_side`、`front_area`、`obstacles`、`suspected_height_diff`、`uncertainties`
+- `VLM_Module` 不再输出 `platform_1 / platform_2 / box` 这类真值槽位；这类具体数据统一由 `Comm_Module` 提供
 
 需要注意：
 

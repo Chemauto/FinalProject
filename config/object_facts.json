@@ -1,13 +1,13 @@
 {
   "navigation_goal": [
-    5.5,
+    5.0,
     0.0,
     0.0
   ],
   "robot_pose": [
-    0.999,
-    0.127,
-    0.284
+    -0.062,
+    0.0,
+    0.286
   ],
   "constraints": {
     "max_climb_height_m": 0.3,
@@ -16,8 +16,8 @@
   },
   "objects": [
     {
-      "id": "platform_left_low",
-      "source_name": "left_low_obstacle",
+      "id": "platform_1",
+      "source_name": "left_high_obstacle",
       "type": "platform",
       "center": [
         3.0,
@@ -27,15 +27,47 @@
       "size": [
         2.0,
         1.5,
-        0.3
+        0.5
       ],
       "movable": false
+    },
+    {
+      "id": "platform_2",
+      "source_name": "right_high_obstacle",
+      "type": "platform",
+      "center": [
+        3.0,
+        -0.75,
+        0.0
+      ],
+      "size": [
+        2.0,
+        1.5,
+        0.5
+      ],
+      "movable": false
+    },
+    {
+      "id": "box",
+      "source_name": "support_box",
+      "type": "box",
+      "center": [
+        1.0,
+        -0.0,
+        0.0
+      ],
+      "size": [
+        0.6,
+        0.8,
+        0.2
+      ],
+      "movable": true
     }
   ],
   "scene_objects": [
     {
-      "id": "platform_left_low",
-      "source_name": "left_low_obstacle",
+      "id": "platform_1",
+      "source_name": "left_high_obstacle",
       "type": "platform",
       "center": [
         3.0,
@@ -45,13 +77,45 @@
       "size": [
         2.0,
         1.5,
-        0.3
+        0.5
       ],
       "movable": false
+    },
+    {
+      "id": "platform_2",
+      "source_name": "right_high_obstacle",
+      "type": "platform",
+      "center": [
+        3.0,
+        -0.75,
+        0.0
+      ],
+      "size": [
+        2.0,
+        1.5,
+        0.5
+      ],
+      "movable": false
+    },
+    {
+      "id": "box",
+      "source_name": "support_box",
+      "type": "box",
+      "center": [
+        1.0,
+        -0.0,
+        0.0
+      ],
+      "size": [
+        0.6,
+        0.8,
+        0.2
+      ],
+      "movable": true
     }
   ],
   "runtime_state": {
-    "scene_id": 1,
+    "scene_id": 4,
     "model_use": 0,
     "start": false,
     "vel_command": [
@@ -62,17 +126,157 @@
     "pose_command": null,
     "goal": null,
     "robot_pose": [
-      0.999,
-      0.127,
-      0.284
+      -0.062,
+      0.0,
+      0.286
     ],
     "skill": "idle",
     "navigation_goal_override": [
-      5.5,
+      5.0,
       0.0,
       0.0
     ],
     "unified_obs_dim": 252,
-    "policy_obs_dim": null
-  }
+    "policy_obs_dim": null,
+    "timestamp": 1776340416.502794,
+    "platform_1": {
+      "name": "left_high_obstacle",
+      "position": [
+        3.0,
+        0.75,
+        0.25
+      ],
+      "size": [
+        2.0,
+        1.5,
+        0.5
+      ]
+    },
+    "platform_2": {
+      "name": "right_high_obstacle",
+      "position": [
+        3.0,
+        -0.75,
+        0.25
+      ],
+      "size": [
+        2.0,
+        1.5,
+        0.5
+      ]
+    },
+    "box": {
+      "name": "support_box",
+      "position": [
+        1.0,
+        -0.0,
+        0.1
+      ],
+      "size": [
+        0.6,
+        0.8,
+        0.2
+      ]
+    }
+  },
+  "runtime_objects": [
+    {
+      "id": "platform_1",
+      "source_name": "left_high_obstacle",
+      "type": "platform",
+      "center": [
+        3.0,
+        0.75,
+        0.0
+      ],
+      "size": [
+        2.0,
+        1.5,
+        0.5
+      ],
+      "movable": false
+    },
+    {
+      "id": "platform_2",
+      "source_name": "right_high_obstacle",
+      "type": "platform",
+      "center": [
+        3.0,
+        -0.75,
+        0.0
+      ],
+      "size": [
+        2.0,
+        1.5,
+        0.5
+      ],
+      "movable": false
+    },
+    {
+      "id": "box",
+      "source_name": "support_box",
+      "type": "box",
+      "center": [
+        1.0,
+        -0.0,
+        0.0
+      ],
+      "size": [
+        0.6,
+        0.8,
+        0.2
+      ],
+      "movable": true
+    }
+  ],
+  "scene_layout_objects": [
+    {
+      "id": "platform_left_high",
+      "source_name": "left_high_obstacle",
+      "type": "platform",
+      "center": [
+        3.0,
+        0.75,
+        0.0
+      ],
+      "size": [
+        2.0,
+        1.5,
+        0.5
+      ],
+      "movable": false
+    },
+    {
+      "id": "platform_right_high",
+      "source_name": "right_high_obstacle",
+      "type": "platform",
+      "center": [
+        3.0,
+        -0.75,
+        0.0
+      ],
+      "size": [
+        2.0,
+        1.5,
+        0.5
+      ],
+      "movable": false
+    },
+    {
+      "id": "box1",
+      "source_name": "support_box",
+      "type": "box",
+      "center": [
+        1.0,
+        0.0,
+        0.0
+      ],
+      "size": [
+        0.6,
+        0.8,
+        0.2
+      ],
+      "movable": true
+    }
+  ]
 }

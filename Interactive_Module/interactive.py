@@ -57,8 +57,9 @@ AGENT_SYSTEM_PROMPT = """你是一个机器人智能体，不是机器人本体�
 - 当你需要执行动作时，你必须在回复中先输出你的思考过程（包括为什么需要观测、打算怎么做），然后在同一次回复中调用工具
 - 思考过程应该包括：1) 环境感知需求 2) 动作规划 3) 执行策略
 - 涉及在环境中运动（如 walk、navigation、climb 等）时，必须先调用 vlm_observe 观察环境
+- `vlm_observe` 会返回 `visual_context` 和 `env_state`；其中 `env_state` 是 VLM 与 Comm 合并后的结构化环境理解，规划时优先参考它
 - 调用 robot_act 时，附带一个简短的 agent_thought，说明你为什么要执行这个动作、当前如何理解任务
-- 如果已经调用过 vlm_observe，再调用 robot_act 时，应优先把 visual_context 传入 observation_context，把 scene_facts 传入 scene_facts_json
+- 如果已经调用过 vlm_observe，再调用 robot_act 时，应优先把 visual_context 传入 observation_context，把 env_state.scene_facts 传入 scene_facts_json；若没有 env_state，再退回原始 scene_facts
 - 回复简洁、自然、直接
 """
 
@@ -280,8 +281,9 @@ def run_agent_turn(
                         ensure_ascii=False,
                     )
                 if not args.get("scene_facts_json"):
+                    merged_scene_facts = (session.last_observation.get("env_state") or {}).get("scene_facts")
                     args["scene_facts_json"] = json.dumps(
-                        session.last_observation.get("scene_facts", {}),
+                        merged_scene_facts or session.last_observation.get("scene_facts", {}),
                         ensure_ascii=False,
                     )
             if tool_call.function.name == "robot_act" and not args.get("agent_thought"):
@@ -312,6 +314,8 @@ def run_agent_turn(
             }
             tool_events.append(tool_event)
             _render_tool_result_panel(console, tool_event)
+            if tool_event.get("tool_name") == "vlm_observe":
+                _render_env_state_panel(console, tool_event.get("payload", {}))
 
             payload = result.get("result", result)
             if isinstance(payload, dict):
@@ -369,8 +373,8 @@ def handle_command(command: str, session: InteractiveSessionState, llm_builder) 
                 "/vlm    开关顶层感知能力\n"
                 "/quit   退出程序\n\n"
                 "Hierarchy:\n"
-                "Agent Tools:\n"
-                "Perception Tool -> Vision Skills\n"
+                "Top-level Tools:\n"
+                "Vision Tool -> Vision Skills\n"
                 "Action Tool -> Action Skills"
             ),
         }
@@ -414,13 +418,13 @@ def show_welcome(console: Console, runtime: AgentRuntime, tools: list[dict[str, 
     header.append("ON" if session.vlm_enabled else "OFF", style="bold yellow")
     header.append("\n  Agent Tools: ", style="dim")
     header.append(str(tool_summary["agent_tools"]), style="bold magenta")
-    header.append("  (Perception / Action)", style="dim")
+    header.append("  (Vision / Action)", style="dim")
     header.append("\n  Vision Skills: ", style="dim")
     header.append(str(tool_summary["vision_skills"]), style="bold magenta")
-    header.append("  (inside Perception Tool)", style="dim")
+    header.append("  (registered from Vision module)", style="dim")
     header.append("\n  Action Skills: ", style="dim")
     header.append(str(tool_summary["action_skills"]), style="bold magenta")
-    header.append("  (inside Action Tool)", style="dim")
+    header.append("  (registered from Action module)", style="dim")
     header.append("\n\n")
     header.append("/help /tools /reset /status /vlm /quit", style="bold cyan")
     console.print(Panel(header, title=WELCOME_TITLE, border_style="bright_cyan"))
@@ -452,11 +456,11 @@ def _build_tool_table(title: str, tools: list[dict[str, Any]]) -> Table:
 
 
 def _build_agent_tool_table() -> Table:
-    table = Table(title="Agent Tools", show_lines=True)
+    table = Table(title="Top-level Tools", show_lines=True)
     table.add_column("Tool", style="bold cyan")
     table.add_column("Exposed Skill", style="green")
     table.add_column("Owns Skills", style="white")
-    table.add_row("Perception Tool", "vlm_observe", "Vision Skills")
+    table.add_row("Vision Tool", "vlm_observe", "Vision Skills")
     table.add_row("Action Tool", "robot_act", "Action Skills")
     return table
 
@@ -506,6 +510,35 @@ def _render_tool_result_panel(console: Console, tool_event: dict[str, Any]) -> N
             details,
             title=f"{tool_name} {label}",
             border_style=border,
+            expand=False,
+        )
+    )
+
+
+def _render_env_state_panel(console: Console, payload: dict[str, Any]) -> None:
+    if not isinstance(payload, dict):
+        return
+    env_state = payload.get("env_state")
+    if not isinstance(env_state, dict) or not env_state:
+        return
+    compact = {
+        "connected": env_state.get("connected"),
+        "scene_id": env_state.get("scene_id"),
+        "agent_position": env_state.get("agent_position"),
+        "goal": env_state.get("goal"),
+        "skill": env_state.get("skill"),
+        "model_use": env_state.get("model_use"),
+        "start": env_state.get("start"),
+        "objects_count": env_state.get("objects_count", 0),
+        "envtest_alignment": env_state.get("envtest_alignment"),
+        "summary": env_state.get("summary"),
+        "uncertainties": env_state.get("uncertainties", []),
+    }
+    console.print(
+        Panel(
+            json.dumps(compact, ensure_ascii=False, indent=2),
+            title="Env State",
+            border_style="bright_blue",
             expand=False,
         )
     )

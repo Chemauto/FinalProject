@@ -7,7 +7,7 @@ import os
 DEFAULT_VISION_TASK = os.getenv("FINALPROJECT_VISION_TASK", os.getenv("FINALPROJECT_TASK", "bishe")).strip().lower() or "bishe"
 
 VISION_TOOL_NAMES = {
-    "vlm_observe",
+    "vlm",
 }
 
 _TASK_REGISTRIES = {

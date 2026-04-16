@@ -24,6 +24,15 @@ FinalProject 不是单一的“LLM 调工具”项目，而是 6 层协作：
 - `vlm_observe`
 - `robot_act`
 
+当前对应关系：
+
+- `vlm_observe`
+  是顶层 Vision tool
+- `robot_act`
+  是顶层 Action tool
+- Vision 下层当前只有一个技能：`vlm`
+- Action 下层当前有 7 个技能
+
 ## 2. 当前端到端流程
 
 ```text
@@ -110,14 +119,28 @@ robot_act
 - `module/Vision/skills.py`
   视觉任务开关和注册。
 - `module/Vision/Task/Bishe/vlm_observe.py`
-  当前视觉技能实现。
+  当前 Vision 下层技能实现文件，注册的 skill 名字是 `vlm`。
+
+这里要注意：
+
+- `module/Action` 和 `module/Vision` 是平级模块
+- 不要再引入 `Perception -> Vision` 这种额外层级概念
+- 当前注册方式是 `Action` 和 `Vision` 并列挂到 `agent_tools.py`
+- `agent_tools.py` 里的 `register_tools()` 会统一注册 `Action + Vision + robot_act`
+- 顶层 `vlm_observe` 会调用下层 Vision skill `vlm`
 
 ### `VLM_Module`
 
 - `vlm_core.py`
-  结构化视觉输出。
+  结构化视觉输出，只负责视觉语义。
 - `image_source.py`
   图片来源优先级控制。
+
+这里要注意：
+
+- `VLM` 只负责“大概看起来是什么”
+- 真值状态、具体数值、槽位对象统一来自 `Comm_Module`
+- `vlm_observe` 当前会额外返回 `env_state`，它是 `VLM + Comm_Module` 合并后的环境理解
 
 ## 4. Action 目录的硬约束
 

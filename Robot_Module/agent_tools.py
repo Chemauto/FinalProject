@@ -194,6 +194,36 @@ def get_action_tool_definitions():
     return get_tool_definitions(ACTION_TOOL_NAMES)
 
 
+def _build_planner_alignment(runtime_state: dict[str, Any]) -> dict[str, Any]:
+    alignment = {}
+    for key in ("platform_1", "platform_2", "box"):
+        asset = runtime_state.get(key)
+        alignment[key] = asset if isinstance(asset, dict) else None
+    return alignment
+
+
+def _build_planner_context(
+    scene_facts: dict[str, Any] | None,
+    object_facts: dict[str, Any] | None,
+    synced_payload: dict[str, Any] | None,
+) -> dict[str, Any]:
+    runtime_state = (synced_payload or {}).get("runtime_state") or {}
+    return {
+        "robot_state": {
+            "scene_id": runtime_state.get("scene_id"),
+            "robot_pose": (object_facts or {}).get("robot_pose"),
+            "goal": (object_facts or {}).get("navigation_goal") or runtime_state.get("goal"),
+            "skill": runtime_state.get("skill"),
+            "model_use": runtime_state.get("model_use"),
+            "start": runtime_state.get("start"),
+        },
+        "envtest_alignment": _build_planner_alignment(runtime_state),
+        "constraints": (object_facts or {}).get("constraints") or {},
+        "objects": (object_facts or {}).get("objects") or [],
+        "scene_facts": scene_facts or {},
+    }
+
+
 def run_robot_act_pipeline(
     user_intent: str,
     agent_thought: str = "",
@@ -215,6 +245,7 @@ def run_robot_act_pipeline(
     visual_context_text = json.dumps(observation_context, ensure_ascii=False) if observation_context else None
     if object_facts is not None:
         merged_scene_facts = VLMCore.merge_scene_facts(scene_facts, object_facts)
+    planner_context = _build_planner_context(merged_scene_facts, object_facts, synced_payload)
 
     api_key = os.getenv("Test_API_KEY")
     llm_agent = LLMAgent(
@@ -232,7 +263,7 @@ def run_robot_act_pipeline(
             tools=action_tools,
             execute_tool_fn=_execute_registered_tool,
             visual_context=visual_context_text,
-            scene_facts=merged_scene_facts,
+            scene_facts=planner_context,
             object_facts=object_facts,
         )
     pipeline_stdout.flush_pending()
@@ -287,9 +318,28 @@ async def robot_act(
     )
 
 
+async def vlm_observe(image_path: str = "") -> dict[str, Any]:
+    skill_func = get_skill_function("vlm")
+    if not skill_func:
+        raise RuntimeError("Vision skill 'vlm' 未注册")
+
+    raw_result = await skill_func(image_path=image_path)
+    if isinstance(raw_result, str):
+        try:
+            return json.loads(raw_result)
+        except json.JSONDecodeError:
+            return {"status": "failure", "message": "vlm 返回了无法解析的结果", "raw_result": raw_result}
+    if isinstance(raw_result, dict):
+        return raw_result
+    return {"status": "failure", "message": "vlm 返回了无效结果", "raw_result": raw_result}
+
+
 def register_tools(mcp):
     registry = {}
+    registry.update(register_action_tools(mcp))
     registry.update(register_vision_tools(mcp))
+    mcp.tool()(vlm_observe)
+    registry["vlm_observe"] = vlm_observe
     mcp.tool()(robot_act)
     registry["robot_act"] = robot_act
     return registry
@@ -300,7 +350,6 @@ def register_all_modules():
     if _modules_registered:
         return
 
-    _tool_registry.update(register_action_tools(mcp))
     _tool_registry.update(register_tools(mcp))
     _tool_definitions = _snapshot_tool_definitions()
     _modules_registered = True
