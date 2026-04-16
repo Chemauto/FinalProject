@@ -28,6 +28,7 @@ from .state import (
     validate_live_execution,
     wait_for_live_state,
     wait_for_navigation_completion,
+    wait_for_skill_completion,
 )
 
 
@@ -134,46 +135,45 @@ async def wait_skill_feedback(
             },
         }
 
-    actual_wait_sec = min(timeout_sec, execution_time_sec)
-    await asyncio.sleep(actual_wait_sec)
-    await stop_envtest_skill(config)
-    after_state = await wait_for_live_state(
+    actual_wait_sec = max(timeout_sec, execution_time_sec)
+    completion_result = await wait_for_skill_completion(
+        skill_name=skill_name,
+        parameters=parameters,
+        before_state=before_state,
         task_type=config.task_type,
-        timeout_sec=ready_timeout_sec,
-        min_timestamp=before_timestamp,
+        timeout_sec=actual_wait_sec,
     )
+    await stop_envtest_skill(config)
+    after_state = completion_result.get("state")
+    if not isinstance(after_state, dict):
+        after_state = await wait_for_live_state(
+            task_type=config.task_type,
+            timeout_sec=ready_timeout_sec,
+            min_timestamp=before_timestamp,
+        )
     validation = validate_live_execution(skill_name, parameters, before_state, after_state)
 
-    if execution_time_sec > timeout_sec:
-        return {
-            "action_id": action_id,
-            **build_feedback(
-                skill_name,
-                f"{skill_name} 预计执行 {execution_time_sec:.1f}s，超过超时阈值 {timeout_sec:.1f}s",
-                signal="FAILURE",
-                validation=validation,
-            ),
-            "result": {
-                **planned_result,
-                "mode": "execution_timeout",
-                "wait_time_sec": actual_wait_sec,
-                "verification": validation,
-            },
-        }
+    completion_ok = bool(completion_result.get("ok"))
+    validation_ok = validation.get("verified") and validation.get("meets_requirements")
+    signal = "SUCCESS" if (completion_ok or validation_ok) else "FAILURE"
 
-    signal = "SUCCESS" if validation.get("verified") and validation.get("meets_requirements") else "FAILURE"
+    completion_reason = str(completion_result.get("reason") or "")
+    validation_summary = str(validation.get("summary") or "")
+    summary = validation_summary if validation_summary else (completion_reason or local_success_message)
+
     return {
         "action_id": action_id,
         **build_feedback(
             skill_name,
-            str(validation.get("summary") or local_success_message),
+            summary,
             signal=signal,
             validation=validation,
         ),
         "result": {
             **planned_result,
-            "mode": "comm_state_feedback",
-            "wait_time_sec": actual_wait_sec,
+            "mode": "comm_state_polling",
+            "wait_time_sec": completion_result.get("elapsed_sec"),
+            "completion_check": completion_result,
             "verification": validation,
         },
     }

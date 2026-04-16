@@ -34,18 +34,25 @@ Excu_Module/
 负责：
 
 - 通过 `Comm_Module.get_state()` 读取统一状态
-- 提取 `robot_pose / goal / model_use / skill / timestamp`
-- 导航到达判定
-- `walk / way_select / climb / push_box` 的通用状态校验
+- 提取 `robot_pose / goal / model_use / skill / timestamp / box_pose`
+- 0.5 秒轮询完成判定（`wait_for_skill_completion`）
+- 各技能的轮询判定函数：
+  - `walk`：机器人平面位移 + 方向检查
+  - `climb`：机器人 z 抬升检查
+  - `push_box`：**箱子位置**到达目标点检查（0.1m 容许误差）
+  - `way_select`：机器人横向位移检查
+- `walk / way_select / climb / push_box` 的通用事后校验
 
 ### `executor.py`
 
 负责：
 
-- 执行前读取实时状态
+- 执行前读取实时状态（含箱子位置）
 - 下发命令
-- 等待执行
+- 0.5 秒轮询等待（`wait_for_skill_completion`），满足条件提前停止
+- 超时后 stop 命令
 - 执行后再次读取状态
+- 轮询判定 + 事后校验双保险
 - 构造 `execution_feedback`
 - 写入 `validation`
 
@@ -54,11 +61,13 @@ Excu_Module/
 ```text
 Bishe/*.py
 -> Excu_Module/executor.wait_skill_feedback()
-   -> Comm_Module.get_state() 读取执行前状态
+   -> Comm_Module.get_state() 读取执行前状态（含箱子位置）
    -> runtime.apply_envtest_command() 下发命令
-   -> 等待执行
+   -> state.wait_for_skill_completion() 0.5s轮询等待
+      -> 每轮：取状态 -> 检查技能完成条件 -> 满足则提前停止
+   -> runtime.stop_envtest_skill() 停止
    -> Comm_Module.get_state() 读取执行后状态
-   -> state.validate_*() 做验收
+   -> state.validate_*() 做验收（双保险）
    -> 返回 execution_feedback
 ```
 

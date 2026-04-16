@@ -91,9 +91,9 @@ robot_act
 - `runtime.py`
   执行后端、命令下发、基础常量。
 - `state.py`
-  从 `Comm_Module` 读取统一状态，并提供通用校验方法。
+  从 `Comm_Module` 读取统一状态，提供通用校验方法和轮询完成判定。
 - `executor.py`
-  串联“发命令 -> 等待 -> 验收”。
+  串联"发命令 -> 轮询等待(0.5s/次) -> 提前停止或超时 -> 验收"。
 
 这里是当前动作执行的公共层，后续新增任务时优先复用这里，而不是回到 `Robot_Module` 再堆公共逻辑。
 
@@ -230,6 +230,7 @@ state = get_state()
 - 补齐方向
 - 补齐距离或高度
 - 补齐技能所需具体参数
+- `push_box` 的 `target_position` 会算出具体 `[x, y, z]` 坐标，不再是 `"auto"`
 
 技能文件负责：
 
@@ -253,6 +254,44 @@ state = get_state()
 
 `LLM_Module/llm_core.py` 已经按这两个字段决定是否继续下一步。
 
+### 执行策略
+
+当前所有技能（walk / climb / push_box / way_select / navigation / nav_climb / climb_align）统一采用 **0.5 秒轮询**：
+
+```text
+下发命令
+  ↓
+while 0.5s 轮询:
+  取状态 → 检查该技能的完成条件
+  满足 → 提前停止，返回 SUCCESS
+  超时 → 返回 FAILURE
+  ↓
+stop 命令
+  ↓
+最终 before/after 校验（双保险）
+```
+
+轮询频率可通过 `FINALPROJECT_STATUS_POLL_SEC` 环境变量调整（默认 0.5 秒）。
+
+### 各技能完成条件
+
+| 技能 | 完成条件 |
+|---|---|
+| `walk` | 机器人平面位移 >= 要求距离，方向正确 |
+| `climb` | 机器人 z 抬升 >= 要求高度 |
+| `push_box` | 箱子距目标坐标 <= 0.1m（到达容许误差） |
+| `way_select` | 机器人横向位移 >= 要求距离，方向正确 |
+| `navigation` | 机器人距目标 <= 到达容许误差，位置稳定 |
+| `nav_climb` | 同 navigation |
+| `climb_align` | 同 climb |
+
+### push_box 校验规则
+
+- **主校验**：箱子距目标坐标 <= 0.1m（`FINALPROJECT_PUSH_BOX_ARRIVAL_TOL_M`）
+- **后备**（取不到箱子位置时）：机器人平面位移 >= 0.3m
+- 目标坐标由 `parameter_calculator._build_adjacent_ground_position()` 计算，只改变 x 方向，y 保持箱子当前位置
+- 不再用最小位移 0.1m 作为成功门槛（0.1m 是测量噪声级别）
+
 ## 9. 当前最容易踩坑的点
 
 - 没开仿真时，VLM 可能退回默认图片，这不代表真实场景。
@@ -260,6 +299,9 @@ state = get_state()
 - 不要再文档或代码里引用已删除的 `Robot_Module/skill.py`。
 - 不要再文档或代码里引用已删除的 `Robot_Module/module/Action/navigation.py`。
 - 若新增动作任务，不要把公共执行逻辑重新塞进 `Robot_Module/module/Action/Task/<TaskName>`。
+- `push_box` 的 `target_position` 必须是具体坐标，不要退回 `"auto"`。
+- `push_box` 校验基于箱子位置（不是机器人位置），0.1m 是到达容许误差（不是最小位移要求）。
+- 位置测量误差约 0.1m，所以最小位移阈值不能低于噪声级别。
 
 ## 10. 推荐扩展方式
 

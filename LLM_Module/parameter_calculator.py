@@ -125,7 +125,7 @@ class ParameterCalculator:
                 annotated["parameter_context"] = parameter_context
                 annotated["calculated_parameters"] = {
                     "box_height": self._object_height(active_box),
-                    "target_position": "auto",
+                    "target_position": target_position,
                 }
                 current_pose = [target_position[0], target_position[1], current_pose[2]]
             elif function_name == "climb_align" and selected_platform:
@@ -567,6 +567,6 @@ class ParameterCalculator:
         platform_size = target_platform.get("size") or [0.0, 0.0, 0.0]
 
         x = round(float(platform_center[0]) - float(platform_size[0]) / 2 - float(box_size[0]) / 2, 3)
-        y = round(float(platform_center[1]), 3)
+        y = round(float(box_center[1]), 3)
         z = round(float(box_center[2]), 3)
         return [x, y, z]

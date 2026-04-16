@@ -232,29 +232,34 @@ Vision 当前也采用同样结构：
 - `runtime.py`
   执行协议、环境变量、命令下发。
 - `state.py`
-  统一读取 `Comm_Module` 状态并做通用验收。
+  统一读取 `Comm_Module` 状态，提供轮询完成判定和通用验收。
 - `executor.py`
-  把“发命令 -> 等待 -> 校验”串起来。
+  把"发命令 -> 轮询等待 -> 提前停止或超时 -> 校验"串起来。
 
 执行流是：
 
 ```text
 skill file
 -> Excu_Module/executor.py
-   -> 读取执行前状态
+   -> 读取执行前状态（含箱子位置）
    -> 下发命令
-   -> 等待执行
+   -> 0.5s 轮询等待：每轮检查技能完成条件
+      -> 满足条件 -> 提前停止
+      -> 超时 -> 继续
+   -> stop 命令
    -> 再读执行后状态
-   -> 做 validation
+   -> 做 validation（双保险）
    -> 返回 execution_feedback
 ```
+
+轮询频率：`FINALPROJECT_STATUS_POLL_SEC`，默认 0.5 秒。
 
 ## 11. 成功判定
 
 成功判定现在分三层：
 
 1. 技能函数返回结构化结果
-2. `execution_feedback.validation`
+2. `execution_feedback.validation`（轮询完成判定 + 事后校验双保险）
 3. `LLM_Module/llm_core.py` 的最终结果评估
 
 关键规则：
@@ -262,6 +267,16 @@ skill file
 - 不能只看 `signal == SUCCESS`
 - 必须看 `validation.verified`
 - 必须看 `validation.meets_requirements`
+
+各技能校验方式：
+
+| 技能 | 校验对象 | 条件 |
+|---|---|---|
+| `walk` | 机器人位置 | 平面位移 >= 要求距离，方向正确 |
+| `climb` | 机器人位置 | z 抬升 >= 要求高度 |
+| `push_box` | **箱子位置** | 箱子距目标 <= 0.1m（到达容许误差） |
+| `way_select` | 机器人位置 | 横向位移 >= 要求距离，方向正确 |
+| `navigation` | 机器人位置 | 距目标 <= 到达容许误差，位置稳定 |
 
 如果没有实时状态：
 

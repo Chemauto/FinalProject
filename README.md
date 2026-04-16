@@ -145,16 +145,19 @@ state = get_state()
 - `Excu_Module/runtime.py`
   执行协议、环境变量、命令下发、基础常量。
 - `Excu_Module/state.py`
-  从 `Comm_Module` 读取实时状态，并做通用校验。
+  从 `Comm_Module` 读取实时状态，提供轮询完成判定和通用校验。
 - `Excu_Module/executor.py`
-  串联“发命令 -> 等待 -> 做验收”。
+  串联"发命令 -> 0.5s轮询等待 -> 提前停止或超时 -> 做验收"。
 
 关键原则：
 
 - 规划可以在缺少 live 数据时继续。
 - 动作执行不能假成功。
 - 没有实时状态时，动作直接失败。
+- 所有技能统一 0.5 秒轮询，执行中持续检测完成条件，满足即提前停止。
 - `LLM_Module` 最终看的是 `validation.verified` 和 `validation.meets_requirements`，不是只看 `SUCCESS` 字符串。
+- `push_box` 校验基于箱子位置（不是机器人位置），到达容许误差 0.1m。
+- 位置测量误差约 0.1m，最小位移阈值不能低于噪声级别。
 
 ## 最短运行方式
 

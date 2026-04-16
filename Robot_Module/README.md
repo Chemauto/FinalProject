@@ -164,7 +164,8 @@ LLM_Module 产出 function + parameters
 - 无论后端是什么，最终动作成功都应尽量依赖真实状态校验，而不是本地写死 `SUCCESS`
 - `way_select` 默认按侧向 `walk` 控制；如需切到导航策略可设置：
   - `export FINALPROJECT_WAY_SELECT_POLICY=navigation`
-- `push_box.target_position` 支持：`"auto"` / `"x,y,z"` / `"[x, y, z]"`
+- `push_box.target_position` 接收具体 `[x, y, z]` 坐标（由 `parameter_calculator` 计算），不再是 `"auto"`
+- `push_box` 校验基于箱子位置（不是机器人位置），到达容许误差 0.1m
 
 ## 返回结果约定
 
