@@ -5,188 +5,279 @@
 ```text
 用户输入
 -> Interactive_Module/interactive.py
-   -> 顶层 agent（qwen3.6-plus）循环
-      -> LLM 判断：直接回复 / vlm_observe / robot_act
-      -> 渐进式渲染：Thinking -> vlm_observe -> Thinking -> robot_act -> Assistant
+   -> 顶层 agent 判断：直接回复 / vlm_observe / robot_act
 
-vlm_observe 路径：
--> Robot_Module/module/Vision/vlm.py
--> VLMCore.describe_structured() + VLMCore.build_scene_facts()
+vlm_observe
+-> Robot_Module/module/Vision/Task/Bishe/vlm_observe.py
+-> VLM_Module/vlm_core.py
 -> 返回 visual_context + scene_facts
 
-robot_act 路径：
--> Robot_Module/agent_tools.py: run_robot_act_pipeline()
-   -> Comm_Module/Status/envtest_status_sync 同步 live EnvTest
-   -> load_object_facts(object_facts.json)
-   -> VLMCore.merge_scene_facts(scene_facts, object_facts)
-   -> LLMAgent.run_pipeline()
+robot_act
+-> Robot_Module/agent_tools.py
+   -> Comm_Module 同步 live data 到 object_facts
+   -> load_object_facts()
+   -> VLMCore.merge_scene_facts()
+   -> LLM_Module/llm_core.py
       -> HighLevelPlanner.plan_tasks()
-         -> 高层 LLM 输出抽象任务 tasks
       -> ParameterCalculator.annotate_tasks()
-         -> 给每个 task 补 parameter_context / calculated_parameters
       -> LowLevelExecutor.execute_single_task()
-         -> 若已有 calculated_parameters: 直接执行工具
-         -> 否则: 调低层 LLM 决定工具调用
-      -> _execute_registered_tool()
-      -> Robot_Module/module/navigation.py
-      -> 写 /tmp 控制文件或发 UDP/ROS
-      -> IsaacLab EnvTest 执行
-      -> execution_feedback 返回
+      -> Robot_Module/module/Action/Task/Bishe/*.py
+      -> Excu_Module/executor.py
+      -> Comm_Module.get_state()
+      -> 真实状态校验(validation)
 ```
 
-## 1. 入口
-- 文本输入来自 CLI，例如 `前往目标点`
-- 入口函数是 `interactive.py` 的 `main()`
-- 顶层 agent 循环在 `run_agent_turn()` 中
+## 1. 入口层
 
-## 2. 顶层 agent 循环
+- 文本入口是 `Interactive_Module/interactive.py`
+- 工具入口只有两个：
+  - `vlm_observe`
+  - `robot_act`
 
-`run_agent_turn()` 是一个最多 4 轮的循环：
+顶层 agent 只决定三件事：
+
+- 直接回复
+- 先看环境
+- 开始任务规划和执行
+
+## 2. 顶层对话循环
+
+`interactive.py` 的 `run_agent_turn()` 会在一次用户输入里循环处理模型回复和工具调用。
+
+渲染顺序是实时的，不是最后一次性输出：
+
+1. Thinking 面板
+2. `vlm_observe` 面板
+3. 第二次 Thinking 面板
+4. `robot_act` 流式日志
+5. `robot_act` 摘要
+6. Assistant 面板
+
+`robot_act` 内部的 stdout 会被 `Robot_Module/agent_tools.py` 的 `_StreamingBuffer` 转成流式终端输出。
+
+## 3. 视觉链路
+
+视觉调用路径：
 
 ```text
-for _ in range(4):
-    response = LLM(messages + tools)
-    if no tool_calls:
-        -> 渲染 Assistant 面板，结束
-    if content (thinking):
-        -> 渲染 Thinking 面板
-    for tool_call in tool_calls:
-        -> execute_tool(tool_name, args)
-        -> 渲染 tool 结果面板
-        -> 将结果追加到 messages，继续下一轮
+interactive.py
+-> Robot_Module agent tool: vlm_observe
+-> Robot_Module/module/Vision/Task/Bishe/vlm_observe.py
+-> VLM_Module/vlm_core.py
 ```
 
-### 渐进式渲染
+图片来源优先级：
 
-渲染不是在循环结束后一次性完成，而是按执行顺序实时进行：
+- `/tmp/envtest_front_camera.png`
+- 本机摄像头
+- `VLM_Module/assets/2.png`
 
-1. **Thinking 面板**：LLM 返回 thinking content 时立即渲染（在 tool 执行之前）
-2. **vlm_observe 面板**：只显示 `visual_context` 内容
-3. **robot_act 摘要面板**：只显示 `total_tasks` / `success_count` / `failure_count`
-4. **Assistant 面板**：LLM 返回纯文本回复时渲染
+VLM 产出两类数据：
 
-### 日志流式转发
-
-`robot_act` 内部日志（`llm_core.py` / `llm_lowlevel.py` 的 stdout print）通过以下链路实时显示：
-
-```text
-llm_core.py print()
--> agent_tools.py: redirect_stdout(_StreamingBuffer)
--> _StreamingBuffer.write() -> log_callback(line)
--> interactive.py: render_stream_line(console, line)
--> sys.__stdout__
-```
-
-## 3. object_facts 的真实输入
-- 文件路径通常是 `config/object_facts.json`
-- 真正传给 LLM 和参数计算器的，是 `load_object_facts()` 归一化后的结果
-- 归一化代码在 `LLM_Module/object_facts_loader.py`
-- 当前只保留 4 类字段：
-  - `navigation_goal`
-  - `robot_pose`
-  - `constraints`
-  - `objects`
-
-## 4. VLM 输入输出
-- 图片来源是摄像头或默认图片
-- `describe_structured()` 输出结构化视觉结果
-- 然后由 `vlm_core.py` 转成 `scene_facts`
-
-VLM 侧产物分两类：
 - `visual_context`
-  - 主要给终端显示和传给顶层 agent
-  - 也传入 robot_act 的 `observation_context`
+  给终端显示，也可回传给顶层 agent。
 - `scene_facts`
-  - 主要给规划用
-  - 包含 `terrain_features` / `route_options` / `interactive_objects` / `obstacles` / `uncertainties`
+  给 `robot_act` 规划阶段使用。
 
-## 5. VLM 与 object_facts 如何融合
-- 在 `agent_tools.py` 的 `run_robot_act_pipeline()` 中调用 `VLMCore.merge_scene_facts(scene_facts, object_facts)`
-- `object_facts` 提供高可信几何信息
-- VLM 提供视觉补充
-- 发生冲突时优先相信 `object_facts`
+## 4. 状态链路
 
-## 6. 上层 LLM（robot_act 内部的高层规划）
-- 高层规划入口在 `LLM_Module/llm_core.py` 的 `HighLevelPlanner.plan_tasks()`
-- 输入由 4 部分组成：`user_input` / `visual_context` / `scene_facts` / `object_facts`
-- 输出是一个 JSON 计划，解析成 `tasks`
+统一状态入口只有一个：
 
-每个 task 至少包含：`step` / `task` / `type` / `function` / `reason`
+```python
+from Comm_Module import get_state
+state = get_state()
+```
+
+当前状态链路：
+
+```text
+Comm_Module/Task/Sim/get_data.py
+-> 返回原始数据
+-> Comm_Module/Task/Sim/Data.py 定义 schema
+-> Comm_Module/Status/get_state.py 自动解析
+-> 上层得到统一 state
+```
+
+执行层只关心统一状态，不再自己耦合某个具体 JSON 文件结构。
+
+当前执行会重点用到这些状态字段：
+
+- `observation.agent_position`
+- `observation.environment.obstacles`
+- `runtime.timestamp`
+- `runtime.snapshot`
+- `runtime.skill`
+- `runtime.model_use`
+- `runtime.goal`
+- `runtime.start`
+
+## 5. object_facts 链路
+
+`robot_act` 启动时会先尝试同步 live EnvTest 数据到 `config/object_facts.json`。
+
+同步路径：
+
+```text
+Robot_Module/agent_tools.py
+-> Comm_Module.Task.sync_object_facts_from_live_data()
+-> Comm_Module/Task/Sim/get_data.py
+-> 更新 object_facts.json
+```
+
+之后才进入规划：
+
+```text
+load_object_facts()
+-> merge_scene_facts()
+-> LLM planning
+```
+
+这保证规划优先使用最新几何信息，而不是残留旧场景。
+
+## 6. 高层规划
+
+高层规划入口在 `LLM_Module/llm_core.py`。
+
+输入包括：
+
+- `user_input`
+- `visual_context`
+- `scene_facts`
+- `object_facts`
+
+输出是抽象任务列表 `tasks`。每个任务至少包含：
+
+- `step`
+- `task`
+- `type`
+- `function`
+- `reason`
+
+高层规划负责“做什么”，不负责“最终参数是多少”。
 
 ## 7. 参数计算
-- 调用位置在 `LLM_Module/llm_core.py` 的 `LLMAgent._apply_parameter_calculation()`
-- 实现代码在 `LLM_Module/parameter_calculator.py`
 
-`ParameterCalculator.annotate_tasks()` 会给每个 task 补两个字段：
+参数计算由 `LLM_Module/parameter_calculator.py` 负责。
+
+它会为每个 task 补：
+
 - `parameter_context`
 - `calculated_parameters`
 
+当前的设计目标是：
+
+- 高层决定技能序列
+- 参数计算把抽象任务补成可直接执行的技能参数
+- 技能文件只负责把这些参数交给执行层
+
 ## 8. 低层执行
 
-低层执行入口在 `LLM_Module/llm_lowlevel.py` 的 `LowLevelExecutor.execute_single_task()`。
+低层执行入口在 `LLM_Module/llm_lowlevel.py`。
 
 分两种情况：
 
-1. task 已经有 `function + calculated_parameters`
-   - 直接执行工具，不再调用低层 LLM
+1. 已经有 `function + calculated_parameters`
+   直接执行技能。
+2. 参数还不完整
+   让低层 LLM 决定最终工具调用。
 
-2. task 还没有足够明确的参数
-   - 调用低层 LLM 决定工具调用
-   - 低层 prompt 带上：`task_description` / `task_type` / `suggested_function` / `planning_reason` / `parameter_context` / `calculated_parameters` / `visual_context` / `previous_result`
+真正执行技能时，`agent_tools.py` 会通过 `_execute_registered_tool()` 调用已注册的动作技能函数。
 
-## 9. 执行流程
+## 9. 动作技能层
 
-主执行循环在 `LLM_Module/llm_core.py` 的 `LLMAgent.run_pipeline()`。
-执行顺序是串行的，失败时最多重规划 1 次。
+动作注册路径：
 
 ```text
-1. plan_tasks() -> 高层规划
-2. _apply_parameter_calculation() -> 参数补全
-3. for task in tasks:
-     execute_single_task()
-     if success: previous_result = result
-     if failure and attempt < max_replans:
-        -> 重规划
-     if failure and attempt >= max_replans:
-        -> 中止
+Robot_Module/module/Action/skills.py
+-> 选择当前 action task
+-> 注册 Robot_Module/module/Action/Task/Bishe/*.py
 ```
 
-## 10. 工具调用
+`Action/Task/Bishe` 下面现在只保留 7 个技能文件：
 
-- `vlm_observe`：由 `interactive.py` 的 `execute_tool()` 直接调用 `Robot_Module/module/Vision/vlm.py`
-- `robot_act`：由 `interactive.py` 的 `execute_tool()` 调用 `Robot_Module/agent_tools.py` 的 `run_robot_act_pipeline()`
-- 内部动作技能（walk、climb 等）：由 `agent_tools.py` 的 `_execute_registered_tool()` 调用
+- `walk.py`
+- `navigation.py`
+- `nav_climb.py`
+- `climb_align.py`
+- `climb.py`
+- `push_box.py`
+- `way_select.py`
 
-成功判定依赖两层：
-- `status == "success"`
-- `execution_feedback.signal == "SUCCESS"`
+这些文件只做两件事：
 
-## 11. 一个完整例子
+- 定义该技能的输入和少量任务内逻辑
+- 调用 `Excu_Module`
+
+## 10. 统一执行层
+
+当前真正的执行控制都在 `Excu_Module`：
+
+- `runtime.py`
+  执行协议、环境变量、命令下发。
+- `state.py`
+  统一读取 `Comm_Module` 状态并做通用验收。
+- `executor.py`
+  把“发命令 -> 等待 -> 校验”串起来。
+
+执行流是：
+
+```text
+skill file
+-> Excu_Module/executor.py
+   -> 读取执行前状态
+   -> 下发命令
+   -> 等待执行
+   -> 再读执行后状态
+   -> 做 validation
+   -> 返回 execution_feedback
+```
+
+## 11. 成功判定
+
+成功判定现在分三层：
+
+1. 技能函数返回结构化结果
+2. `execution_feedback.validation`
+3. `LLM_Module/llm_core.py` 的最终结果评估
+
+关键规则：
+
+- 不能只看 `signal == SUCCESS`
+- 必须看 `validation.verified`
+- 必须看 `validation.meets_requirements`
+
+如果没有实时状态：
+
+- 可以继续规划
+- 但执行阶段会失败
+
+## 12. 一个完整例子
+
 用户输入：`往前走1米`
 
 ```text
 用户输入
 -> interactive.py 顶层 agent
--> Thinking: "需要先观测环境，再执行前移动作"
--> vlm_observe: 获取视觉上下文
--> Thinking: "前方平整无障碍，可以直行1米"
--> robot_act:
-   -> 同步 EnvTest / 读取 object_facts
-   -> 高层 LLM 规划: [walk, 距离1米]
-   -> 参数计算: distance=1.0, route_side="前方"
-   -> 低层执行器: 直接执行 walk
-   -> navigation.py: 下发速度命令
-   -> EnvTest 执行
-   -> 返回 SUCCESS
--> robot_act 摘要: total_tasks=1, success_count=1
--> Assistant: "已完成向前移动1米"
+-> Thinking: 先观察环境
+-> vlm_observe
+-> Thinking: 开始动作执行
+-> robot_act
+   -> Comm_Module 同步 live data
+   -> 高层规划得到 [walk]
+   -> parameter_calculator 算出 distance=1.0
+   -> 调用 Action/Task/Bishe/walk.py
+   -> walk.py 调用 Excu_Module/executor.py
+   -> Excu_Module 读取 Comm state
+   -> 下发命令
+   -> 再次读取 Comm state
+   -> 校验是否真的前进了足够距离
+   -> 返回 validation
+-> llm_core 根据 validation 判定是否继续
+-> Assistant 输出最终回复
 ```
 
-## 12. 一句话总结
-- 顶层 agent（interactive.py）负责"思考 + 决策调用哪个高层工具"
-- `vlm_observe` 负责"看环境"
-- `robot_act` 内部的高层 LLM 负责"分解任务"
-- 参数计算器负责"把抽象任务变成具体参数"
-- 低层执行器负责"直接执行，必要时才再问低层 LLM"
-- `Robot_Module` 负责"真正控制 IsaacLab/EnvTest"
-- 渐进式渲染确保用户按执行顺序实时看到每个阶段
+## 一句话总结
+
+现在的数据流是：
+
+`Interactive` 负责对话，`VLM` 负责观察，`LLM` 负责规划和参数，`Robot` 负责注册技能，`Excu` 负责执行和验收，`Comm` 负责统一状态。

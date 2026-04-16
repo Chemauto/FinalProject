@@ -2,18 +2,16 @@
 # -*- coding: utf-8 -*-
 """通用状态获取接口。
 
-为 LLM agent 提供统一的状态查询入口，不绑定任何具体机器人或环境。
-每个机器人实现只需要返回一个 observation dict，描述 agent 当前能感知到的一切。
+Status 层只负责统一入口与通用解析，不关心具体环境如何取数。
+真实数据由 Task 层注册的后端提供，状态格式由对应的 Data.py 声明，例如:
 
-架构:
     Status/get_state.py          ← 通用抽象层（本文件）
-    Robot/Sim/get_state.py       ← IsaacLab EnvTest 仿真实现
-    Robot/Go2/get_state.py       ← 真机实现（未来）
-    Robot/Mario/get_state.py     ← 超级玛丽实现（示例）
+    Task/Sim/Data.py             ← 状态格式定义
+    Task/Sim/get_data.py         ← 仿真实时数据获取
 
 用法:
     from Comm_Module.Status.get_state import get_state
-    state = get_state()           # 自动检测 robot_type
+    state = get_state()           # 自动检测 task_type
     obs = state["observation"]    # agent 的观测
 
 命令行:
@@ -24,87 +22,129 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import json
-import os
 import sys
 from typing import Any
 
-_ROBOT_BACKENDS: dict[str, str] = {
-    "sim": "Comm_Module.Robot.Sim.get_state",
-}
-
-_DEFAULT_ROBOT_TYPE = os.getenv("FINALPROJECT_ROBOT_TYPE", "sim")
-
-
-def _load_backend(robot_type: str):
-    module_path = _ROBOT_BACKENDS.get(robot_type)
-    if not module_path:
-        available = ", ".join(_ROBOT_BACKENDS.keys())
-        raise ValueError(f"未知 robot_type: {robot_type}，可选: {available}")
-    import importlib
-    return importlib.import_module(module_path).get_state
+from Comm_Module.Task import (
+    get_default_task_type,
+    get_task_data,
+    list_task_types,
+    load_task_backend,
+)
 
 
-def get_state(robot_type: str | None = None) -> dict[str, Any]:
-    """获取当前机器人/环境的状态。
-
-    Args:
-        robot_type: 机器人类型。默认读取 FINALPROJECT_ROBOT_TYPE（默认 sim）。
-
-    Returns:
-        {
-            "connected": bool,        是否成功连接
-            "robot_type": str,        机器人类型标识
-            "observation": {          agent 当前能感知到的一切（自由结构）
-
-                # === 推荐字段（非强制，每个实现自行决定提供哪些） ===
-                "agent_position": ...,        agent 在环境中的位置
-                "environment": {             环境信息
-                    "obstacles": [...],      障碍物/物体
-                    "terrain": ...,          地形/场景描述
-                },
-                "action_result": {           上一步操作的结果
-                    "action": str | None,    执行了什么
-                    "success": bool | None,  是否成功
-                    "feedback": str | None,  反馈信息
-                },
-
-                # === 实现特定的自由字段 ===
-                ...
-            }
-        }
-
-    observation 是完全开放的结构，每个 robot 实现自行定义有意义的字段。
-    推荐字段只是为了跨实现的通用 agent 提供参考，不是强制要求。
-    """
-    robot_type = robot_type or _DEFAULT_ROBOT_TYPE
-    backend_fn = _load_backend(robot_type)
-    return backend_fn()
+_DEFAULT_TASK_TYPE = get_default_task_type()
+_MISSING = object()
+_FIELD_KEYS = {"source", "default", "literal"}
 
 
-def list_robot_types() -> list[str]:
-    """返回所有可用的 robot_type。"""
-    return list(_ROBOT_BACKENDS.keys())
+def _is_field_spec(schema: Any) -> bool:
+    return isinstance(schema, dict) and any(key in schema for key in _FIELD_KEYS)
+
+
+def _resolve_path(payload: Any, source: str | None) -> Any:
+    if not source:
+        return _MISSING
+
+    current = payload
+    for part in source.split("."):
+        if isinstance(current, dict):
+            if part not in current:
+                return _MISSING
+            current = current[part]
+            continue
+
+        if isinstance(current, list) and part.isdigit():
+            index = int(part)
+            if 0 <= index < len(current):
+                current = current[index]
+                continue
+        return _MISSING
+    return current
+
+
+def _parse_field(schema: dict[str, Any], payload: dict[str, Any]) -> Any:
+    if "literal" in schema:
+        return copy.deepcopy(schema["literal"])
+
+    value = _resolve_path(payload, schema.get("source"))
+    if value is not _MISSING:
+        return copy.deepcopy(value)
+
+    if "default" in schema:
+        return copy.deepcopy(schema["default"])
+    return None
+
+
+def _parse_schema(schema: Any, payload: dict[str, Any]) -> Any:
+    if _is_field_spec(schema):
+        return _parse_field(schema, payload)
+
+    if isinstance(schema, dict):
+        return {key: _parse_schema(value, payload) for key, value in schema.items()}
+
+    if isinstance(schema, list):
+        return [_parse_schema(item, payload) for item in schema]
+
+    return copy.deepcopy(schema)
+
+
+def get_state(task_type: str | None = None) -> dict[str, Any]:
+    """获取当前任务/机器人/环境的状态。"""
+    selected_type = task_type or _DEFAULT_TASK_TYPE
+    backend = load_task_backend(selected_type)
+    raw_data = get_task_data(backend.task_type)
+    state = _parse_schema(backend.state_schema, raw_data)
+
+    if not isinstance(state, dict):
+        raise TypeError(f"task_type={backend.task_type} 的 state_schema 顶层必须是 dict")
+
+    state.setdefault("connected", False)
+    state.setdefault("task_type", backend.task_type)
+    state.setdefault("robot_type", state.get("task_type", backend.task_type))
+    state.setdefault("observation", {})
+    state.setdefault("runtime", {})
+    return state
+
+
+def list_registered_task_types() -> list[str]:
+    """返回所有已注册 task_type。"""
+    return list_task_types()
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="获取当前机器人/环境状态。")
-    parser.add_argument("--type", type=str, default=None, dest="robot_type",
-                        help="机器人类型（默认 sim）")
-    parser.add_argument("--json", action="store_true", default=False,
-                        help="JSON 格式输出")
-    parser.add_argument("--list-types", action="store_true", default=False,
-                        help="列出可用 robot_type")
+    parser.add_argument(
+        "--type",
+        type=str,
+        default=None,
+        dest="task_type",
+        help="任务后端类型（默认 sim）",
+    )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        default=False,
+        help="JSON 格式输出",
+    )
+    parser.add_argument(
+        "--list-types",
+        action="store_true",
+        default=False,
+        help="列出可用 task_type",
+    )
     args = parser.parse_args()
 
     if args.list_types:
-        for rt in list_robot_types():
+        for rt in list_registered_task_types():
             print(rt)
         return 0
 
     try:
-        state = get_state(robot_type=args.robot_type)
-    except (ValueError, ImportError) as error:
+        state = get_state(task_type=args.task_type)
+    except (TypeError, ValueError, ImportError) as error:
         print(f"错误: {error}", file=sys.stderr)
         return 1
 
@@ -112,12 +152,12 @@ def main() -> int:
         print(json.dumps(state, ensure_ascii=False, indent=2))
     else:
         connected = "已连接" if state.get("connected") else "未连接"
-        print(f"robot_type:     {state.get('robot_type', '-')}")
+        print(f"task_type:      {state.get('task_type', state.get('robot_type', '-'))}")
         print(f"连接状态:       {connected}")
         if state.get("connected"):
             obs = state.get("observation", {})
             if obs:
-                print(f"observation:")
+                print("observation:")
                 for key, value in obs.items():
                     if isinstance(value, (dict, list)) and value:
                         print(f"  {key}: {json.dumps(value, ensure_ascii=False, indent=2)}")

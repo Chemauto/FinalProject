@@ -1,216 +1,177 @@
 # FinalProject
-基于 LLM 决策的四足机器人导航项目，面向 Unitree Go2，当前主执行后端是 IsaacLab EnvTest。
 
-## 当前能力
-- 最外层智能体只对外暴露 2 个高层技能：`vlm_observe`、`robot_act`
-- `robot_act` 内部继续复用 7 个动作技能：`walk`、`navigation`、`nav_climb`、`climb_align`、`climb`、`push_box`、`way_select`
-- 规划优先级：`navigation` 最简单，`climb` 次之，`push_box + climb_align + climb` 最复杂
-- 最大单步攀爬高度：`0.3 m`
-- 几何真值优先级高于 VLM
-- 失败时最多重规划 1 次，仍失败则停止后续任务
+面向四足机器人的 LLM agent 项目。当前目标是把“对话、任务规划、参数计算、动作执行、状态验收”拆成清晰模块，便于后续从 `Bishe` 扩展到其他任务后端。
 
-## 主链路
+## 当前架构
+
+最外层只暴露两个高层工具：
+
+- `vlm_observe`
+- `robot_act`
+
+内部职责拆成 6 层：
+
+- `Interactive_Module`
+  顶层 TUI，对话、工具调度、渐进式渲染。
+- `VLM_Module`
+  读取图片并输出结构化视觉结果。
+- `LLM_Module`
+  负责任务规划、子任务分解、参数计算、低层工具调用。
+- `Robot_Module`
+  负责技能注册和任务技能实现，不负责通用执行管理。
+- `Excu_Module`
+  负责统一执行、等待反馈、状态校验。
+- `Comm_Module`
+  负责统一状态入口，屏蔽具体数据来源。
+
+## 当前主链路
+
 ```text
 用户输入
--> Interactive_Module/interactive.py（顶层 agent，基于 qwen3.6-plus）
-   -> 顶层 LLM 判断
-      -> 直接回复
-      -> 或调用 vlm_observe（环境观测）
-      -> 或调用 robot_act（动作执行）
--> robot_act 内部：
-   -> 同步 live EnvTest 状态
-   -> 加载 object_facts
-   -> HighLevelPlanner.plan_tasks()（高层规划）
-   -> ParameterCalculator.annotate_tasks()（参数计算）
-   -> LowLevelExecutor.execute_single_task()（低层执行）
-   -> Robot_Module/module/navigation.py（技能执行）
-   -> IsaacLab EnvTest
+-> Interactive_Module/interactive.py
+   -> 顶层 LLM 判断：直接回复 / vlm_observe / robot_act
+
+vlm_observe
+-> Robot_Module/module/Vision/Task/Bishe/vlm_observe.py
+-> VLM_Module/vlm_core.py
+-> 返回 visual_context + scene_facts
+
+robot_act
+-> Robot_Module/agent_tools.py
+   -> Comm_Module 尝试同步 live data 到 object_facts
+   -> LLM_Module/llm_core.py 高层规划
+   -> LLM_Module/parameter_calculator.py 参数计算
+   -> LLM_Module/llm_lowlevel.py 低层执行
+   -> Robot_Module/module/Action/Task/Bishe/*.py 具体技能实现
+   -> Excu_Module 统一执行和验收
+   -> Comm_Module.get_state() 提供真实状态
 ```
 
-## TUI 渐进式渲染
-交互模式下，输出按执行顺序实时显示：
+## 当前目录职责
+
+- `Comm_Module`
+  通用状态层。`Task/<Type>/Data.py` 定义状态格式，`Task/<Type>/get_data.py` 获取真实原始数据，`Status/get_state.py` 自动解析统一状态。
+- `Excu_Module`
+  通用执行层。负责命令下发、执行等待、导航到达判定、动作前后状态校验。
+- `LLM_Module`
+  规划与执行代理层。把用户任务拆成技能序列，再把参数填入技能函数。
+- `Robot_Module`
+  注册层和任务技能层。`Action/Task/Bishe` 下面只保留 7 个技能实现文件，`Vision/Task/Bishe` 下面保留视觉技能实现。
+- `VLM_Module`
+  图像来源、视觉模型调用、结构化视觉输出。
+- `Interactive_Module`
+  最外层 CLI/TUI 入口。
+
+## Action 当前结构
+
+动作技能当前固定为 7 个：
+
+- `walk`
+- `navigation`
+- `nav_climb`
+- `climb_align`
+- `climb`
+- `push_box`
+- `way_select`
+
+当前分层是：
 
 ```text
-1. Thinking 面板        — agent 思考过程
-2. vlm_observe 面板    — 环境观测结果
-3. Thinking 面板        — 基于观测的动作规划思考
-4. robot_act 内部日志  — ████ 规划块、⚙️🔧 执行信息（流式）
-5. robot_act 摘要面板  — total_tasks / success_count / failure_count
-6. Assistant 面板      — 最终回复
+Robot_Module/module/Action/skills.py
+-> 选择 task，例如 bishe
+-> 注册 Robot_Module/module/Action/Task/Bishe/*.py
+
+Bishe/*.py
+-> 只负责具体技能实现
+-> 只负责把参数映射成执行请求
+-> 必要时做少量任务内目标计算
+
+Excu_Module
+-> 真正负责执行和状态校验
 ```
 
-## 核心模块
-- `Interactive_Module/interactive.py`：基于 `rich` 的 TUI 入口，顶层 agent 循环与渐进式渲染
-- `Comm_Module/Status/envtest_status_sync.py`：同步 EnvTest 状态并写回 `object_facts.json`
-- `LLM_Module/llm_core.py`：`HighLevelPlanner`（高层规划）+ `LLMAgent`（动作规划与执行代理）
-- `LLM_Module/parameter_calculator.py`：参数计算
-- `LLM_Module/llm_lowlevel.py`：低层执行
-- `VLM_Module/vlm_core.py`：VLM 输出、`scene_facts` 构建与融合
-- `Robot_Module/agent_tools.py`：`robot_act` 封装，`_StreamingBuffer` 日志转发
-- `Robot_Module/skill.py`：统一技能注册
-- `Robot_Module/module/navigation.py`：7 个技能的真实执行逻辑
+## 状态原则
 
-## 输入与优先级
-- 用户文本：任务目标与可选覆盖参数
-- VLM：视觉语义与不确定项
-- `config/object_facts.json`：几何真值、运行态、目标点
-- 冲突时以 `object_facts.json` 为准
+统一状态入口是：
 
-## object_facts.json
-默认路径：`config/object_facts.json`
-示例文件：`config/object_facts.example.json`
-
-最关键字段：
-```json
-{
-  "navigation_goal": [20.0, 0.0, 0.0],
-  "robot_pose": [0.0, 0.0, 0.0],
-  "constraints": {"max_climb_height_m": 0.3},
-  "objects": [
-    {"id": "platform_left_low", "type": "platform", "center": [3.0, 0.75, 0.0], "size": [2.0, 1.5, 0.3], "movable": false}
-  ],
-  "runtime_state": {
-    "scene_id": 3,
-    "model_use": 0,
-    "start": 0,
-    "pose_command": null,
-    "vel_command": [0.0, 0.0, 0.0],
-    "robot_pose": [-0.075, 0.496, 0.279],
-    "goal": null
-  }
-}
+```python
+from Comm_Module import get_state
+state = get_state()
 ```
 
-说明：
-- `objects`：当前规划真正使用的物体
-- `runtime_state`：EnvTest 运行态和用户覆盖值
-- `navigation_goal`：`navigation` 参数计算的最终目标点；当规划仍需短距路线前进时也可供 `walk` 使用
+当前标准状态至少包含：
 
-## live EnvTest 同步
-交互模式下，每次 `robot_act` 调用前，系统会优先同步 live EnvTest。
-同步内容包括：
-- `scene_id / model_use / start`
-- `/tmp/model_use.txt`
-- `/tmp/envtest_velocity_command.txt`
-- `/tmp/envtest_goal_command.txt`
-- top-level `objects`
-- `runtime_state.pose_command / vel_command / goal`
+- `connected`
+- `task_type`
+- `observation`
+- `runtime`
 
-手动同步：
-```bash
-cd /home/robot/work/FinalProject/Comm_Module/Status
-python sync_envtest_status.py --live-envtest
-```
+其中 `runtime` 里会带：
 
-从文本文件同步：
-```bash
-python sync_envtest_status.py --status-file /path/to/status.txt
-```
+- `timestamp`
+- `snapshot`
+- `skill`
+- `model_use`
+- `goal`
+- `start`
+- `scene_objects`
 
-## 用户输入可覆盖的数据
-当前支持从用户文本里直接提取：
-- `前往20,0,0`
-- `前往 5，0，0 坐标处`
-- `导航到 [7, 1.5, 0.2]`
-- `pose_command=[2.8, 0.12, 0, 0]`
-- `vel_command=[0, 0, 0]`
+执行层只依赖这份统一状态，不再自己直接耦合某个具体状态文件格式。
 
-规划前会覆盖：
-- `navigation_goal`
-- `runtime_state.pose_command`
-- `runtime_state.vel_command`
+## 执行原则
 
-## VLM 输出
-VLM 当前输出结构化 JSON，核心字段：
-- `ground`
-- `left_side`
-- `right_side`
-- `front_area`
-- `obstacles`
-- `suspected_height_diff`
-- `uncertainties`
-- `envtest_alignment`
+当前统一执行入口在 `Excu_Module`：
 
-其中 `envtest_alignment.platform_1 / platform_2 / box` 会尽量与 IsaacLab `EnvTest Live Status` 对齐。
+- `Excu_Module/runtime.py`
+  执行协议、环境变量、命令下发、基础常量。
+- `Excu_Module/state.py`
+  从 `Comm_Module` 读取实时状态，并做通用校验。
+- `Excu_Module/executor.py`
+  串联“发命令 -> 等待 -> 做验收”。
 
-## 参数计算
-`LLM_Module/parameter_calculator.py` 负责：
-- `navigation`：目标点与 `goal_command`
-- `climb_align`：攀爬前对正的目标平台/箱子上下文
-- `way_select`：左右方向
-- `push_box`：默认自动推箱模式
-- `climb`：真实高度与目标平台
-- `walk`：沿当前路线继续前进时的距离、路线侧别、目标点
+关键原则：
 
-当前约束：
-- `way_select` 后，后续 `climb` 会继承当前已选路线
-- 任务文本里若明确写了平台名，例如 `platform_left_low`，会优先选该平台
-
-## 技能当前行为
-- `walk`：默认速度 `0.6 m/s`，用于沿当前路线继续前进
-- `navigation`：通过 `goal_command` 下发目标点，使用 EnvTest `model_use=4 / NavigationWalk` 自动导航到目标位置；具备绕障能力，但不能直接翻越高台
-- `nav_climb`：通过 `goal_command` 下发目标点，使用 EnvTest `model_use=5 / NavigationClimb` 直接翻越高台前进；不负责常规绕障
-- `navigation`：默认每 `0.5s` 轮询 `/tmp/envtest_live_status.json`，按"目标距离 + 连续位置稳定"判定 SUCCESS，而不是仅按预计时间返回成功
-- `climb_align`：在正式 `climb` 前，使用 `model_use=4` 导航到箱子或平台前的攀爬起点
-- `way_select`：默认是横向 `walk`；左侧 `velocity=[0.0,0.5,0.0]`，右侧 `velocity=[0.0,-0.5,0.0]`，固定 `3s`
-- `climb`：最大 `0.3m`，默认速度 `0.6 m/s`，默认执行 `12s`，通过统一 EnvTest 控制后端下发 `model_use=2`
-- `push_box`：箱子辅助场景下默认使用自动模式，不显式下发推箱目标点
+- 规划可以在缺少 live 数据时继续。
+- 动作执行不能假成功。
+- 没有实时状态时，动作直接失败。
+- `LLM_Module` 最终看的是 `validation.verified` 和 `validation.meets_requirements`，不是只看 `SUCCESS` 字符串。
 
 ## 最短运行方式
-1. 启动 IsaacLab player
+
+1. 启动 IsaacLab EnvTest player
+
 ```bash
-cd /home/robot/work/IsaacLab/IsaacLabBisShe
+cd /home/xcj/work/IsaacLab/IsaacLabBisShe
 python NewTools/envtest_model_use_player.py --scene_id 3
 ```
-默认会持续写出 `/tmp/envtest_live_status.json`，供 FinalProject 轮询导航完成状态。
+
 2. 启动交互入口
+
 ```bash
-cd /home/robot/work/FinalProject/Interactive_Module
+cd /home/xcj/work/FinalProject/Interactive_Module
 python interactive.py
 ```
-启动后可使用 `/help`、`/tools`、`/reset`、`/status`、`/vlm`、`/quit` 管理当前会话。
 
-3. 输入任务
+3. 输入任务，例如：
+
 ```text
-前往20,0,0
+往前走1米
 ```
 
-说明：
-- 纯寒暄、解释、问答时，顶层智能体应直接回复，不调用技能
-- 需要环境信息时，优先调用 `vlm_observe`
-- 需要真实动作时，调用 `robot_act`
-- `robot_act` 内部仍会优先复用现有规划和动作执行逻辑
-
-## 常用环境变量
-- `FINALPROJECT_OBJECT_FACTS_PATH`
-- `FINALPROJECT_WAY_SELECT_POLICY`
-- `FINALPROJECT_NAV_BACKEND`
-- `FINALPROJECT_STATUS_FILE`
-- `FINALPROJECT_STATUS_POLL_SEC`
-- `FINALPROJECT_NAV_ARRIVAL_TOL_M`
-- `FINALPROJECT_NAV_STABLE_POSITION_DELTA_M`
-- `FINALPROJECT_NAV_REQUIRED_STABLE_POLLS`
-- `FINALPROJECT_STATUS_STALE_SEC`
-- `FINALPROJECT_CLIMB_DURATION_SEC`
-- `FINALPROJECT_CLIMB_SPEED_MPS`
-- `FINALPROJECT_POST_PUSH_SETTLE_SEC`
-- `FINALPROJECT_PRE_CLIMB_SETTLE_SEC`
-- `FINALPROJECT_POST_ALIGN_SETTLE_SEC`
-- `FINALPROJECT_CLIMB_PREALIGN_OFFSET_M`
-- `FINALPROJECT_AGENT_MODEL`
-
 ## 当前限制
-- `robot_pose` 目前主要只按位置使用
-- `push_box` 当前默认依赖 EnvTest 自带的自动推箱目标推理
-- 若 `objects` 残留旧场景，规划会出错，所以同步必须发生在规划前
-- 若 live EnvTest 与本地 JSON 不一致，交互模式会以同步后的文件为准
-- 当前只保留文字 TUI 交互入口，不再提供语音交互模式
+
+- 当前只内置 `sim` 状态后端。
+- 当前只内置 `bishe` 动作任务和视觉任务。
+- 没开仿真时，VLM 可能退回默认图片，这不代表实时现场。
+- 没有实时状态时，`robot_act` 仍可能完成规划，但执行阶段会失败。
 
 ## 相关文档
+
 - `Dataflow.md`
 - `CLAUDE.md`
-- `VLM_Module/README.md`
-- `Robot_Module/README.md`
-- `LLM_Module/README.md`
-- `Interactive_Module/README.md`
 - `Comm_Module/README.md`
+- `Excu_Module/README.md`
+- `LLM_Module/README.md`
+- `Robot_Module/README.md`
+- `VLM_Module/README.md`
+- `Interactive_Module/README.md`

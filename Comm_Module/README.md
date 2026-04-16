@@ -1,143 +1,264 @@
 # Comm_Module
 
-通信与状态模块，为 LLM agent 提供统一的状态查询和执行反馈接口。
+通信与状态模块，目标是把“统一状态入口”和“具体数据来源”彻底解耦。
 
-## 设计理念
+## 当前抽象
 
-通用接口只定义**任何 agent 都需要的最抽象概念**，不绑定具体机器人或环境。
-具体实现细节全部封装在各自的 Robot 实现中。
+`Comm_Module` 现在分成 3 层：
 
+1. `Status`
+   只负责统一入口和通用解析。
+2. `Task/<Type>/Data.py`
+   只负责定义该后端的状态格式与元信息。
+3. `Task/<Type>/get_data.py`
+   只负责获取该后端的真实原始数据。
+
+也就是说：
+
+- `Data.py` 定义“状态应该长什么样”
+- `get_data.py` 定义“原始数据从哪里来”
+- `Status/get_state.py` 负责“按定义自动解析成统一状态”
+
+## 当前结构
+
+```text
+Comm_Module/
+  Status/
+    get_state.py                 通用状态入口 + 通用 schema 解析器
+  Task/
+    __init__.py                  task 注册表与统一分发
+    Sim/
+      Data.py                    sim 后端元信息 + 状态格式定义
+      get_data.py                获取 EnvTest 原始数据 + 同步 object_facts
+      __init__.py
+  execution_comm.py              可选执行反馈通信
 ```
-Status/get_state.py          ← 通用抽象：connected / robot_type / observation
-Robot/Sim/                   ← IsaacLab EnvTest 仿真实现
-Robot/Go2/                   ← 真机实现（未来）
-Robot/Mario/                 ← 超级玛丽实现（示例）
-```
 
-## 通用接口 (Status/get_state.py)
+## 各层职责
+
+### `Status/get_state.py`
+
+对外统一只暴露一个入口：
 
 ```python
-from Comm_Module.Status.get_state import get_state
+from Comm_Module import get_state
 
-state = get_state()        # 自动检测 robot_type
-obs = state["observation"] # agent 能感知到的一切（自由结构）
+state = get_state()
 ```
 
-返回结构：
+它内部做 3 件事：
+
+1. 根据 `task_type` 找到已注册 backend
+2. 调用该 backend 的 `get_data.py` 获取 raw data
+3. 按 `Data.py` 里定义的 `state_schema` 自动解析出统一状态
+
+`Status` 不再依赖每个 backend 手写 `get_state()`。
+
+当前 `get_state()` 的返回值至少包含：
+
+- `connected`
+- `task_type`
+- `observation`
+- `runtime`
+
+### `Task/__init__.py`
+
+这是 backend 注册中心。
+
+当前负责：
+
+- 注册可用 backend
+- 加载 backend 定义
+- 调用 backend 对应的 `get_data`
+- 统一分发 `sync_object_facts_from_live_data()` 等同步接口
+
+当前默认注册：
 
 ```python
-{
+register_task(
+    task_type="sim",
+    module_path="Comm_Module.Task.Sim.Data",
+    description="IsaacLab EnvTest 仿真后端",
+)
+```
+
+### `Task/Sim/Data.py`
+
+这个文件现在只定义：
+
+- `sim` backend 的元信息
+- `state_schema`
+
+例如：
+
+- `observation.agent_position <- snapshot.robot_pose`
+- `observation.environment.goal <- snapshot.goal`
+- `observation.raw.process <- process`
+- `runtime.snapshot <- snapshot`
+- `runtime.scene_objects <- scene_objects`
+
+它不直接获取数据，也不自己拼状态。
+
+### `Task/Sim/get_data.py`
+
+这个文件现在只负责真实原始数据：
+
+- 找 `envtest_model_use_player.py`
+- 读 `/tmp` 控制文件
+- 读 live status JSON
+- 构建场景物体列表
+- 同步 `config/object_facts.json`
+
+它返回的是 raw payload，不负责通用状态映射。
+
+## 当前标准状态
+
+当前 `sim` 后端解析出的统一状态，执行层主要会使用这些字段：
+
+```python
+state = {
     "connected": bool,
-    "robot_type": str,
+    "task_type": "sim",
     "observation": {
-        # 推荐字段（非强制，每个实现自行决定）
-        "agent_position": ...,        agent 在环境中的位置
-        "environment": {             环境信息
+        "agent_position": [...],
+        "environment": {
+            "scene_id": ...,
             "obstacles": [...],
-            "terrain": ...,
+            "goal": ...,
         },
-        "action_result": {           上一步操作结果
-            "action": str | None,
-            "success": bool | None,
-            "feedback": str | None,
-        },
-        # 实现特定的自由字段...
-    }
+    },
+    "runtime": {
+        "timestamp": ...,
+        "snapshot": {...},
+        "skill": ...,
+        "model_use": ...,
+        "goal": ...,
+        "start": ...,
+        "scene_objects": [...],
+    },
 }
 ```
 
-`observation` 是完全开放的结构。推荐字段只是为了跨实现的通用 agent 提供参考。
+`Excu_Module` 只依赖这份标准状态，不再自己直接解析具体状态文件。
 
-### 命令行
+## 当前 Sim 后端的数据流
+
+```text
+上层 agent / Excu_Module
+-> Comm_Module.get_state()
+-> Comm_Module.Task 加载 sim backend 定义
+-> Comm_Module.Task.Sim.get_data.get_data()
+-> 返回 raw data
+-> Status/get_state.py 按 Data.py.state_schema 自动解析
+-> 返回统一状态
+```
+
+同步 `object_facts.json` 的路径：
+
+```text
+robot_act
+-> Comm_Module.Task.sync_object_facts_from_live_data()
+-> Comm_Module.Task.Sim.get_data.sync_object_facts_from_live_data()
+-> 更新 config/object_facts.json
+```
+
+## 对上层的推荐用法
+
+### 获取统一状态
+
+```python
+from Comm_Module import get_state
+
+state = get_state()
+```
+
+### 获取某个 backend 的原始数据
+
+```python
+from Comm_Module.Task import get_task_data
+
+raw_data = get_task_data("sim")
+```
+
+### 手动同步 live data 到 object_facts
+
+```python
+from Comm_Module.Task import sync_object_facts_from_live_data
+
+payload = sync_object_facts_from_live_data("/path/to/object_facts.json", user_input="前往20,0,0")
+```
+
+## 命令行
+
+### 通用状态入口
 
 ```bash
-python -m Comm_Module.Status.get_state              # 默认输出
-python -m Comm_Module.Status.get_state --json        # JSON 格式
-python -m Comm_Module.Status.get_state --type sim    # 指定类型
-python -m Comm_Module.Status.get_state --list-types  # 列出可用类型
+python -m Comm_Module.Status.get_state
+python -m Comm_Module.Status.get_state --json
+python -m Comm_Module.Status.get_state --type sim
+python -m Comm_Module.Status.get_state --list-types
 ```
 
-## 仿真实现 (Robot/Sim/)
+### 查看 Sim 状态格式定义
 
-### get_state.py — 状态获取
+```bash
+python -m Comm_Module.Task.Sim.Data
+```
 
-从正在运行的 `envtest_model_use_player.py` 进程和控制文件读取状态，映射为通用 observation：
+### 查看 Sim 原始数据
+
+```bash
+python -m Comm_Module.Task.Sim.get_data
+python -m Comm_Module.Task.Sim.get_data --json
+```
+
+### 手动同步 Sim 状态
+
+```bash
+python -m Comm_Module.Task.Sim.get_data --live-envtest
+python -m Comm_Module.Task.Sim.get_data --status-file /path/to/status.txt
+python -m Comm_Module.Task.Sim.get_data --live-envtest --user-input "前往20,0,0"
+```
+
+## 添加新后端
+
+如果以后增加真机或其他环境，建议保持同样模式：
+
+```text
+Comm_Module/Task/<Type>/
+  Data.py
+  get_data.py
+```
+
+其中：
+
+- `Data.py` 只定义 backend 元信息和 `state_schema`
+- `get_data.py` 只负责真实取数
+- `Status/get_state.py` 自动完成统一状态解析
+
+然后在 `Comm_Module/Task/__init__.py` 注册：
 
 ```python
-{
-    "agent_position": [x, y, z],          机器人位置
-    "environment": {
-        "scene_id": 3,                    当前场景
-        "obstacles": [                    场景物体
-            {"id": "platform_left_low", "type": "platform", "center": [...], "size": [...]}
-        ],
-        "goal": [5.0, 0.0, 0.0],         导航目标
-    },
-    "action_result": {
-        "skill": "walk",                  当前技能
-        "model_use": 1,                   EnvTest 模型编号
-        "vel_command": [0.6, 0.0, 0.0],   速度命令
-        "start": True,                    是否已启动
-    },
-    "raw": {                              EnvTest 原始状态（供直接访问）
-        "pose_command": ...,
-        "status_file_available": True,
-    }
-}
+register_task(
+    task_type="go2",
+    module_path="Comm_Module.Task.Go2.Data",
+    description="Unitree Go2 真机后端",
+)
 ```
 
-### envtest_status_sync.py — 状态同步
+通过环境变量切换默认 backend：
 
-`robot_act` 调用前自动执行 live sync，同步 EnvTest 运行态到 `config/object_facts.json`。
-
-同步来源：运行中的进程、`/tmp/model_use.txt`、`/tmp/envtest_velocity_command.txt`、`/tmp/envtest_goal_command.txt`、`/tmp/envtest_live_status.json`。
-
-## 添加新机器人
-
-创建 `Comm_Module/Robot/<Type>/get_state.py`，实现 `get_state()` 函数：
-
-```python
-def get_state() -> dict[str, Any]:
-    return {
-        "connected": True,
-        "robot_type": "<type>",
-        "observation": {
-            "agent_position": ...,
-            "environment": {...},
-            "action_result": {...},
-        },
-    }
+```bash
+export FINALPROJECT_ROBOT_TYPE=go2
 ```
-
-然后在 `Status/get_state.py` 的 `_ROBOT_BACKENDS` 中注册：
-
-```python
-_ROBOT_BACKENDS = {
-    "sim": "Comm_Module.Robot.Sim.get_state",
-    "mario": "Comm_Module.Robot.Mario.get_state",
-}
-```
-
-通过环境变量切换：`export FINALPROJECT_ROBOT_TYPE=mario`
 
 ## 执行反馈
 
-`execution_comm.py` 提供 ROS2 发布/订阅（`/robot/skill_command`、`/robot/execution_feedback`）。
+`execution_comm.py` 负责执行反馈通信，目前保留 ROS2 话题：
 
-## 目录结构
+- `/robot/skill_command`
+- `/robot/execution_feedback`
 
-```
-Comm_Module/
-  Status/
-    get_state.py                 通用抽象接口
-    __init__.py
-  Robot/
-    Sim/
-      get_state.py               仿真状态获取
-      envtest_status_sync.py     EnvTest 状态同步
-      __init__.py
-    __init__.py
-  Backup/                        原始备份
-  execution_comm.py              ROS2 执行反馈通信
-  __init__.py
-```
+## 一句话总结
+
+`Status` 负责统一解析，`Data.py` 负责定义格式，`get_data.py` 负责提供原始数据。`Excu_Module` 只通过这里拿统一状态。

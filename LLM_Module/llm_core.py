@@ -254,18 +254,26 @@ class LLMAgent:
                     print(f"📌 [规划函数] {task.get('function', '待LLM决定')}")
                     print(f"📝 [规划依据] {task.get('reason', '未提供规划依据')}")
                     result = self.execute_single_task(task, tools, execute_tool_fn, previous_result, visual_context)
+                    task_success, assessment_message = self._assess_execution_result(result)
+                    result["success"] = task_success
+                    if assessment_message:
+                        result["assessment_message"] = assessment_message
                     results.append(result)
 
                     tool_output = result.get("result", {})
-                    if result.get("success") and tool_output:
+                    if task_success and tool_output:
                         previous_result = tool_output.get("result")
-                        feedback = result.get("feedback", {})
-                        if feedback:
-                            print(f"✅ [反馈确认] {feedback.get('skill', '当前技能')} 已返回成功信号，继续下一步")
+                        if assessment_message:
+                            print(f"✅ [结果校验] {assessment_message}")
                         continue
 
                     previous_result = None
-                    failure_message = (result.get("feedback") or {}).get("message") or result.get("error") or "当前步骤执行失败"
+                    failure_message = (
+                        assessment_message
+                        or (result.get("feedback") or {}).get("message")
+                        or result.get("error")
+                        or "当前步骤执行失败"
+                    )
                     if attempt < self.max_replans:
                         print(f"\n🔁 [重规划] {failure_message}")
                         plan_input = f"{user_input}\n上次执行失败：{failure_message}"
@@ -290,6 +298,45 @@ class LLMAgent:
 
             traceback.print_exc()
             return []
+
+    @staticmethod
+    def _extract_execution_validation(result: dict[str, Any]) -> dict[str, Any]:
+        feedback = result.get("feedback")
+        if isinstance(feedback, dict):
+            validation = feedback.get("validation")
+            if isinstance(validation, dict):
+                return validation
+
+        tool_output = result.get("result")
+        if isinstance(tool_output, dict):
+            raw_result = tool_output.get("result")
+            if isinstance(raw_result, dict):
+                execution_feedback = raw_result.get("execution_feedback")
+                if isinstance(execution_feedback, dict):
+                    validation = execution_feedback.get("validation")
+                    if isinstance(validation, dict):
+                        return validation
+        return {}
+
+    def _assess_execution_result(self, result: dict[str, Any]) -> tuple[bool, str]:
+        feedback = result.get("feedback") or {}
+        validation = self._extract_execution_validation(result)
+
+        if validation:
+            summary = str(validation.get("summary") or feedback.get("message") or "").strip()
+            verified = validation.get("verified")
+            meets_requirements = validation.get("meets_requirements")
+
+            if verified is True and meets_requirements is True:
+                return True, summary or "动作已通过真实状态校验"
+            if verified is False:
+                return False, summary or "未获取到真实执行数据，无法确认动作是否满足要求"
+            if meets_requirements is False:
+                return False, summary or "动作未满足任务要求"
+
+        signal = str(feedback.get("signal") or "").upper()
+        message = str(feedback.get("message") or result.get("error") or "当前步骤执行失败").strip()
+        return bool(result.get("success")) and signal == "SUCCESS", message
 
     def _apply_parameter_calculation(
         self,

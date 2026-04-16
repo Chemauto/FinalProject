@@ -1,15 +1,17 @@
 from __future__ import annotations
 
+import argparse
 import importlib.util
 import json
 import os
 import re
+import sys
 from pathlib import Path
 from typing import Any
 
 
 STATUS_HEADER = "=== EnvTest Live Status ==="
-DEFAULT_OBJECT_FACTS_PATH = Path(__file__).resolve().parents[2] / "config" / "object_facts.json"
+DEFAULT_OBJECT_FACTS_PATH = Path(__file__).resolve().parents[3] / "config" / "object_facts.json"
 DEFAULT_CONSTRAINTS = {
     "max_climb_height_m": 0.3,
     "push_only_on_ground": True,
@@ -294,9 +296,9 @@ def _build_scene_objects(scene_id: int, repo_root: Path) -> list[dict[str, Any]]
         size = getattr(assets_module, asset_name.upper().replace("SUPPORT_BOX", "BOX") + "_SIZE", None)
         if asset_name == "support_box":
             size = getattr(assets_module, "BOX_SIZE", size)
-        if asset_name == "left_low_obstacle" or asset_name == "right_low_obstacle":
+        if asset_name in {"left_low_obstacle", "right_low_obstacle"}:
             size = getattr(assets_module, "LOW_OBSTACLE_SIZE", size)
-        if asset_name == "left_high_obstacle" or asset_name == "right_high_obstacle":
+        if asset_name in {"left_high_obstacle", "right_high_obstacle"}:
             size = getattr(assets_module, "HIGH_OBSTACLE_SIZE", size)
         if position is None or size is None:
             continue
@@ -457,6 +459,106 @@ def _build_runtime_objects(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
     return runtime_objects
 
 
+def _resolve_control_files(tokens: list[str]) -> dict[str, Path]:
+    return {
+        "model_use_file": Path(
+            _extract_cli_arg(tokens, "--model_use_file", str(DEFAULT_CONTROL_FILES["model_use_file"]))
+            or DEFAULT_CONTROL_FILES["model_use_file"]
+        ),
+        "velocity_file": Path(
+            _extract_cli_arg(tokens, "--velocity_command_file", str(DEFAULT_CONTROL_FILES["velocity_file"]))
+            or DEFAULT_CONTROL_FILES["velocity_file"]
+        ),
+        "goal_file": Path(
+            _extract_cli_arg(tokens, "--goal_command_file", str(DEFAULT_CONTROL_FILES["goal_file"]))
+            or DEFAULT_CONTROL_FILES["goal_file"]
+        ),
+        "status_file": Path(
+            _extract_cli_arg(tokens, "--status_json_file", str(DEFAULT_CONTROL_FILES["status_file"]))
+            or DEFAULT_CONTROL_FILES["status_file"]
+        ),
+        "start_file": Path(
+            _extract_cli_arg(tokens, "--start_file", str(DEFAULT_CONTROL_FILES["start_file"]))
+            or DEFAULT_CONTROL_FILES["start_file"]
+        ),
+    }
+
+
+def _build_live_snapshot(control_files: dict[str, Path], scene_id: int) -> tuple[dict[str, Any], bool]:
+    snapshot: dict[str, Any] = {
+        "scene_id": scene_id,
+        "model_use": _read_numeric_file(control_files["model_use_file"]),
+        "start": _read_bool_file(control_files["start_file"]),
+        "vel_command": _read_vector_file(control_files["velocity_file"], (3,)),
+        "pose_command": _read_vector_file(control_files["goal_file"], (3, 4)),
+        "goal": _read_vector_file(control_files["goal_file"], (3, 4)),
+        "robot_pose": [0.0, 0.0, 0.0],
+    }
+    if isinstance(snapshot.get("model_use"), int):
+        snapshot["skill"] = MODEL_USE_TO_SKILL.get(int(snapshot["model_use"]))
+
+    status_payload = _read_status_json_file(control_files["status_file"])
+    status_file_available = status_payload is not None
+    if status_payload:
+        for key in ("model_use", "skill", "scene_id", "start", "unified_obs_dim", "policy_obs_dim"):
+            if key in status_payload:
+                snapshot[key] = status_payload.get(key)
+        for key in ("pose_command", "vel_command", "robot_pose", "goal"):
+            values = status_payload.get(key)
+            if isinstance(values, list):
+                snapshot[key] = _round_list(values)
+    return snapshot, status_file_available
+
+
+def get_data() -> dict[str, Any]:
+    """获取 Sim 真实数据，不做通用状态映射。"""
+    process_info = _find_envtest_player_process()
+    if process_info is None:
+        return {
+            "connected": False,
+            "task_type": "sim",
+            "process": None,
+            "snapshot": {},
+            "scene_objects": [],
+            "status_file_available": False,
+            "control_files": {key: str(value) for key, value in DEFAULT_CONTROL_FILES.items()},
+            "repo_root": str(DEFAULT_ENVTEST_REPO_ROOT),
+        }
+
+    pid, tokens = process_info
+    repo_root = Path(
+        _extract_cli_arg(tokens, "--repo_root", str(DEFAULT_ENVTEST_REPO_ROOT))
+        or DEFAULT_ENVTEST_REPO_ROOT
+    )
+    scene_id_raw = _extract_cli_arg(tokens, "--scene_id", "0") or "0"
+    try:
+        scene_id = int(scene_id_raw)
+    except ValueError:
+        scene_id = 0
+
+    control_files = _resolve_control_files(tokens)
+    snapshot, status_file_available = _build_live_snapshot(control_files, scene_id)
+
+    try:
+        scene_objects = _build_scene_objects(scene_id, repo_root)
+    except Exception:
+        scene_objects = []
+
+    return {
+        "connected": True,
+        "task_type": "sim",
+        "process": {
+            "pid": pid,
+            "cmdline": tokens,
+        },
+        "snapshot": snapshot,
+        "scene_objects": scene_objects,
+        "status_file_available": status_file_available,
+        "control_files": {key: str(value) for key, value in control_files.items()},
+        "repo_root": str(repo_root),
+    }
+
+
 def update_object_facts_runtime(
     object_facts_path: str | Path = DEFAULT_OBJECT_FACTS_PATH,
     *,
@@ -541,56 +643,135 @@ def sync_runtime_overrides_from_user_input(
     return update_object_facts_runtime(object_facts_path, user_input=user_input)
 
 
-def sync_object_facts_from_live_envtest(
+def sync_object_facts_from_live_data(
     object_facts_path: str | Path = DEFAULT_OBJECT_FACTS_PATH,
     *,
     user_input: str = "",
 ) -> dict[str, Any] | None:
-    process_info = _find_envtest_player_process()
-    if process_info is None:
+    live_data = get_data()
+    if not live_data.get("connected"):
         return None
 
-    _, tokens = process_info
-    repo_root = Path(_extract_cli_arg(tokens, "--repo_root", str(DEFAULT_ENVTEST_REPO_ROOT)) or DEFAULT_ENVTEST_REPO_ROOT)
-    scene_id_raw = _extract_cli_arg(tokens, "--scene_id", "0") or "0"
-    try:
-        scene_id = int(scene_id_raw)
-    except ValueError:
-        scene_id = 0
-
-    model_use_file = Path(_extract_cli_arg(tokens, "--model_use_file", str(DEFAULT_CONTROL_FILES["model_use_file"])) or DEFAULT_CONTROL_FILES["model_use_file"])
-    velocity_file = Path(_extract_cli_arg(tokens, "--velocity_command_file", str(DEFAULT_CONTROL_FILES["velocity_file"])) or DEFAULT_CONTROL_FILES["velocity_file"])
-    goal_file = Path(_extract_cli_arg(tokens, "--goal_command_file", str(DEFAULT_CONTROL_FILES["goal_file"])) or DEFAULT_CONTROL_FILES["goal_file"])
-    status_file = Path(_extract_cli_arg(tokens, "--status_json_file", str(DEFAULT_CONTROL_FILES["status_file"])) or DEFAULT_CONTROL_FILES["status_file"])
-    start_file = Path(_extract_cli_arg(tokens, "--start_file", str(DEFAULT_CONTROL_FILES["start_file"])) or DEFAULT_CONTROL_FILES["start_file"])
-
-    snapshot: dict[str, Any] = {
-        "scene_id": scene_id,
-        "model_use": _read_numeric_file(model_use_file),
-        "start": _read_bool_file(start_file),
-        "vel_command": _read_vector_file(velocity_file, (3,)),
-        "pose_command": _read_vector_file(goal_file, (3, 4)),
-        "goal": _read_vector_file(goal_file, (3, 4)),
-        "robot_pose": [0.0, 0.0, 0.0],
-    }
-    if isinstance(snapshot.get("model_use"), int):
-        snapshot["skill"] = MODEL_USE_TO_SKILL.get(int(snapshot["model_use"]))
-
-    status_payload = _read_status_json_file(status_file)
-    if status_payload:
-        for key in ("model_use", "skill", "scene_id", "start", "unified_obs_dim", "policy_obs_dim"):
-            if key in status_payload:
-                snapshot[key] = status_payload.get(key)
-        for key in ("pose_command", "vel_command", "robot_pose", "goal"):
-            values = status_payload.get(key)
-            if isinstance(values, list):
-                snapshot[key] = _round_list(values)
-
-    scene_objects = _build_scene_objects(scene_id, repo_root)
     return update_object_facts_runtime(
         object_facts_path,
-        snapshot=snapshot,
+        snapshot=live_data.get("snapshot") or {},
         user_input=user_input,
-        scene_objects=scene_objects,
+        scene_objects=live_data.get("scene_objects") or [],
         replace_objects=True,
     )
+
+
+sync_object_facts_from_live_envtest = sync_object_facts_from_live_data
+
+
+def _read_status_text(args: argparse.Namespace) -> str:
+    if args.status_text:
+        return args.status_text
+    if args.status_file:
+        return Path(args.status_file).read_text(encoding="utf-8")
+    return sys.stdin.read()
+
+
+def _print_live_data_summary(payload: dict[str, Any]) -> None:
+    snapshot = payload.get("snapshot") or {}
+    print(f"task_type:      {payload.get('task_type', 'sim')}")
+    print(f"连接状态:       {'已连接' if payload.get('connected') else '未连接'}")
+    print(f"scene_id:       {snapshot.get('scene_id')}")
+    print(f"skill/model:    {snapshot.get('skill')} / {snapshot.get('model_use')}")
+    print(f"robot_pose:     {snapshot.get('robot_pose')}")
+    print(f"goal:           {snapshot.get('goal')}")
+    print(f"objects_count:  {len(payload.get('scene_objects') or [])}")
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="获取或同步 Sim 真实数据。")
+    parser.add_argument("--json", action="store_true", default=False, help="JSON 格式输出。")
+    parser.add_argument(
+        "--object-facts",
+        type=str,
+        default=str(DEFAULT_OBJECT_FACTS_PATH),
+        help="object_facts.json 路径。",
+    )
+    parser.add_argument(
+        "--status-file",
+        type=str,
+        default="",
+        help="包含 EnvTest Live Status 文本块的文件路径。",
+    )
+    parser.add_argument(
+        "--status-text",
+        type=str,
+        default="",
+        help="直接传入 EnvTest Live Status 文本块。",
+    )
+    parser.add_argument(
+        "--user-input",
+        type=str,
+        default="",
+        help="可选用户输入；若包含 pose_command=[...] / vel_command=[...]，会覆盖 runtime_state。",
+    )
+    parser.add_argument(
+        "--replace-objects",
+        action="store_true",
+        default=False,
+        help="如果启用，则用状态块里的 platform_1/platform_2/box 替换 top-level objects。",
+    )
+    parser.add_argument(
+        "--live-envtest",
+        action="store_true",
+        default=False,
+        help="直接从正在运行的 envtest_model_use_player.py 进程和控制文件同步。",
+    )
+    args = parser.parse_args()
+
+    if args.live_envtest:
+        payload = sync_object_facts_from_live_data(
+            object_facts_path=args.object_facts,
+            user_input=args.user_input,
+        )
+        if payload is None:
+            print("未发现正在运行的 envtest_model_use_player.py 进程。", file=sys.stderr)
+            return 1
+        if args.json:
+            print(json.dumps(payload, ensure_ascii=False, indent=2))
+        else:
+            runtime_state = payload.get("runtime_state") or {}
+            print(f"[get_data] 已更新: {args.object_facts}")
+            print(f"[get_data] runtime_state.model_use={runtime_state.get('model_use')}")
+            print(f"[get_data] runtime_state.skill={runtime_state.get('skill')}")
+            print(f"[get_data] runtime_state.pose_command={runtime_state.get('pose_command')}")
+            print(f"[get_data] runtime_state.vel_command={runtime_state.get('vel_command')}")
+        return 0
+
+    if args.status_file or args.status_text:
+        status_text = _read_status_text(args).strip()
+        if not status_text:
+            print("未提供 EnvTest Live Status 文本。", file=sys.stderr)
+            return 1
+        payload = sync_object_facts_from_status_text(
+            status_text=status_text,
+            object_facts_path=args.object_facts,
+            user_input=args.user_input,
+            replace_objects=args.replace_objects,
+        )
+        if args.json:
+            print(json.dumps(payload, ensure_ascii=False, indent=2))
+        else:
+            runtime_state = payload.get("runtime_state") or {}
+            print(f"[get_data] 已更新: {args.object_facts}")
+            print(f"[get_data] runtime_state.model_use={runtime_state.get('model_use')}")
+            print(f"[get_data] runtime_state.skill={runtime_state.get('skill')}")
+            print(f"[get_data] runtime_state.pose_command={runtime_state.get('pose_command')}")
+            print(f"[get_data] runtime_state.vel_command={runtime_state.get('vel_command')}")
+        return 0
+
+    live_data = get_data()
+    if args.json:
+        print(json.dumps(live_data, ensure_ascii=False, indent=2))
+    else:
+        _print_live_data_summary(live_data)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

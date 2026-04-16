@@ -9,16 +9,35 @@ from contextlib import redirect_stdout
 from pathlib import Path
 from typing import Any
 
+from mcp.server.fastmcp import FastMCP
+
 from LLM_Module.llm_core import LLMAgent
 from LLM_Module.object_facts_loader import load_object_facts
 from VLM_Module.vlm_core import VLMCore
-from Comm_Module.Robot.Sim.envtest_status_sync import (
-    sync_object_facts_from_live_envtest,
+from Comm_Module.Task import (
+    sync_object_facts_from_live_data,
     sync_runtime_overrides_from_user_input,
 )
+from Robot_Module.module.Action.skills import (
+    ACTION_TOOL_NAMES,
+    register_tools as register_action_tools,
+)
+from Robot_Module.module.Vision.skills import (
+    VISION_TOOL_NAMES,
+    register_tools as register_vision_tools,
+)
+
 DEFAULT_OBJECT_FACTS_PATH = Path(
     os.getenv("FINALPROJECT_OBJECT_FACTS_PATH", str(Path(__file__).resolve().parents[1] / "config" / "object_facts.json"))
 )
+
+mcp = FastMCP("robot")
+
+AGENT_TOOL_NAMES = {"vlm_observe", "robot_act"}
+
+_tool_registry: dict[str, Any] = {}
+_tool_definitions: list[dict[str, Any]] = []
+_modules_registered = False
 
 
 class _StreamingBuffer(io.StringIO):
@@ -78,16 +97,24 @@ def _normalize_tool_result(function_name: str, raw_result: Any) -> dict[str, Any
         "skill": function_name,
         "message": f"{function_name} 执行{'成功' if status == 'success' else '失败'}",
     }
+    validation = feedback.get("validation") if isinstance(feedback, dict) else None
+    validation_success = True
+    if isinstance(validation, dict) and validation:
+        verified = validation.get("verified")
+        meets_requirements = validation.get("meets_requirements")
+        if verified is False or meets_requirements is False:
+            validation_success = False
+        elif verified is True and meets_requirements is True:
+            validation_success = True
+
     return {
-        "success": status == "success" and feedback.get("signal") == "SUCCESS",
+        "success": status == "success" and feedback.get("signal") == "SUCCESS" and validation_success,
         "feedback": feedback,
         "result": parsed,
     }
 
 
 def _execute_registered_tool(function_name: str, function_args: dict[str, Any]) -> dict[str, Any]:
-    from Robot_Module.skill import get_skill_function
-
     skill_func = get_skill_function(function_name)
     if not skill_func:
         return {"success": False, "error": f"Unknown tool: {function_name}"}
@@ -123,6 +150,50 @@ def _run_async_blocking(coro):
     return result.get("value")
 
 
+def _snapshot_tool_definitions() -> list[dict[str, Any]]:
+    async def _get_tools():
+        tools_list = await mcp.list_tools()
+        tools = []
+        for tool in tools_list:
+            tools.append(
+                {
+                    "type": "function",
+                    "function": {
+                        "name": tool.name,
+                        "description": tool.description if hasattr(tool, "description") else "",
+                        "parameters": tool.inputSchema
+                        if hasattr(tool, "inputSchema")
+                        else {"type": "object", "properties": {}, "required": []},
+                    },
+                }
+            )
+        return tools
+
+    return asyncio.run(_get_tools())
+
+
+def get_skill_function(name: str):
+    return _tool_registry.get(name)
+
+
+def get_tool_definitions(allowed_names: set[str] | None = None):
+    if allowed_names is None:
+        return list(_tool_definitions)
+    return [tool for tool in _tool_definitions if tool.get("function", {}).get("name") in allowed_names]
+
+
+def get_agent_tool_definitions():
+    return get_tool_definitions(AGENT_TOOL_NAMES)
+
+
+def get_vision_tool_definitions():
+    return get_tool_definitions(VISION_TOOL_NAMES)
+
+
+def get_action_tool_definitions():
+    return get_tool_definitions(ACTION_TOOL_NAMES)
+
+
 def run_robot_act_pipeline(
     user_intent: str,
     agent_thought: str = "",
@@ -131,12 +202,10 @@ def run_robot_act_pipeline(
     object_facts_path: str | Path | None = None,
     log_callback=None,
 ) -> dict[str, Any]:
-    from Robot_Module.skill import get_action_tool_definitions, register_all_modules
-
     register_all_modules()
     path = Path(object_facts_path or DEFAULT_OBJECT_FACTS_PATH)
     try:
-        synced_payload = sync_object_facts_from_live_envtest(path, user_input=user_intent)
+        synced_payload = sync_object_facts_from_live_data(path, user_input=user_intent)
     except Exception:
         synced_payload = None
         sync_runtime_overrides_from_user_input(path, user_input=user_intent)
@@ -219,7 +288,19 @@ async def robot_act(
 
 
 def register_tools(mcp):
+    registry = {}
+    registry.update(register_vision_tools(mcp))
     mcp.tool()(robot_act)
-    return {
-        "robot_act": robot_act,
-    }
+    registry["robot_act"] = robot_act
+    return registry
+
+
+def register_all_modules():
+    global _modules_registered, _tool_definitions
+    if _modules_registered:
+        return
+
+    _tool_registry.update(register_action_tools(mcp))
+    _tool_registry.update(register_tools(mcp))
+    _tool_definitions = _snapshot_tool_definitions()
+    _modules_registered = True

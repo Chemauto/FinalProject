@@ -38,7 +38,7 @@ try:
 except ImportError:
     pass
 
-from Robot_Module.skill import (
+from Robot_Module.agent_tools import (
     get_action_tool_definitions,
     get_agent_tool_definitions,
     get_skill_function,
