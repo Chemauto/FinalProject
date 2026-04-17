@@ -215,7 +215,7 @@ def run_robot_act_pipeline(
     prompt_path = str(Path(__file__).resolve().parents[1] / "Agent_Module" / "prompts" / "highlevel_prompt.yaml")
     planner = Planner(client=client, prompt_path=prompt_path)
     task_executor = TaskExecutor(client=client)
-    pipeline = PipelineRunner(planner=planner, task_executor=task_executor)
+    pipeline = PipelineRunner(planner=planner, task_executor=task_executor, max_replans=0)
     action_tools = get_action_tool_definitions()
     planner.planning_prompt_template = _load_robot_prompt(action_tools)
 

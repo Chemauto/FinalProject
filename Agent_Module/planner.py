@@ -169,8 +169,21 @@ class Planner:
             updated_meta["scene_assessment"] = (
                 f"检测到可移动箱子 {geometry['box_id']} 与高台 {geometry['platform_id']} 形成辅助登台几何关系。"
             )
-            print("⚠️  [规则修正] 检测到箱子辅助登台场景，已修正为 push_box -> climb_align -> climb -> navigation")
+            print("⚠️  [规则修正] 检测到箱子辅助登台场景，已修正为 push_box -> climb_align -> climb -> nav_climb")
             return tasks, updated_meta
+
+        climbable = self._detect_climbable_obstacle(scene_facts, object_facts)
+        if climbable and self._is_navigation_request(user_input):
+            tasks, summary = self._build_climbable_obstacle_plan(climbable)
+            updated_meta = dict(meta)
+            updated_meta["selected_plan_id"] = "rule_override_climbable_obstacle"
+            updated_meta["summary"] = summary
+            updated_meta["scene_assessment"] = (
+                f"检测到可攀爬高台 {climbable['platform_id']} ({climbable['platform_height']}m) 阻挡路径。"
+            )
+            print(f"⚠️  [规则修正] 检测到可攀爬高台场景，已修正为 way_select -> nav_climb")
+            return tasks, updated_meta
+
         return tasks, meta
 
     def _build_rule_fallback(
@@ -187,6 +200,15 @@ class Planner:
                 "scene_assessment": "规则回退：箱子辅助登台场景",
                 "candidate_plans": [],
                 "selected_plan_id": "fallback_box_assist",
+                "summary": summary,
+            }
+        climbable = self._detect_climbable_obstacle(scene_facts, object_facts)
+        if climbable and self._is_navigation_request(user_input):
+            tasks, summary = self._build_climbable_obstacle_plan(climbable)
+            return tasks, {
+                "scene_assessment": "规则回退：可攀爬高台场景",
+                "candidate_plans": [],
+                "selected_plan_id": "fallback_climbable_obstacle",
                 "summary": summary,
             }
         return [self._build_fallback_task(user_input)], {
@@ -250,7 +272,7 @@ class Planner:
         if not self._is_navigation_request(user_input):
             return False
         function_chain = [str(task.get("function", "")) for task in tasks]
-        return function_chain[:4] != ["push_box", "climb_align", "climb", "navigation"]
+        return function_chain[:4] != ["push_box", "climb_align", "climb", "nav_climb"]
 
     @staticmethod
     def _planner_scene(scene_facts: dict[str, Any] | None) -> dict[str, Any]:
@@ -268,6 +290,91 @@ class Planner:
             return round(float(size[2]), 3)
         except (TypeError, ValueError, IndexError):
             return 0.0
+
+    @staticmethod
+    def _platform_side(platform: dict[str, Any]) -> str:
+        center = platform.get("center") or [0.0, 0.0, 0.0]
+        return "left" if float(center[1]) >= 0 else "right"
+
+    def _detect_climbable_obstacle(
+        self,
+        scene_facts: dict[str, Any] | None,
+        object_facts: dict[str, Any] | None,
+    ) -> dict[str, object] | None:
+        """检测可攀爬高台阻挡路径的场景（无箱子辅助，直接攀爬）。
+
+        只有左右两侧都有平台且至少一侧可攀爬时才触发。
+        如果只有一侧有障碍物，navigation 自带避障可以直接通过。
+        """
+        if scene_facts is None or object_facts is None:
+            return None
+
+        constraints = (object_facts.get("constraints") or {})
+        climb_limit = float(constraints.get("max_climb_height_m", 0.3))
+        objects = object_facts.get("objects") or []
+        platforms = [obj for obj in objects if str(obj.get("type", "")).lower() == "platform"]
+        if not platforms:
+            return None
+
+        # 左右两侧是否都有平台
+        left_platforms = [p for p in platforms if self._platform_side(p) == "left"]
+        right_platforms = [p for p in platforms if self._platform_side(p) == "right"]
+        if not left_platforms or not right_platforms:
+            return None
+
+        # 找可攀爬的平台（高度 <= climb_limit）
+        climbable_platforms = [p for p in platforms if 0 < self._object_height(p) <= climb_limit]
+        if not climbable_platforms:
+            return None
+
+        # 选最近的可攀爬平台
+        best = min(climbable_platforms, key=self._object_height)
+        platform_height = self._object_height(best)
+        center = best.get("center") or [0.0, 0.0, 0.0]
+        side = "left" if float(center[1]) >= 0 else "right"
+        lateral_distance = abs(float(center[1]))
+
+        return {
+            "side": side,
+            "platform_id": str(best.get("id", "platform")),
+            "platform_height": platform_height,
+            "lateral_distance": round(lateral_distance + 0.1, 3),
+            "platform_center": center,
+            "platform_size": best.get("size") or [0.0, 0.0, 0.0],
+        }
+
+    def _build_climbable_obstacle_plan(self, climbable: dict[str, object]) -> tuple[list[dict], str]:
+        side = str(climbable["side"])
+        side_label = "左侧" if side == "left" else "右侧"
+        platform_id = str(climbable["platform_id"])
+        platform_height = float(climbable["platform_height"])
+        height_label = f"{platform_height:.1f}".rstrip("0").rstrip(".")
+
+        return (
+            [
+                self._normalize_task(
+                    {
+                        "step": 1,
+                        "task": f"调用 way_select，切换到{side_label}路线靠近高台 {platform_id}",
+                        "type": "路线选择",
+                        "function": "way_select",
+                        "reason": f"前方有{height_label}米高台阻挡，需先切换到{side_label}路线。",
+                    },
+                    1,
+                ),
+                self._normalize_task(
+                    {
+                        "step": 2,
+                        "task": f"使用 nav_climb 导航并攀爬到目标点",
+                        "type": "导航攀爬",
+                        "function": "nav_climb",
+                        "reason": f"高台高{height_label}米，nav_climb 可一步完成导航和攀爬。",
+                    },
+                    2,
+                ),
+            ],
+            f"检测到可攀爬高台({height_label}m)，执行 way_select -> nav_climb",
+        )
 
     def _detect_box_assisted_geometry(
         self,
@@ -352,15 +459,15 @@ class Planner:
                 self._normalize_task(
                     {
                         "step": 4,
-                        "task": "登上高台后，使用 navigation 前往目标点",
-                        "type": "导航",
-                        "function": "navigation",
-                        "reason": "越过高差后，再用 navigation 精准到终点。",
+                        "task": "使用 nav_climb 导航前往目标点",
+                        "type": "导航攀爬",
+                        "function": "nav_climb",
+                        "reason": "越过高差后，使用 nav_climb 导航到终点。",
                     },
                     4,
                 ),
             ],
-            "根据结构化物体几何信息，应执行 push_box -> climb_align -> climb -> navigation",
+            "根据结构化物体几何信息，应执行 push_box -> climb_align -> climb -> nav_climb",
         )
 
 

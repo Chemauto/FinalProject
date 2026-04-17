@@ -188,17 +188,31 @@ class ParameterCalculator:
                     current_pose = list(parameter_context["auto_target_position_xyz"])
 
             elif function_name == "climb_align" and selected_platform:
+                climb_align_goal = None
+                if selected_can_use_box_assist and selected_support_box:
+                    climb_align_goal = self._build_climb_align_goal(selected_support_box, selected_platform)
+
                 parameter_context.update(
                     {
                         "target_object": selected_platform["id"],
                         "support_object": (selected_support_box or {}).get("id"),
                     }
                 )
-                annotated["parameter_context"] = parameter_context
-                annotated["calculated_parameters"] = {
+                if climb_align_goal:
+                    parameter_context["climb_align_goal_xyz"] = climb_align_goal
+
+                calc_params = {
                     "stage": selected_platform["id"],
                     "target": selected_platform["id"],
                 }
+                if climb_align_goal:
+                    calc_params["goal_command"] = ",".join(str(v) for v in climb_align_goal)
+
+                annotated["parameter_context"] = parameter_context
+                annotated["calculated_parameters"] = calc_params
+
+                if climb_align_goal:
+                    current_pose = list(climb_align_goal)
 
             elif function_name == "climb" and selected_platform:
                 climb_count += 1
@@ -233,6 +247,24 @@ class ParameterCalculator:
                     }
                     current_pose = self._estimate_pose_after_climb(current_pose, selected_platform, selected_platform_height)
                     current_route_side = self._infer_route_side(selected_platform) or current_route_side
+
+            elif function_name == "way_select":
+                way_side = self._infer_way_side_from_task(task, objects)
+                if way_side:
+                    lateral_dist = self._estimate_lateral_distance(way_side, objects)
+                    parameter_context.update({
+                        "route_side": way_side,
+                    })
+                    annotated["parameter_context"] = parameter_context
+                    annotated["calculated_parameters"] = {
+                        "direction": way_side,
+                        "lateral_distance": lateral_dist,
+                        "target": selected_platform["id"] if selected_platform else "目标点",
+                    }
+                    # way_select 后 x 基本不变，y 偏移到平台侧面
+                    if selected_platform:
+                        plat_center = selected_platform.get("center") or [0.0, 0.0, 0.0]
+                        current_pose = [current_pose[0], float(plat_center[1]), current_pose[2]]
 
             elif function_name in {"navigation", "nav_climb"}:
                 navigation_parameters = self._build_navigation_parameters(navigation_goal)
@@ -474,6 +506,53 @@ class ParameterCalculator:
             return None
         center = obj.get("center") or [0.0, 0.0, 0.0]
         return "left" if float(center[1]) >= 0 else "right"
+
+    @staticmethod
+    def _infer_way_side_from_task(task: dict[str, Any], objects: list[dict[str, Any]]) -> str | None:
+        task_text = f"{task.get('task', '')} {task.get('reason', '')}".lower()
+        if "左侧" in task_text and "右侧" not in task_text:
+            return "left"
+        if "右侧" in task_text and "左侧" not in task_text:
+            return "right"
+        # Fallback: use first climbable platform side
+        platforms = [obj for obj in objects if str(obj.get("type", "")).lower() == "platform"]
+        for p in platforms:
+            center = p.get("center") or [0.0, 0.0, 0.0]
+            return "left" if float(center[1]) >= 0 else "right"
+        return None
+
+    @staticmethod
+    def _estimate_lateral_distance(side: str, objects: list[dict[str, Any]]) -> float:
+        for obj in objects:
+            if str(obj.get("type", "")).lower() != "platform":
+                continue
+            center = obj.get("center") or [0.0, 0.0, 0.0]
+            obj_side = "left" if float(center[1]) >= 0 else "right"
+            if obj_side == side:
+                return round(abs(float(center[1])) + 0.1, 3)
+        return 0.5
+
+    @classmethod
+    def _build_climb_align_goal(
+        cls,
+        support_box: dict[str, Any],
+        target_platform: dict[str, Any],
+    ) -> list[float] | None:
+        """计算 climb_align 的导航目标：推到位的箱子背后（背离平台一侧）。"""
+        pushed_pos = cls._build_adjacent_ground_position(support_box, target_platform)
+        box_size = support_box.get("size") or [0.0, 0.0, 0.0]
+        platform_center = target_platform.get("center") or [0.0, 0.0, 0.0]
+
+        dx = float(platform_center[0]) - pushed_pos[0]
+        if abs(dx) < 0.01:
+            return None
+
+        direction = 1.0 if dx > 0 else -1.0
+        align_x = pushed_pos[0] - direction * (float(box_size[0]) / 2 + 0.35)
+        align_y = pushed_pos[1]
+        align_z = 0.0
+
+        return [round(align_x, 3), round(align_y, 3), round(align_z, 3)]
 
     @staticmethod
     def _build_adjacent_ground_position(

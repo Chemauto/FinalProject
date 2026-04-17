@@ -310,6 +310,7 @@ def run_agent_turn(
     thinking_parts = []
     session_snapshot = {"sync": dict(session.last_sync)}
 
+    robot_act_called = False
     for _ in range(4):
         response = runtime.client.chat.completions.create(
             model=runtime.model,
@@ -389,6 +390,12 @@ def run_agent_turn(
                     "content": json.dumps(payload, ensure_ascii=False),
                 }
             )
+
+            if tool_call.function.name == "robot_act":
+                robot_act_called = True
+
+        if robot_act_called:
+            break
 
     if final_reply:
         console.print(Panel(final_reply, title="Assistant", border_style="bright_cyan", expand=False))

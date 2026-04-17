@@ -415,7 +415,7 @@ def extract_navigation_goal_override(user_input: str) -> list[float] | None:
             return parsed
 
     navigation_patterns = (
-        r"(?:前往|去往|去到|到达|导航到|移动到|走到)\s*(?:坐标)?\s*(\[[^\]]+\]|\([^\)]+\)|[-+]?\d*\.?\d+(?:\s*,\s*[-+]?\d*\.?\d+){{2,3}})",
+        r"(?:前往|去往|去到|到达|导航到|移动到|走到)\s*(?:坐标点?|位置点?)?\s*(\[[^\]]+\]|\([^\)]+\)|[-+]?\d*\.?\d+(?:\s*,\s*[-+]?\d*\.?\d+){{2,3}})",
         r"(?:前往|去往|去到|到达|导航到|移动到|走到)\s*([-\d\.,\s]+?)\s*(?:处|位置|坐标处|坐标点|点位|点|附近|$)",
     )
     for pattern in navigation_patterns:
