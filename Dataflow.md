@@ -150,6 +150,8 @@ load_object_facts()
 
 高层规划入口在 `LLM_Module/llm_core.py`。
 
+规划前会先尝试规则规划（通过 `try_rule_planners()`），如果注册的规则规划器能处理，直接返回规则规划结果，不调用 LLM。否则走 LLM 规划。
+
 输入包括：
 
 - `user_input`
@@ -165,7 +167,7 @@ load_object_facts()
 - `function`
 - `reason`
 
-高层规划负责“做什么”，不负责“最终参数是多少”。
+高层规划负责"做什么"，不负责"最终参数是多少"。
 
 ## 7. 参数计算
 
@@ -175,6 +177,12 @@ load_object_facts()
 
 - `parameter_context`
 - `calculated_parameters`
+
+参数计算流程：
+
+1. 调用 `build_planning_context(object_facts, tasks)` 获取项目特定共享上下文
+2. 对每个 task，查找注册的 skill
+3. 调用 `skill.calculate_parameters(task, object_facts, context)` 计算参数
 
 当前的设计目标是：
 
@@ -193,6 +201,8 @@ load_object_facts()
 2. 参数还不完整
    让低层 LLM 决定最终工具调用。
 
+参数修正委托给 `skill.normalize_tool_arguments()`，低层 prompt 优先使用注册的项目特定版本。
+
 真正执行技能时，`agent_tools.py` 会通过 `_execute_registered_tool()` 调用已注册的动作技能函数。
 
 ## 9. 动作技能层
@@ -201,19 +211,15 @@ load_object_facts()
 
 ```text
 Robot_Module/module/Action/skills.py
--> 选择当前 action task
+-> 选择当前 action task（如 bishe）
+-> 注册项目特定钩子（上下文、规则规划、prompt、导航码）
 -> 注册 Robot_Module/module/Action/Task/Bishe/*.py
 ```
 
-`Action/Task/Bishe` 下面现在只保留 7 个技能文件：
+`Action/Task/Bishe` 下面保留：
 
-- `walk.py`
-- `navigation.py`
-- `nav_climb.py`
-- `climb_align.py`
-- `climb.py`
-- `push_box.py`
-- `way_select.py`
+- 7 个技能文件：`walk.py / navigation.py / nav_climb.py / climb_align.py / climb.py / push_box.py / way_select.py`
+- 辅助文件：`_bishe_helpers.py / bishe_planner.py / lowlevel_prompt.yaml / highlevel_prompt.yaml`
 
 这些文件只做两件事：
 

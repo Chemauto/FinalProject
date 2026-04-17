@@ -9,16 +9,18 @@
 
 失败时最多重规划 1 次（`max_replans=1`），仍失败则停止后续任务。
 
+`LLM_Module` 不包含任何项目特定代码（如 Bishe），所有项目特定逻辑通过 `Excu_Module.skill_registry` 的可插拔钩子获取。
+
 ## 主要文件
 
 - `llm_core.py`
-  总控，包含 `HighLevelPlanner` 和 `LLMAgent`
+  总控，包含 `HighLevelPlanner` 和 `LLMAgent`。规则规划通过 `try_rule_planners()` 委托。
 - `llm_lowlevel.py`
-  低层执行，调用已注册工具
+  低层执行，调用已注册工具。参数修正委托给 `skill.normalize_tool_arguments()`。Prompt 优先从注册表获取。
 - `object_facts_loader.py`
-  读取并归一化 `object_facts.json`
+  读取并归一化 `object_facts.json`。约束通用化，不硬编码项目特定字段。
 - `parameter_calculator.py`
-  把抽象任务补成具体技能参数
+  把抽象任务补成具体技能参数。上下文通过 `build_planning_context()` 委托。
 
 ## 当前输入
 
@@ -38,7 +40,11 @@
 
 - 规划层失败时会重规划最多 1 次（`max_replans=1`）
 - 低层若看到 `calculated_parameters`，优先直接执行，不再重新猜参数
-- 当前以通用动作为主，不在高层写死特定任务的执行协议
+- 规则规划通过 `try_rule_planners()` 委托给注册的规则规划器
+- 参数计算通过 `build_planning_context()` 获取项目特定上下文
+- 参数修正通过 `skill.normalize_tool_arguments()` 委托给技能
+- 低层 prompt 优先使用注册的项目特定版本，回退到通用版本
+- 不在高层写死特定任务的执行协议
 - 技能真正执行已经由 `Excu_Module` 负责
 - `llm_core.py` 不再只依赖 `signal == SUCCESS`
 - 当前会读取动作返回的 `validation`，判断动作是否真的满足任务要求
@@ -68,24 +74,25 @@
 - 尽量把低层执行变成"直接调用"
 - 让技能文件只负责接收参数和调用执行层
 
-当前推荐分工：
+参数计算流程：
+
+1. 调用 `build_planning_context(object_facts, tasks)` 获取共享上下文
+2. 对每个 task，查找注册的 skill
+3. 调用 `skill.calculate_parameters(task, object_facts, context)` 计算参数
+
+推荐分工：
 
 - 高层规划决定技能序列
 - 参数计算决定具体参数
 - 技能文件把参数填入函数
 - `Excu_Module` 执行并验收
 
-当前 `push_box` 参数计算：
-
-- `_build_adjacent_ground_position()` 计算箱子目标位置
-- 只改变 x 方向（箱子推到 platform 前沿），y 保持箱子当前值
-- `calculated_parameters["target_position"]` 是具体 `[x, y, z]` 坐标，不再是 `"auto"`
-- 这样 `Excu_Module` 可以用到达容许误差（0.1m）判定箱子是否到达目标
-
 ## 提示词
 
-- `prompts/highlevel_prompt.yaml`
-- `prompts/lowlevel_prompt.yaml`
+- `prompts/highlevel_prompt.yaml` — 通用高层 prompt（最小版本）
+- `prompts/lowlevel_prompt.yaml` — 通用低层 prompt（最小版本）
+- 项目特定高层 prompt 由 `register_highlevel_prompt()` 注册，优先使用
+- 项目特定低层 prompt 由 `register_lowlevel_prompt()` 注册，优先使用
 
 ## 依赖
 
@@ -103,10 +110,10 @@ python3 Interactive_Module/interactive.py
 
 ## stdout 输出
 
-`llm_core.py` 和 `llm_lowlevel.py` 的 print 输出（████ 规划块、⚙️🔧 执行信息等）通过 `agent_tools.py` 的 `_StreamingBuffer` 机制捕获，经 `log_callback` 转发到交互终端实时显示。
+`llm_core.py` 和 `llm_lowlevel.py` 的 print 输出（规划块、执行信息等）通过 `agent_tools.py` 的 `_StreamingBuffer` 机制捕获，经 `log_callback` 转发到交互终端实时显示。
 
 当前典型输出变化：
 
 - 低层仍会打印 `📨 [执行反馈] ...`
-- 上层不再打印“已返回成功信号”
+- 上层不再打印"已返回成功信号"
 - 现在会打印 `✅ [结果校验] ...`，内容来自真实状态校验摘要

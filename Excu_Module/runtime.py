@@ -22,29 +22,9 @@ except Exception:  # pragma: no cover
 
 DEFAULT_TARGET = "前方目标点"
 
+# ── Universal model-use code: 0 = idle for all projects ────────────
 MODEL_USE_IDLE = 0
-MODEL_USE_WALK = 1
-MODEL_USE_CLIMB = 2
-MODEL_USE_PUSH_BOX = 3
-MODEL_USE_NAVIGATION = 4
-MODEL_USE_NAV_CLIMB = 5
-NAVIGATION_MODEL_USES = {MODEL_USE_NAVIGATION, MODEL_USE_NAV_CLIMB}
 
-CLIMB_LIMIT_METERS = 0.3
-DEFAULT_WALK_SPEED_MPS = 0.6
-DEFAULT_LATERAL_SPEED_MPS = 0.5
-DEFAULT_CLIMB_SPEED_MPS = 0.6
-DEFAULT_WAY_SELECT_FORWARD_BIAS_M = 0.2
-DEFAULT_WAY_SELECT_DURATION_SEC = 3.0
-DEFAULT_WALK_BUFFER_SEC = 0.5
-DEFAULT_CLIMB_BASE_DURATION_SEC = 4.0
-DEFAULT_CLIMB_EXECUTION_SEC = 12.0
-DEFAULT_PUSH_BOX_DURATION_SEC = 15.0
-DEFAULT_NAVIGATION_DURATION_SEC = 6.0
-DEFAULT_NAVIGATION_TIMEOUT_MARGIN_SEC = 5.0
-DEFAULT_POST_PUSH_SETTLE_SEC = 1.2
-DEFAULT_PRE_CLIMB_SETTLE_SEC = 0.8
-DEFAULT_POST_ALIGN_SETTLE_SEC = 0.6
 DEFAULT_STATUS_POLL_SEC = 0.5
 DEFAULT_STATUS_READY_TIMEOUT_SEC = 2.0
 DEFAULT_COMMAND_SETTLE_SEC = 0.15
@@ -242,12 +222,12 @@ def parse_goal_value(value: Any) -> list[float] | str | None:
     return None
 
 
-def estimate_linear_duration(distance: float, speed: float, buffer_sec: float = DEFAULT_WALK_BUFFER_SEC) -> float:
+def estimate_linear_duration(distance: float, speed: float, buffer_sec: float = 0.5) -> float:
     return max(0.5, distance / max(abs(speed), 0.05) + buffer_sec)
 
 
 def estimate_climb_duration(height: float) -> float:
-    return max(DEFAULT_CLIMB_BASE_DURATION_SEC, DEFAULT_CLIMB_BASE_DURATION_SEC + height * 8.0)
+    return max(4.0, 4.0 + height * 8.0)
 
 
 def estimate_goal_skill_duration(goal_value: list[float] | str | None, fallback_sec: float) -> float:

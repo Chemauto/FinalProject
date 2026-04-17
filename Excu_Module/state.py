@@ -10,7 +10,6 @@ from Comm_Module import get_state
 from .runtime import (
     DEFAULT_STATUS_POLL_SEC,
     DEFAULT_STATUS_READY_TIMEOUT_SEC,
-    NAVIGATION_MODEL_USES,
     read_env_float,
     read_env_int,
 )
@@ -318,7 +317,8 @@ async def wait_for_navigation_completion(
         else:
             stable_hits = 0
 
-        if start_flag is False or (current_model_use is not None and current_model_use not in NAVIGATION_MODEL_USES):
+        from .skill_registry import get_navigation_model_uses
+        if start_flag is False or (current_model_use is not None and current_model_use not in get_navigation_model_uses()):
             if latest_dist_xy is None or latest_dist_xy > arrival_tol_m:
                 return {
                     "ok": False,
@@ -346,212 +346,6 @@ async def wait_for_navigation_completion(
         "pose_delta_xy": latest_pose_delta,
         "stable_hits": stable_hits,
         "elapsed_sec": round(time.time() - start_time, 3),
-    }
-
-
-def _check_walk_done(
-    state: dict[str, Any],
-    before_pose: list[float],
-    parameters: dict[str, Any],
-) -> dict[str, Any]:
-    """Check if walk has completed by measuring robot displacement."""
-    current_pose = extract_robot_pose(state)
-    if current_pose is None:
-        return {"done": False}
-
-    requested_distance = max(0.0, float(parameters.get("distance") or 0.0))
-    minimum_distance = minimum_verified_motion(
-        requested_distance,
-        ratio_env="FINALPROJECT_WALK_VERIFY_RATIO",
-        ratio_default=0.75,
-        abs_tol_env="FINALPROJECT_WALK_VERIFY_ABS_TOL_M",
-        abs_tol_default=0.15,
-    )
-
-    delta_x = current_pose[0] - before_pose[0]
-    delta_y = current_pose[1] - before_pose[1]
-    planar_distance = math.hypot(delta_x, delta_y)
-
-    route_side = str(parameters.get("route_side") or "前方").strip().lower()
-    axis = "x"
-    direction_sign = 1.0
-    if any(token in route_side for token in ("left", "左")):
-        axis = "y"
-    elif any(token in route_side for token in ("right", "右")):
-        axis = "y"
-        direction_sign = -1.0
-
-    signed_progress = (delta_x if axis == "x" else delta_y) * direction_sign
-    minimum_direction_progress = max(0.05, minimum_distance * 0.6)
-    done = planar_distance >= minimum_distance and signed_progress >= minimum_direction_progress
-
-    return {
-        "done": done,
-        "planar_distance": round(planar_distance, 3),
-        "minimum_distance": round(minimum_distance, 3),
-        "current_pose": current_pose,
-    }
-
-
-def _check_climb_done(
-    state: dict[str, Any],
-    before_pose: list[float],
-    parameters: dict[str, Any],
-) -> dict[str, Any]:
-    """Check if climb has completed by measuring robot height gain."""
-    current_pose = extract_robot_pose(state)
-    if current_pose is None:
-        return {"done": False}
-
-    requested_height = max(0.0, float(parameters.get("height") or 0.0))
-    minimum_height = minimum_verified_motion(
-        requested_height,
-        ratio_env="FINALPROJECT_CLIMB_VERIFY_RATIO",
-        ratio_default=0.6,
-        abs_tol_env="FINALPROJECT_CLIMB_VERIFY_ABS_TOL_M",
-        abs_tol_default=0.08,
-    )
-
-    delta_z = current_pose[2] - before_pose[2]
-    done = delta_z >= minimum_height
-
-    return {
-        "done": done,
-        "vertical_progress": round(delta_z, 3),
-        "minimum_height": round(minimum_height, 3),
-        "current_pose": current_pose,
-    }
-
-
-def _estimate_push_expected_distance(
-    before_box_pose: list[float],
-    state: dict[str, Any],
-    parameters: dict[str, Any],
-) -> float:
-    """Estimate expected push distance from box start to nearest platform edge."""
-    goal_command = parameters.get("goal_command")
-    if isinstance(goal_command, list) and len(goal_command) >= 2:
-        return math.hypot(
-            float(goal_command[0]) - before_box_pose[0],
-            float(goal_command[1]) - before_box_pose[1],
-        )
-
-    # Auto mode: estimate from box to nearest platform edge
-    scene_objects = extract_scene_objects(state)
-    min_dist = float("inf")
-    for obj in scene_objects:
-        obj_type = str(obj.get("type", "")).lower()
-        if obj_type != "platform":
-            continue
-        center = obj.get("center")
-        size = obj.get("size")
-        if not isinstance(center, list) or len(center) < 2:
-            continue
-        if not isinstance(size, list) or len(size) < 2:
-            continue
-        try:
-            # Distance from box to nearest edge of platform
-            cx, cy = float(center[0]), float(center[1])
-            sx, sy = float(size[0]), float(size[1])
-            nearest_x = max(cx - sx / 2.0, min(before_box_pose[0], cx + sx / 2.0))
-            nearest_y = max(cy - sy / 2.0, min(before_box_pose[1], cy + sy / 2.0))
-            dist = math.hypot(before_box_pose[0] - nearest_x, before_box_pose[1] - nearest_y)
-            min_dist = min(min_dist, dist)
-        except (TypeError, ValueError):
-            continue
-
-    return min_dist if min_dist < float("inf") else 0.5
-
-
-def _check_push_box_done(
-    state: dict[str, Any],
-    before_box_pose: list[float],
-    parameters: dict[str, Any],
-) -> dict[str, Any]:
-    """Check if push_box has completed.
-
-    Success logic:
-      - If goal_command is a concrete coordinate: box within arrival_tolerance (0.1m) of goal.
-      - If goal_command is auto: box displacement >= minimum_verified_motion (computed from
-        distance to nearest platform, same ratio-based approach as walk/climb).
-    """
-    current_box = extract_box_pose(state)
-    if current_box is None:
-        return {"done": False}
-
-    box_delta_x = current_box[0] - before_box_pose[0]
-    box_delta_y = current_box[1] - before_box_pose[1]
-    box_planar_distance = math.hypot(box_delta_x, box_delta_y)
-    arrival_tol = abs(read_env_float("FINALPROJECT_PUSH_BOX_ARRIVAL_TOL_M", 0.1))
-
-    goal_command = parameters.get("goal_command")
-    box_goal_dist_xy: float | None = None
-
-    if isinstance(goal_command, list) and len(goal_command) >= 2:
-        # Concrete target: box within arrival_tolerance of goal
-        box_goal_dist_xy = math.hypot(
-            current_box[0] - float(goal_command[0]),
-            current_box[1] - float(goal_command[1]),
-        )
-        done = box_goal_dist_xy <= arrival_tol
-    else:
-        # Auto: require displacement >= minimum_verified_motion based on expected distance
-        expected_distance = _estimate_push_expected_distance(before_box_pose, state, parameters)
-        minimum_box_motion = minimum_verified_motion(
-            expected_distance,
-            ratio_env="FINALPROJECT_PUSH_BOX_VERIFY_RATIO",
-            ratio_default=0.75,
-            abs_tol_env="FINALPROJECT_PUSH_BOX_VERIFY_ABS_TOL_M",
-            abs_tol_default=0.15,
-        )
-        done = box_planar_distance >= minimum_box_motion
-
-    return {
-        "done": done,
-        "box_planar_distance": round(box_planar_distance, 3),
-        "arrival_tol": round(arrival_tol, 3),
-        "current_box_pose": current_box,
-        "box_goal_dist_xy": round(box_goal_dist_xy, 3) if box_goal_dist_xy is not None else None,
-    }
-
-
-def _check_way_select_done(
-    state: dict[str, Any],
-    before_pose: list[float],
-    parameters: dict[str, Any],
-) -> dict[str, Any]:
-    """Check if way_select has completed by measuring lateral displacement."""
-    current_pose = extract_robot_pose(state)
-    if current_pose is None:
-        return {"done": False}
-
-    requested_distance = max(0.0, float(parameters.get("lateral_distance") or 0.0))
-    minimum_distance = minimum_verified_motion(
-        requested_distance,
-        ratio_env="FINALPROJECT_WAY_SELECT_VERIFY_RATIO",
-        ratio_default=0.7,
-        abs_tol_env="FINALPROJECT_WAY_SELECT_VERIFY_ABS_TOL_M",
-        abs_tol_default=0.12,
-    )
-
-    direction = str(parameters.get("direction") or "").strip().lower()
-    direction_sign = 1.0 if direction == "left" else -1.0
-
-    delta_y = current_pose[1] - before_pose[1]
-    lateral_progress = delta_y * direction_sign
-    planar_distance = math.hypot(
-        current_pose[0] - before_pose[0],
-        current_pose[1] - before_pose[1],
-    )
-    minimum_lateral_progress = max(0.05, minimum_distance * 0.8)
-    done = planar_distance >= minimum_distance and lateral_progress >= minimum_lateral_progress
-
-    return {
-        "done": done,
-        "lateral_progress": round(lateral_progress, 3),
-        "planar_distance": round(planar_distance, 3),
-        "minimum_distance": round(minimum_distance, 3),
-        "current_pose": current_pose,
     }
 
 
@@ -608,15 +402,11 @@ async def wait_for_skill_completion(
                 }
             continue
 
-        # Skill-specific completion check
-        if skill_name == "walk" and before_pose is not None:
-            result = _check_walk_done(state, before_pose, parameters)
-        elif skill_name in {"climb", "climb_align"} and before_pose is not None:
-            result = _check_climb_done(state, before_pose, parameters)
-        elif skill_name == "push_box" and before_box is not None:
-            result = _check_push_box_done(state, before_box, parameters)
-        elif skill_name == "way_select" and before_pose is not None:
-            result = _check_way_select_done(state, before_pose, parameters)
+        # Skill-specific completion check via registry
+        from .skill_registry import get_skill
+        skill = get_skill(skill_name)
+        if skill is not None:
+            result = skill.check_completion(state, before_state, parameters)
         else:
             continue
 
@@ -723,273 +513,18 @@ def build_navigation_validation(skill_name: str, goal_command: list[float], arri
     }
 
 
-def validate_walk_execution(
-    parameters: dict[str, Any],
-    before_state: dict[str, Any] | None,
-    after_state: dict[str, Any] | None,
-) -> dict[str, Any]:
-    validation, before_pose, after_pose = build_motion_validation_base("walk", before_state, after_state)
-    if before_pose is None or after_pose is None:
-        return validation
-
-    requested_distance = max(0.0, float(parameters.get("distance") or 0.0))
-    minimum_distance = minimum_verified_motion(
-        requested_distance,
-        ratio_env="FINALPROJECT_WALK_VERIFY_RATIO",
-        ratio_default=0.75,
-        abs_tol_env="FINALPROJECT_WALK_VERIFY_ABS_TOL_M",
-        abs_tol_default=0.15,
-    )
-    delta_x = after_pose[0] - before_pose[0]
-    delta_y = after_pose[1] - before_pose[1]
-    delta_z = after_pose[2] - before_pose[2]
-    planar_distance = math.hypot(delta_x, delta_y)
-
-    route_side = str(parameters.get("route_side") or "前方").strip().lower()
-    axis = "x"
-    direction_sign = 1.0
-    direction_label = "前方"
-    if any(token in route_side for token in ("left", "左")):
-        axis = "y"
-        direction_label = "左侧"
-    elif any(token in route_side for token in ("right", "右")):
-        axis = "y"
-        direction_sign = -1.0
-        direction_label = "右侧"
-
-    signed_progress = (delta_x if axis == "x" else delta_y) * direction_sign
-    minimum_direction_progress = max(0.05, minimum_distance * 0.6)
-    meets_requirements = planar_distance >= minimum_distance and signed_progress >= minimum_direction_progress
-    validation.update(
-        {
-            "meets_requirements": meets_requirements,
-            "delta_pose": round_pose([delta_x, delta_y, delta_z]),
-            "planar_distance": round(planar_distance, 3),
-            "required_distance": round(requested_distance, 3),
-            "minimum_required_distance": round(minimum_distance, 3),
-            "direction_axis": axis,
-            "direction_label": direction_label,
-            "direction_progress": round(signed_progress, 3),
-            "summary": (
-                f"walk 真实状态校验{'通过' if meets_requirements else '失败'}: "
-                f"机器人从 {validation['before_robot_pose']} 移动到 {validation['after_robot_pose']}，"
-                f"平面位移 {planar_distance:.3f}m，{direction_label}方向有效位移 {signed_progress:.3f}m，"
-                f"要求至少 {minimum_distance:.3f}m。"
-            ),
-        }
-    )
-    return validation
-
-
-def validate_way_select_execution(
-    parameters: dict[str, Any],
-    before_state: dict[str, Any] | None,
-    after_state: dict[str, Any] | None,
-) -> dict[str, Any]:
-    validation, before_pose, after_pose = build_motion_validation_base("way_select", before_state, after_state)
-    if before_pose is None or after_pose is None:
-        return validation
-
-    requested_distance = max(0.0, float(parameters.get("lateral_distance") or 0.0))
-    minimum_distance = minimum_verified_motion(
-        requested_distance,
-        ratio_env="FINALPROJECT_WAY_SELECT_VERIFY_RATIO",
-        ratio_default=0.7,
-        abs_tol_env="FINALPROJECT_WAY_SELECT_VERIFY_ABS_TOL_M",
-        abs_tol_default=0.12,
-    )
-    direction = str(parameters.get("direction") or "").strip().lower()
-    direction_sign = 1.0 if direction == "left" else -1.0
-    direction_label = "左侧" if direction_sign > 0 else "右侧"
-    delta_x = after_pose[0] - before_pose[0]
-    delta_y = after_pose[1] - before_pose[1]
-    delta_z = after_pose[2] - before_pose[2]
-    planar_distance = math.hypot(delta_x, delta_y)
-    lateral_progress = delta_y * direction_sign
-    minimum_lateral_progress = max(0.05, minimum_distance * 0.8)
-    meets_requirements = planar_distance >= minimum_distance and lateral_progress >= minimum_lateral_progress
-    validation.update(
-        {
-            "meets_requirements": meets_requirements,
-            "delta_pose": round_pose([delta_x, delta_y, delta_z]),
-            "planar_distance": round(planar_distance, 3),
-            "required_lateral_distance": round(requested_distance, 3),
-            "minimum_required_distance": round(minimum_distance, 3),
-            "lateral_progress": round(lateral_progress, 3),
-            "direction_label": direction_label,
-            "summary": (
-                f"way_select 真实状态校验{'通过' if meets_requirements else '失败'}: "
-                f"机器人从 {validation['before_robot_pose']} 移动到 {validation['after_robot_pose']}，"
-                f"平面位移 {planar_distance:.3f}m，{direction_label}方向位移 {lateral_progress:.3f}m，"
-                f"要求至少 {minimum_distance:.3f}m。"
-            ),
-        }
-    )
-    return validation
-
-
-def validate_climb_execution(
-    parameters: dict[str, Any],
-    before_state: dict[str, Any] | None,
-    after_state: dict[str, Any] | None,
-) -> dict[str, Any]:
-    validation, before_pose, after_pose = build_motion_validation_base("climb", before_state, after_state)
-    if before_pose is None or after_pose is None:
-        return validation
-
-    requested_height = max(0.0, float(parameters.get("height") or 0.0))
-    minimum_height = minimum_verified_motion(
-        requested_height,
-        ratio_env="FINALPROJECT_CLIMB_VERIFY_RATIO",
-        ratio_default=0.6,
-        abs_tol_env="FINALPROJECT_CLIMB_VERIFY_ABS_TOL_M",
-        abs_tol_default=0.08,
-    )
-    delta_x = after_pose[0] - before_pose[0]
-    delta_y = after_pose[1] - before_pose[1]
-    delta_z = after_pose[2] - before_pose[2]
-    planar_distance = math.hypot(delta_x, delta_y)
-    meets_requirements = delta_z >= minimum_height
-    validation.update(
-        {
-            "meets_requirements": meets_requirements,
-            "delta_pose": round_pose([delta_x, delta_y, delta_z]),
-            "planar_distance": round(planar_distance, 3),
-            "required_height": round(requested_height, 3),
-            "minimum_required_height": round(minimum_height, 3),
-            "vertical_progress": round(delta_z, 3),
-            "summary": (
-                f"climb 真实状态校验{'通过' if meets_requirements else '失败'}: "
-                f"机器人从 {validation['before_robot_pose']} 移动到 {validation['after_robot_pose']}，"
-                f"高度变化 {delta_z:.3f}m，平面位移 {planar_distance:.3f}m，"
-                f"要求至少抬升 {minimum_height:.3f}m。"
-            ),
-        }
-    )
-    return validation
-
-
-def validate_push_box_execution(
-    parameters: dict[str, Any],
-    before_state: dict[str, Any] | None,
-    after_state: dict[str, Any] | None,
-) -> dict[str, Any]:
-    # --- Extract box positions (primary validation target) ---
-    before_box = extract_box_pose(before_state)
-    after_box = extract_box_pose(after_state)
-
-    if before_box is None or after_box is None:
-        # Cannot validate via box pose; fall back to robot motion only
-        validation, before_pose, after_pose = build_motion_validation_base("push_box", before_state, after_state)
-        if before_pose is None or after_pose is None:
-            return validation
-
-        delta_x = after_pose[0] - before_pose[0]
-        delta_y = after_pose[1] - before_pose[1]
-        delta_z = after_pose[2] - before_pose[2]
-        planar_distance = math.hypot(delta_x, delta_y)
-        minimum_robot_motion = abs(read_env_float("FINALPROJECT_PUSH_BOX_VERIFY_MIN_ROBOT_MOVE_M", 0.3))
-        meets_requirements = planar_distance >= minimum_robot_motion
-        validation.update(
-            {
-                "meets_requirements": meets_requirements,
-                "validation_mode": "robot_fallback",
-                "delta_pose": round_pose([delta_x, delta_y, delta_z]),
-                "planar_distance": round(planar_distance, 3),
-                "minimum_robot_motion": round(minimum_robot_motion, 3),
-                "summary": (
-                    "push_box 校验(后备-机器人位移): "
-                    f"无法获取箱子位置，机器人从 {validation['before_robot_pose']} 移动到 "
-                    f"{validation['after_robot_pose']}，平面位移 {planar_distance:.3f}m，"
-                    f"最小运动要求 {minimum_robot_motion:.3f}m。"
-                ),
-            }
-        )
-        return validation
-
-    # --- Primary: validate by box position ---
-    box_delta_x = after_box[0] - before_box[0]
-    box_delta_y = after_box[1] - before_box[1]
-    box_delta_z = after_box[2] - before_box[2]
-    box_planar_distance = math.hypot(box_delta_x, box_delta_y)
-    arrival_tol = abs(read_env_float("FINALPROJECT_PUSH_BOX_ARRIVAL_TOL_M", 0.1))
-
-    goal_command = parameters.get("goal_command")
-    box_goal_dist_xy: float | None = None
-    check_mode = ""
-
-    if isinstance(goal_command, list) and len(goal_command) >= 2:
-        # Concrete target: box within arrival_tolerance of goal
-        box_goal_dist_xy = math.hypot(after_box[0] - float(goal_command[0]), after_box[1] - float(goal_command[1]))
-        meets_requirements = box_goal_dist_xy <= arrival_tol
-        check_mode = f"目标到达校验: 箱子距目标 {box_goal_dist_xy:.3f}m，容许误差 {arrival_tol:.3f}m"
-    else:
-        # Auto: displacement >= minimum_verified_motion based on expected distance
-        expected_distance = _estimate_push_expected_distance(before_box, before_state, parameters)
-        minimum_box_motion = minimum_verified_motion(
-            expected_distance,
-            ratio_env="FINALPROJECT_PUSH_BOX_VERIFY_RATIO",
-            ratio_default=0.75,
-            abs_tol_env="FINALPROJECT_PUSH_BOX_VERIFY_ABS_TOL_M",
-            abs_tol_default=0.15,
-        )
-        meets_requirements = box_planar_distance >= minimum_box_motion
-        check_mode = f"位移校验: 箱子位移 {box_planar_distance:.3f}m，预期距离 {expected_distance:.3f}m，最小要求 {minimum_box_motion:.3f}m"
-
-    # Collect robot motion as auxiliary info
-    before_robot = extract_robot_pose(before_state)
-    after_robot = extract_robot_pose(after_state)
-    robot_info = ""
-    if before_robot is not None and after_robot is not None:
-        r_delta_x = after_robot[0] - before_robot[0]
-        r_delta_y = after_robot[1] - before_robot[1]
-        robot_planar = math.hypot(r_delta_x, r_delta_y)
-        robot_info = f" 机器人从 {before_robot} 移动到 {after_robot}，平面位移 {robot_planar:.3f}m。"
-
-    summary = (
-        f"push_box 真实状态校验{'通过' if meets_requirements else '失败'}: "
-        f"箱子从 {before_box} 移动到 {after_box}，{check_mode}。"
-    )
-    summary += robot_info
-
-    validation: dict[str, Any] = {
-        "verified": True,
-        "source": "comm_state",
-        "validation_mode": "box_primary",
-        "before_state": summarize_state(before_state),
-        "after_state": summarize_state(after_state),
-        "before_robot_pose": before_robot,
-        "after_robot_pose": after_robot,
-        "before_box_pose": before_box,
-        "after_box_pose": after_box,
-    }
-    validation.update(
-        {
-            "meets_requirements": meets_requirements,
-            "box_delta_pose": round_pose([box_delta_x, box_delta_y, box_delta_z]),
-            "box_planar_distance": round(box_planar_distance, 3),
-            "arrival_tol": round(arrival_tol, 3),
-            "box_goal_dist_xy": round(box_goal_dist_xy, 3) if box_goal_dist_xy is not None else None,
-            "summary": summary,
-        }
-    )
-    return validation
-
-
 def validate_live_execution(
     skill_name: str,
     parameters: dict[str, Any],
     before_state: dict[str, Any] | None,
     after_state: dict[str, Any] | None,
 ) -> dict[str, Any]:
-    if skill_name == "walk":
-        return validate_walk_execution(parameters, before_state, after_state)
-    if skill_name == "way_select":
-        return validate_way_select_execution(parameters, before_state, after_state)
-    if skill_name in {"climb", "climb_align"}:
-        return validate_climb_execution(parameters, before_state, after_state)
-    if skill_name == "push_box":
-        return validate_push_box_execution(parameters, before_state, after_state)
+    from .skill_registry import get_skill
+    skill = get_skill(skill_name)
+    if skill is not None:
+        result = skill.validate(parameters, before_state, after_state)
+        if result is not None:
+            return result
     return build_missing_validation(
         skill_name,
         "当前技能未定义通用状态校验规则",

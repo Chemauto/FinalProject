@@ -4,12 +4,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-
-DEFAULT_CONSTRAINTS = {
-    "max_climb_height_m": 0.3,
-    "push_only_on_ground": True,
-    "climb_requires_adjacency": True,
-}
+DEFAULT_CONSTRAINTS: dict[str, Any] = {}
 
 
 def _normalize_bool(value: Any, default: bool) -> bool:
@@ -56,6 +51,19 @@ def _normalize_object(payload: dict[str, Any], index: int) -> dict[str, Any]:
     }
 
 
+def _normalize_constraints(payload: dict[str, Any]) -> dict[str, Any]:
+    """Generic constraint normalization: pass through all key-value pairs."""
+    result: dict[str, Any] = {}
+    for key, value in payload.items():
+        if isinstance(value, bool):
+            result[key] = value
+        elif isinstance(value, (int, float)):
+            result[key] = float(value)
+        else:
+            result[key] = value
+    return result
+
+
 def normalize_object_facts(payload: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise ValueError("object_facts 顶层必须是 JSON 对象")
@@ -68,20 +76,7 @@ def normalize_object_facts(payload: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(objects_payload, list):
         raise ValueError("objects 必须是数组")
 
-    constraints = {
-        "max_climb_height_m": _normalize_number(
-            constraints_payload.get("max_climb_height_m", DEFAULT_CONSTRAINTS["max_climb_height_m"]),
-            "constraints.max_climb_height_m",
-        ),
-        "push_only_on_ground": _normalize_bool(
-            constraints_payload.get("push_only_on_ground"),
-            default=DEFAULT_CONSTRAINTS["push_only_on_ground"],
-        ),
-        "climb_requires_adjacency": _normalize_bool(
-            constraints_payload.get("climb_requires_adjacency"),
-            default=DEFAULT_CONSTRAINTS["climb_requires_adjacency"],
-        ),
-    }
+    constraints = _normalize_constraints(constraints_payload)
 
     return {
         "navigation_goal": _normalize_vec3(payload.get("navigation_goal"), "navigation_goal"),

@@ -9,28 +9,6 @@ system_prompt: |
   如果上一步结果可用，必须结合上一步结果继续决策。
   只选择最相关的工具，不要无意义重复调用。
 
-  【关键规则 - 强制执行】
-  1. 当前四足导航只允许使用 7 个技能：walk、navigation、nav_climb、climb_align、climb、push_box、way_select
-  2. 如果当前任务是选择左侧或右侧路线，必须调用 way_select
-  3. 如果当前任务是前往目标点、目标坐标或目标位置，且存在地面可达路线，调用 navigation
-  4. 如果当前任务是前往目标点、但没有地面可达路线且必须直接翻越高台，调用 nav_climb
-  5. 如果当前任务只是沿当前路线继续前进、且没有明确目标点，则调用 walk
-  6. 如果当前任务是把箱子推到目标位置，调用 push_box
-  7. 如果当前任务是先导航到箱子后方或攀爬起点，调用 climb_align
-  8. 如果当前任务是爬上箱子、爬上低平台，或执行 box_assist / climb_align 之后的局部登台动作，调用 climb
-  9. 当当前任务是前往目标点、且场景描述为开阔/可通行/无明显障碍时，优先直接执行 navigation，不要自行升级成 climb、nav_climb 或 way_select
-  10. navigation 具备自动导航和绕障能力；只要存在地面可达路线，就优先使用 navigation
-  11. nav_climb 可以翻越高台或低平台，但不负责常规绕障；只有当前方没有地面通路、必须直接翻越高差才能前往目标点时才使用
-  12. 当任务描述包含环境判断和技能选择结论时，优先把这段说明放进 speech 参数，让机器人先播报再执行
-  13. way_select 的 direction 参数优先填写 left 或 right；机器人从中间出发时，先 way_select，再执行后续技能
-  14. 对于“左侧高台0.2米，右侧无障碍”的场景，如果规划层已经判定右侧或前方存在可通行地面，则优先直接 navigation；只有必须先贴边切线时才 way_select 后再 navigation
-  15. climb 的 height 必须填写“当前这一步要爬的相对高度”，不是目标平台绝对高度；单步高度必须 <= 0.3 米
-  16. 对于“高台0.4米且存在0.2米箱子”的场景，顺序优先是 push_box(auto) -> climb_align -> climb(0.2) -> navigation
-  17. 如果只有一侧高台高度 <= 0.3 米、另一侧超过 0.3 米且没有箱子，且不存在可直接导航的地面路线，则先调用 way_select 到可攀爬侧，再调用 climb，不要误判为 walk
-  18. 如果给出了 `calculated_parameters`，优先使用它们；尤其是 navigation.goal_command、nav_climb.goal_command、climb_align.stage/target、climb.height、push_box.target_position=auto、way_select.direction 不要擅自改写
-  19. 如果给出了 `parameter_context`，先理解对象关系，再决定是否补充缺省参数
-  20. 在调用工具前，先用一句中文简要说明“为什么调用这个函数”，然后再发起工具调用
-
 user_prompt: |
   执行任务：{task_description}
 

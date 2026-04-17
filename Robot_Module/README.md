@@ -85,6 +85,13 @@ Robot_Module/agent_tools.py
 - `push_box`
 - `way_select`
 
+以及辅助文件：
+
+- `_bishe_helpers.py` — Bishe 常量、几何辅助函数、`build_bishe_context()` 上下文钩子
+- `bishe_planner.py` — 规则规划器（box-assist 导航）
+- `lowlevel_prompt.yaml` — Bishe 特定的低层 prompt
+- `highlevel_prompt.yaml` — Bishe 特定的高层 prompt
+
 ## 内部视觉技能
 
 当前 `Vision/Task/Bishe` 的下层视觉技能是：

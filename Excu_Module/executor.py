@@ -4,10 +4,7 @@ import asyncio
 from typing import Any, Sequence
 
 from .runtime import (
-    DEFAULT_NAVIGATION_DURATION_SEC,
-    DEFAULT_NAVIGATION_TIMEOUT_MARGIN_SEC,
     DEFAULT_STATUS_READY_TIMEOUT_SEC,
-    NAVIGATION_MODEL_USES,
     build_feedback,
     estimate_goal_skill_duration,
     load_runtime_config,
@@ -22,6 +19,10 @@ from .runtime import (
     wait_for_execution_feedback,
     apply_envtest_command,
 )
+
+# ── Generic navigation timing defaults ────────────────────────────────
+DEFAULT_NAVIGATION_DURATION_SEC = 6.0
+DEFAULT_NAVIGATION_TIMEOUT_MARGIN_SEC = 5.0
 from .state import (
     build_navigation_validation,
     extract_status_timestamp,
@@ -109,7 +110,8 @@ async def wait_skill_feedback(
     await asyncio.sleep(config.command_settle_sec)
     apply_envtest_command(config, start=True)
 
-    if model_use in NAVIGATION_MODEL_USES and isinstance(goal_command, list) and len(goal_command) >= 3:
+    from .skill_registry import get_navigation_model_uses
+    if model_use in get_navigation_model_uses() and isinstance(goal_command, list) and len(goal_command) >= 3:
         arrival_result = await wait_for_navigation_completion(
             task_type=config.task_type,
             goal_command=goal_command,

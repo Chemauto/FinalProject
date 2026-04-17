@@ -18,13 +18,15 @@
 - `VLM_Module`
   读取图片并输出结构化视觉语义，不负责真值状态。
 - `LLM_Module`
-  负责任务规划、子任务分解、参数计算、低层工具调用。
+  负责任务规划、子任务分解、参数计算、低层工具调用。不包含任何项目特定代码。
 - `Robot_Module`
-  负责技能注册和任务技能实现，不负责通用执行管理。
+  负责技能注册和任务技能实现，不负责通用执行管理。包含项目特定代码（如 Bishe）。
 - `Excu_Module`
-  负责统一执行、等待反馈、状态校验。
+  负责统一执行、等待反馈、状态校验。不包含任何项目特定代码。提供可插拔钩子接口。
 - `Comm_Module`
   负责统一状态入口，屏蔽具体数据来源。
+
+换项目只改 `Robot_Module` + `Comm_Module`，**零修改** `Excu_Module`、`LLM_Module`、`VLM_Module`。
 
 ## 当前主链路
 
@@ -84,6 +86,7 @@ robot_act
 ```text
 Robot_Module/module/Action/skills.py
 -> 选择 task，例如 bishe
+-> 注册项目特定钩子（上下文、规则规划、prompt、导航码）
 -> 注册 Robot_Module/module/Action/Task/Bishe/*.py
 
 Bishe/*.py
@@ -91,8 +94,22 @@ Bishe/*.py
 -> 只负责把参数映射成执行请求
 -> 必要时做少量任务内目标计算
 
+Bishe/_bishe_helpers.py
+-> Bishe 常量和几何辅助函数
+-> build_bishe_context() 上下文钩子
+
+Bishe/bishe_planner.py
+-> 规则规划器（box-assist 导航）
+
+Bishe/lowlevel_prompt.yaml
+-> Bishe 特定的低层 prompt
+
+Bishe/highlevel_prompt.yaml
+-> Bishe 特定的高层 prompt
+
 Excu_Module
 -> 真正负责执行和状态校验
+-> 不包含任何 Bishe 代码
 ```
 
 `Action` 和 `Vision` 当前都是由 `Robot_Module/agent_tools.py` 并列注册的。
@@ -187,6 +204,7 @@ python interactive.py
 - 当前只内置 `bishe` 动作任务和视觉任务。
 - 没开仿真时，VLM 可能退回默认图片，这不代表实时现场。
 - 没有实时状态时，`robot_act` 仍可能完成规划，但执行阶段会失败。
+- `Excu_Module` 和 `LLM_Module` 不包含任何 Bishe 代码，换项目零修改。
 
 ## 相关文档
 
