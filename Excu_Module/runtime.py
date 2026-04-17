@@ -35,10 +35,6 @@ GOAL_AUTO_TOKENS = {
     "auto",
     "scene",
     "default",
-    "高台旁边",
-    "平台旁边",
-    "高台前方",
-    "目标点附近",
 }
 
 
@@ -224,10 +220,6 @@ def parse_goal_value(value: Any) -> list[float] | str | None:
 
 def estimate_linear_duration(distance: float, speed: float, buffer_sec: float = 0.5) -> float:
     return max(0.5, distance / max(abs(speed), 0.05) + buffer_sec)
-
-
-def estimate_climb_duration(height: float) -> float:
-    return max(4.0, 4.0 + height * 8.0)
 
 
 def estimate_goal_skill_duration(goal_value: list[float] | str | None, fallback_sec: float) -> float:

@@ -53,7 +53,7 @@
       "type": "box",
       "center": [
         1.0,
-        -0.0,
+        0.0,
         0.0
       ],
       "size": [
@@ -103,7 +103,7 @@
       "type": "box",
       "center": [
         1.0,
-        -0.0,
+        0.0,
         0.0
       ],
       "size": [
@@ -138,7 +138,7 @@
     ],
     "unified_obs_dim": 252,
     "policy_obs_dim": null,
-    "timestamp": 1776392308.637097,
+    "timestamp": 1776419456.45972,
     "platform_1": {
       "name": "left_high_obstacle",
       "position": [
@@ -169,7 +169,7 @@
       "name": "support_box",
       "position": [
         1.0,
-        -0.0,
+        0.0,
         0.1
       ],
       "size": [
@@ -218,7 +218,7 @@
       "type": "box",
       "center": [
         1.0,
-        -0.0,
+        0.0,
         0.0
       ],
       "size": [

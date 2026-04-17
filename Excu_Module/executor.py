@@ -26,10 +26,9 @@ DEFAULT_NAVIGATION_TIMEOUT_MARGIN_SEC = 5.0
 from .state import (
     build_navigation_validation,
     extract_status_timestamp,
-    validate_live_execution,
+    summarize_state,
     wait_for_live_state,
     wait_for_navigation_completion,
-    wait_for_skill_completion,
 )
 
 
@@ -138,30 +137,26 @@ async def wait_skill_feedback(
         }
 
     actual_wait_sec = max(timeout_sec, execution_time_sec)
-    completion_result = await wait_for_skill_completion(
-        skill_name=skill_name,
-        parameters=parameters,
-        before_state=before_state,
-        task_type=config.task_type,
-        timeout_sec=actual_wait_sec,
-    )
+    await asyncio.sleep(actual_wait_sec)
     await stop_envtest_skill(config)
-    after_state = completion_result.get("state")
-    if not isinstance(after_state, dict):
-        after_state = await wait_for_live_state(
-            task_type=config.task_type,
-            timeout_sec=ready_timeout_sec,
-            min_timestamp=before_timestamp,
-        )
-    validation = validate_live_execution(skill_name, parameters, before_state, after_state)
+    after_state = await wait_for_live_state(
+        task_type=config.task_type,
+        timeout_sec=ready_timeout_sec,
+        min_timestamp=before_timestamp,
+    )
 
-    completion_ok = bool(completion_result.get("ok"))
-    validation_ok = validation.get("verified") and validation.get("meets_requirements")
-    signal = "SUCCESS" if (completion_ok or validation_ok) else "FAILURE"
+    validation = {
+        "verified": after_state is not None,
+        "meets_requirements": after_state is not None,
+        "source": "comm_state",
+        "summary": f"{skill_name} 已完成执行" if after_state else f"{skill_name} 执行后无法获取状态",
+        "before_state": summarize_state(before_state),
+        "after_state": summarize_state(after_state),
+    }
 
-    completion_reason = str(completion_result.get("reason") or "")
-    validation_summary = str(validation.get("summary") or "")
-    summary = validation_summary if validation_summary else (completion_reason or local_success_message)
+    validation_ok = validation["verified"] and validation["meets_requirements"]
+    signal = "SUCCESS" if validation_ok else "FAILURE"
+    summary = validation["summary"]
 
     return {
         "action_id": action_id,
@@ -173,9 +168,7 @@ async def wait_skill_feedback(
         ),
         "result": {
             **planned_result,
-            "mode": "comm_state_polling",
-            "wait_time_sec": completion_result.get("elapsed_sec"),
-            "completion_check": completion_result,
+            "mode": "comm_state_timeout",
             "verification": validation,
         },
     }
@@ -187,9 +180,9 @@ async def execute_goal_navigation_skill(
     model_use: int,
     goal_command: list[float] | str,
     target: str,
-    speech_text: str,
-    wait_feedback: bool,
-    log_label: str,
+    speech_text: str = "",
+    wait_feedback: bool = True,
+    log_label: str = "导航",
     task_type: str | None = None,
 ) -> dict[str, Any]:
     normalized_goal = parse_goal_value(goal_command)

@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+"""Agent_Module/replanner.py — 执行流水线（含重规划）+ TUI 入口。"""
+
 from __future__ import annotations
 
-import asyncio
 import io
 import json
 import logging
@@ -12,7 +13,7 @@ import sys
 from contextlib import redirect_stderr
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from openai import OpenAI
 from rich.console import Console
@@ -26,25 +27,24 @@ for logger_name in ("openai", "httpx"):
 for var in ("http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "all_proxy", "no_proxy", "NO_PROXY"):
     os.environ.pop(var, None)
 
-project_root = Path(__file__).parent.parent
+project_root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(project_root))
 
 try:
     from dotenv import load_dotenv
-
     env_file = project_root / ".env"
     if env_file.exists():
         load_dotenv(env_file)
 except ImportError:
     pass
 
-from Robot_Module.agent_tools import (
-    get_action_tool_definitions,
-    get_agent_tool_definitions,
-    get_skill_function,
-    get_vision_tool_definitions,
-    register_all_modules,
-)
+try:
+    from .planner import Planner
+    from .executor import TaskExecutor, execute_tool
+except ImportError:
+    from planner import Planner
+    from executor import TaskExecutor, execute_tool
+
 
 WELCOME_TITLE = "LQN Claw TUI"
 AGENT_SYSTEM_PROMPT = """你是一个机器人智能体，不是机器人本体。
@@ -62,6 +62,183 @@ AGENT_SYSTEM_PROMPT = """你是一个机器人智能体，不是机器人本体�
 - 如果已经调用过 vlm_observe，再调用 robot_act 时，应优先把 visual_context 传入 observation_context，把 env_state.scene_facts 传入 scene_facts_json；若没有 env_state，再退回原始 scene_facts
 - 回复简洁、自然、直接
 """
+
+
+# ── PipelineRunner ─────────────────────────────────────────────────────
+
+
+class PipelineRunner:
+    """串联 plan → parameter → execute 的完整流水线，含重规划循环。"""
+
+    def __init__(
+        self,
+        planner: Planner,
+        task_executor: TaskExecutor,
+        max_replans: int = 1,
+    ):
+        self.planner = planner
+        self.task_executor = task_executor
+        self.max_replans = max_replans
+
+    def run_pipeline(
+        self,
+        user_input: str,
+        agent_thought: str,
+        tools: list[dict],
+        execute_tool_fn: Callable,
+        visual_context: str | None = None,
+        scene_facts: dict[str, Any] | None = None,
+        object_facts: dict[str, Any] | None = None,
+    ) -> list[dict]:
+        print("\n" + "█" * 60 + f"\n📥 [用户输入] {user_input}\n" + "█" * 60)
+        try:
+            results: list[dict[str, Any]] = []
+            plan_input = user_input
+
+            for attempt in range(self.max_replans + 1):
+                tasks, plan_meta = self.planner.plan_tasks(
+                    plan_input, agent_thought, tools, visual_context,
+                    scene_facts=scene_facts,
+                    object_facts=object_facts,
+                )
+                if not tasks:
+                    break
+
+                active_tasks = self.planner.annotate_tasks(tasks, object_facts)
+                task_understanding = self._build_task_understanding(user_input, active_tasks)
+                if task_understanding:
+                    thought_prefix = f"顶层思考: {agent_thought}\n" if agent_thought else ""
+                    print("\n" + "─" * 60 + f"\n👁️ [LLM思考]\n{thought_prefix}{task_understanding}\n" + "─" * 60)
+
+                print("\n" + "█" * 60 + "\n🤖 [下层LLM] 开始执行与工具决策\n" + "█" * 60)
+                previous_result = None
+                should_replan = False
+
+                for idx, task in enumerate(active_tasks, start=1):
+                    print(f"\n【步骤 {idx}/{len(active_tasks)}】")
+                    print(f"📌 [规划函数] {task.get('function', '待LLM决定')}")
+                    print(f"📝 [规划依据] {task.get('reason', '未提供规划依据')}")
+                    result = self.task_executor.execute_single_task(
+                        task, tools, execute_tool_fn, previous_result, visual_context,
+                    )
+                    task_success, assessment_message = self.assess_result(result)
+                    result["success"] = task_success
+                    if assessment_message:
+                        result["assessment_message"] = assessment_message
+                    results.append(result)
+
+                    tool_output = result.get("result", {})
+                    if task_success and tool_output:
+                        previous_result = tool_output.get("result")
+                        if assessment_message:
+                            print(f"✅ [结果校验] {assessment_message}")
+                        continue
+
+                    previous_result = None
+                    failure_message = (
+                        assessment_message
+                        or (result.get("feedback") or {}).get("message")
+                        or result.get("error")
+                        or "当前步骤执行失败"
+                    )
+                    if attempt < self.max_replans:
+                        print(f"\n🔁 [重规划] {failure_message}")
+                        plan_input = f"{user_input}\n上次执行失败：{failure_message}"
+                        should_replan = True
+                    else:
+                        print(f"\n⚠️  [中止] {failure_message}")
+                    break
+
+                if not should_replan:
+                    break
+
+            print("\n" + "█" * 60 + "\n✅ [执行完成] 任务总结\n" + "█" * 60)
+            for idx, result in enumerate(results, 1):
+                status = "✅ 成功" if result.get("success") else "❌ 失败"
+                action = result.get("action", "未调用")
+                task_label = result.get("task", "未记录任务")
+                print(f"  {idx}. {task_label} -> {action} - {status}")
+            return results
+        except Exception as error:
+            print(f"\n❌ [错误] {type(error).__name__}: {error}")
+            import traceback
+            traceback.print_exc()
+            return []
+
+    # ── Result assessment ───────────────────────────────────────────────
+
+    def assess_result(self, result: dict[str, Any]) -> tuple[bool, str]:
+        feedback = result.get("feedback") or {}
+        validation = self._extract_execution_validation(result)
+
+        if validation:
+            summary = str(validation.get("summary") or feedback.get("message") or "").strip()
+            verified = validation.get("verified")
+            meets_requirements = validation.get("meets_requirements")
+
+            if verified is True and meets_requirements is True:
+                return True, summary or "动作已通过真实状态校验"
+            if verified is False:
+                return False, summary or "未获取到真实执行数据，无法确认动作是否满足要求"
+            if meets_requirements is False:
+                return False, summary or "动作未满足任务要求"
+
+        signal = str(feedback.get("signal") or "").upper()
+        message = str(feedback.get("message") or result.get("error") or "当前步骤执行失败").strip()
+        return bool(result.get("success")) and signal == "SUCCESS", message
+
+    @staticmethod
+    def _extract_execution_validation(result: dict[str, Any]) -> dict[str, Any]:
+        feedback = result.get("feedback")
+        if isinstance(feedback, dict):
+            validation = feedback.get("validation")
+            if isinstance(validation, dict):
+                return validation
+
+        tool_output = result.get("result")
+        if isinstance(tool_output, dict):
+            raw_result = tool_output.get("result")
+            if isinstance(raw_result, dict):
+                execution_feedback = raw_result.get("execution_feedback")
+                if isinstance(execution_feedback, dict):
+                    validation = execution_feedback.get("validation")
+                    if isinstance(validation, dict):
+                        return validation
+        return {}
+
+    def _build_task_understanding(self, user_input: str, tasks: list[dict]) -> str:
+        if not tasks:
+            return ""
+        summary = self.planner.last_summary or "已完成任务规划"
+        function_chain = " -> ".join(task.get("function", "待定") for task in tasks)
+        primary_reason = tasks[0].get("reason", "")
+        return "\n".join(
+            [
+                f"环境判断: {self._build_environment_judgment(tasks)}",
+                f"任务目标: {user_input}",
+                f"技能决策: {summary}",
+                f"选择原因: {primary_reason}",
+                f"函数链: {function_chain}",
+            ]
+        )
+
+    @staticmethod
+    def _build_environment_judgment(tasks: list[dict]) -> str:
+        if not tasks:
+            return "未获取到有效环境判断"
+        first_task = tasks[0].get("task", "")
+        if "。先" in first_task:
+            return first_task.split("。先", 1)[0]
+        if "，先" in first_task:
+            return first_task.split("，先", 1)[0]
+        return first_task
+
+
+# Backward compatibility alias
+LLMAgent = PipelineRunner
+
+
+# ── TUI State & Helpers ────────────────────────────────────────────────
 
 
 @dataclass
@@ -113,124 +290,7 @@ def _assistant_message_to_dict(message: Any) -> dict[str, Any]:
     return {"role": "assistant", "content": getattr(message, "content", "") or "", "tool_calls": tool_calls}
 
 
-def _normalize_tool_result(function_name: str, raw_result: Any) -> dict[str, Any]:
-    parsed = raw_result
-    if isinstance(raw_result, str):
-        try:
-            parsed = json.loads(raw_result)
-        except json.JSONDecodeError:
-            parsed = {"raw_result": raw_result}
-    if not isinstance(parsed, dict):
-        parsed = {"raw_result": parsed}
-
-    status = parsed.get("status", "success")
-    feedback = parsed.get("execution_feedback") or {
-        "signal": "SUCCESS" if status == "success" else "FAILURE",
-        "skill": function_name,
-        "message": f"{function_name} 执行{'成功' if status == 'success' else '失败'}",
-    }
-    return {
-        "success": status == "success" and feedback.get("signal") == "SUCCESS",
-        "result": parsed,
-        "feedback": feedback,
-    }
-
-
-def execute_tool(function_name: str, function_args: dict[str, Any], event_callback=None) -> dict[str, Any]:
-    if function_name == "robot_act":
-        from Robot_Module.agent_tools import run_robot_act_pipeline
-
-        try:
-            observation_context = None
-            if function_args.get("observation_context"):
-                try:
-                    observation_context = json.loads(function_args.get("observation_context") or "null")
-                except json.JSONDecodeError:
-                    observation_context = {"text": function_args.get("observation_context")}
-
-            scene_facts = None
-            if function_args.get("scene_facts_json"):
-                try:
-                    scene_facts = json.loads(function_args.get("scene_facts_json") or "null")
-                except json.JSONDecodeError:
-                    scene_facts = None
-
-            with redirect_stderr(io.StringIO()):
-                result = run_robot_act_pipeline(
-                    user_intent=function_args.get("user_intent", ""),
-                    agent_thought=function_args.get("agent_thought", ""),
-                    observation_context=observation_context,
-                    scene_facts=scene_facts,
-                    log_callback=event_callback,
-                )
-            return {
-                "success": result.get("status") == "success",
-                "result": result,
-                "tool_name": function_name,
-                "tool_args": function_args,
-                "feedback_summary": f"robot_act finished with {result.get('summary', {}).get('success_count', 0)} success steps",
-            }
-        except Exception as error:
-            return {
-                "success": False,
-                "error": str(error),
-                "tool_name": function_name,
-                "tool_args": function_args,
-                "feedback_summary": str(error),
-            }
-
-    skill_func = get_skill_function(function_name)
-    if not skill_func:
-        return {
-            "success": False,
-            "error": f"Unknown tool: {function_name}",
-            "tool_name": function_name,
-            "tool_args": function_args,
-            "feedback_summary": f"{function_name} 未注册",
-        }
-
-    try:
-        normalized = _normalize_tool_result(function_name, asyncio.run(skill_func(**function_args)))
-        return {
-            "success": normalized["success"],
-            "result": normalized["result"],
-            "feedback": normalized["feedback"],
-            "tool_name": function_name,
-            "tool_args": function_args,
-            "feedback_summary": normalized["feedback"].get("message", ""),
-        }
-    except Exception as error:
-        return {
-            "success": False,
-            "error": str(error),
-            "tool_name": function_name,
-            "tool_args": function_args,
-            "feedback_summary": str(error),
-        }
-
-
-def build_agent_runtime(client: Any) -> AgentRuntime:
-    return AgentRuntime(
-        client=client,
-        model=os.getenv("FINALPROJECT_AGENT_MODEL", "qwen3.6-plus"),
-        system_prompt=AGENT_SYSTEM_PROMPT,
-    )
-
-
-def build_llm_agent() -> tuple[AgentRuntime, list[dict[str, Any]]]:
-    api_key = os.getenv("Test_API_KEY")
-    if not api_key:
-        print("❌ 错误: 未设置 Test_API_KEY 环境变量", file=sys.stderr)
-        sys.exit(1)
-
-    client = OpenAI(
-        api_key=api_key,
-        base_url=os.getenv("FINALPROJECT_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
-    )
-    with redirect_stderr(io.StringIO()):
-        register_all_modules()
-        tools = get_agent_tool_definitions()
-    return build_agent_runtime(client), tools
+# ── Agent turn ─────────────────────────────────────────────────────────
 
 
 def run_agent_turn(
@@ -239,7 +299,7 @@ def run_agent_turn(
     tools: list[dict[str, Any]],
     session: InteractiveSessionState,
     console: Console,
-    execute_tool_fn=execute_tool,
+    execute_tool_fn: Callable = execute_tool,
 ) -> dict[str, Any]:
     if not session.messages:
         session.messages = [{"role": "system", "content": runtime.system_prompt}]
@@ -346,6 +406,9 @@ def run_agent_turn(
     }
 
 
+# ── Command handling ───────────────────────────────────────────────────
+
+
 def render_session_snapshot(session: InteractiveSessionState) -> str:
     return json.dumps(
         {
@@ -359,7 +422,26 @@ def render_session_snapshot(session: InteractiveSessionState) -> str:
     )
 
 
-def handle_command(command: str, session: InteractiveSessionState, llm_builder) -> dict[str, Any]:
+def _current_model_name() -> str:
+    return os.getenv("FINALPROJECT_AGENT_MODEL", "qwen3.6-plus")
+
+
+def _persist_env_setting(key: str, value: str) -> None:
+    env_file = project_root / ".env"
+    lines = env_file.read_text(encoding="utf-8").splitlines() if env_file.exists() else []
+    updated = False
+    prefix = f"{key}="
+    for index, line in enumerate(lines):
+        if line.startswith(prefix):
+            lines[index] = f"{prefix}{value}"
+            updated = True
+            break
+    if not updated:
+        lines.append(f"{prefix}{value}")
+    env_file.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+
+
+def handle_command(command: str, session: InteractiveSessionState, llm_builder: Callable) -> dict[str, Any]:
     normalized = command.strip().lower()
     if normalized == "/help":
         return {
@@ -367,6 +449,7 @@ def handle_command(command: str, session: InteractiveSessionState, llm_builder) 
             "message": (
                 "Commands:\n"
                 "/help   查看帮助\n"
+                "/model  查看/切换模型\n"
                 "/tools  查看分层能力结构\n"
                 "/reset  重置当前会话上下文\n"
                 "/status 查看最近一次会话状态\n"
@@ -377,6 +460,28 @@ def handle_command(command: str, session: InteractiveSessionState, llm_builder) 
                 "Vision Tool -> Vision Skills\n"
                 "Action Tool -> Action Skills"
             ),
+        }
+    if normalized == "/model":
+        return {
+            "handled": True,
+            "message": f"当前模型: {_current_model_name()}\n用法: /model qwen3.5-plus",
+        }
+    if normalized.startswith("/model "):
+        parts = command.strip().split(maxsplit=1)
+        if len(parts) < 2 or not parts[1].strip():
+            return {
+                "handled": True,
+                "message": "用法: /model qwen3.5-plus",
+            }
+        model_name = parts[1].strip()
+        os.environ["FINALPROJECT_AGENT_MODEL"] = model_name
+        _persist_env_setting("FINALPROJECT_AGENT_MODEL", model_name)
+        agent, tools = llm_builder()
+        return {
+            "handled": True,
+            "message": f"模型已切换并保存为: {model_name}",
+            "agent": agent,
+            "tools": tools,
         }
     if normalized == "/status":
         return {"handled": True, "message": render_session_snapshot(session)}
@@ -395,11 +500,15 @@ def handle_command(command: str, session: InteractiveSessionState, llm_builder) 
     return {"handled": False}
 
 
+# ── TUI Rendering ──────────────────────────────────────────────────────
+
+
 def make_console() -> Console:
     return Console()
 
 
 def build_tool_summary(agent_tools: list[dict[str, Any]]) -> dict[str, int]:
+    from Robot_Module.agent_tools import get_vision_tool_definitions, get_action_tool_definitions
     return {
         "agent_tools": len(agent_tools),
         "vision_skills": len(get_vision_tool_definitions()),
@@ -426,7 +535,7 @@ def show_welcome(console: Console, runtime: AgentRuntime, tools: list[dict[str, 
     header.append(str(tool_summary["action_skills"]), style="bold magenta")
     header.append("  (registered from Action module)", style="dim")
     header.append("\n\n")
-    header.append("/help /tools /reset /status /vlm /quit", style="bold cyan")
+    header.append("/help /model /tools /reset /status /vlm /quit", style="bold cyan")
     console.print(Panel(header, title=WELCOME_TITLE, border_style="bright_cyan"))
 
 
@@ -443,29 +552,8 @@ def render_stream_line(console: Console, line: str) -> None:
         print(cleaned, file=sys.__stdout__)
 
 
-def _build_tool_table(title: str, tools: list[dict[str, Any]]) -> Table:
-    table = Table(title=title, show_lines=True)
-    table.add_column("Tool", style="bold cyan")
-    table.add_column("Parameters", style="green")
-    table.add_column("Description", style="white")
-    for tool in tools:
-        func = tool.get("function", {})
-        params = func.get("parameters", {}).get("properties", {})
-        table.add_row(func.get("name", "-"), ", ".join(params.keys()) or "-", func.get("description", "-"))
-    return table
-
-
-def _build_agent_tool_table() -> Table:
-    table = Table(title="Top-level Tools", show_lines=True)
-    table.add_column("Tool", style="bold cyan")
-    table.add_column("Exposed Skill", style="green")
-    table.add_column("Owns Skills", style="white")
-    table.add_row("Vision Tool", "vlm_observe", "Vision Skills")
-    table.add_row("Action Tool", "robot_act", "Action Skills")
-    return table
-
-
 def render_tools(console: Console, tools: list[dict[str, Any]]) -> None:
+    from Robot_Module.agent_tools import get_vision_tool_definitions, get_action_tool_definitions
     console.print(_build_agent_tool_table())
     console.print(_build_tool_table("Vision Skills", get_vision_tool_definitions()))
     console.print(_build_tool_table("Action Skills", get_action_tool_definitions()))
@@ -473,6 +561,9 @@ def render_tools(console: Console, tools: list[dict[str, Any]]) -> None:
 
 def render_command_result(console: Console, message: str, title: str = "Command") -> None:
     console.print(Panel(message, title=title, border_style="cyan", expand=False))
+
+
+# ── Internal render helpers ────────────────────────────────────────────
 
 
 def _strip_ansi(text: str) -> str:
@@ -562,6 +653,60 @@ def _render_robot_act_payload(console: Console, tool_call: dict[str, Any]) -> No
             expand=False,
         )
     )
+
+
+def _build_tool_table(title: str, tools: list[dict[str, Any]]) -> Table:
+    table = Table(title=title, show_lines=True)
+    table.add_column("Tool", style="bold cyan")
+    table.add_column("Parameters", style="green")
+    table.add_column("Description", style="white")
+    for tool in tools:
+        func = tool.get("function", {})
+        params = func.get("parameters", {}).get("properties", {})
+        table.add_row(func.get("name", "-"), ", ".join(params.keys()) or "-", func.get("description", "-"))
+    return table
+
+
+def _build_agent_tool_table() -> Table:
+    table = Table(title="Top-level Tools", show_lines=True)
+    table.add_column("Tool", style="bold cyan")
+    table.add_column("Exposed Skill", style="green")
+    table.add_column("Owns Skills", style="white")
+    table.add_row("Vision Tool", "vlm_observe", "Vision Skills")
+    table.add_row("Action Tool", "robot_act", "Action Skills")
+    return table
+
+
+# ── Build helpers ──────────────────────────────────────────────────────
+
+
+def build_agent_runtime(client: Any) -> AgentRuntime:
+    return AgentRuntime(
+        client=client,
+        model=os.getenv("FINALPROJECT_AGENT_MODEL", "qwen3.6-plus"),
+        system_prompt=AGENT_SYSTEM_PROMPT,
+    )
+
+
+def build_llm_agent() -> tuple[AgentRuntime, list[dict[str, Any]]]:
+    from Robot_Module.agent_tools import register_all_modules, get_agent_tool_definitions
+
+    api_key = os.getenv("Test_API_KEY")
+    if not api_key:
+        print("❌ 错误: 未设置 Test_API_KEY 环境变量", file=sys.stderr)
+        sys.exit(1)
+
+    client = OpenAI(
+        api_key=api_key,
+        base_url=os.getenv("FINALPROJECT_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
+    )
+    with redirect_stderr(io.StringIO()):
+        register_all_modules()
+        tools = get_agent_tool_definitions()
+    return build_agent_runtime(client), tools
+
+
+# ── TUI main ───────────────────────────────────────────────────────────
 
 
 def main() -> None:

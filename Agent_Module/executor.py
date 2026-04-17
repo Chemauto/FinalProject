@@ -1,44 +1,49 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""Agent_Module/executor.py — 低层任务执行 + 工具分发。"""
+
 from __future__ import annotations
 
+import asyncio
+import io
 import json
-import sys
+import os
 import time
+from contextlib import redirect_stderr
 from pathlib import Path
 from typing import Any, Callable
 
 import yaml
 
 
-class LowLevelExecutor:
-    """下层 LLM：负责根据单个任务调用工具。"""
+# ── TaskExecutor (from LLM_Module/llm_lowlevel.py) ─────────────────────
 
-    def __init__(self, client, model: str, prompt_path: str | None = None):
+
+class TaskExecutor:
+    """下层 LLM：根据单个任务调用工具。"""
+
+    def __init__(self, client: Any, model: str | None = None, prompt_path: str | Path | None = None):
         self.client = client
-        self.model = model
+        self.model = model or os.getenv("FINALPROJECT_AGENT_MODEL", "qwen3.5-plus")
         root = Path(__file__).resolve().parent
         self.prompt_path = Path(prompt_path) if prompt_path else root / "prompts" / "lowlevel_prompt.yaml"
 
     def load_prompts(self) -> dict[str, str]:
-        # Prefer project-specific prompt from registry
-        from Excu_Module.skill_registry import get_lowlevel_prompt_path
-        registry_path = get_lowlevel_prompt_path()
-        effective_path = registry_path if registry_path else self.prompt_path
-
-        if not effective_path.exists():
+        if not self.prompt_path.exists():
             return {
                 "system_prompt": "你是一个机器人控制助手。根据子任务描述，调用相应的工具函数。",
                 "user_prompt": (
-                "执行任务：{task_description}\n"
-                "任务类型：{task_type}\n"
-                "建议函数：{suggested_function}\n"
-                "规划依据：{planning_reason}\n\n"
-                "参数上下文：{parameter_context}\n"
-                "已计算参数：{calculated_parameters}\n\n"
-                "当前视觉上下文：{visual_context}\n\n"
-                "上一步的结果：{previous_result}"
-            ),
+                    "执行任务：{task_description}\n"
+                    "任务类型：{task_type}\n"
+                    "建议函数：{suggested_function}\n"
+                    "规划依据：{planning_reason}\n\n"
+                    "参数上下文：{parameter_context}\n"
+                    "已计算参数：{calculated_parameters}\n\n"
+                    "当前视觉上下文：{visual_context}\n\n"
+                    "上一步的结果：{previous_result}"
+                ),
             }
-        data = yaml.safe_load(effective_path.read_text(encoding="utf-8")) or {}
+        data = yaml.safe_load(self.prompt_path.read_text(encoding="utf-8")) or {}
         return {
             "system_prompt": str(data.get("system_prompt", "")).strip(),
             "user_prompt": str(data.get("user_prompt", "")).strip(),
@@ -120,18 +125,6 @@ class LowLevelExecutor:
             function_name = tool_call.function.name
             function_args = json.loads(tool_call.function.arguments)
 
-            # Delegate parameter normalization to skill via registry
-            from Excu_Module.skill_registry import get_skill
-            skill = get_skill(function_name)
-            if skill is not None:
-                function_args, correction_message = skill.normalize_tool_arguments(
-                    function_args, task_description, previous_result,
-                )
-            else:
-                correction_message = None
-
-            if correction_message:
-                print(f"🛠️  [参数修正] {correction_message}")
             if suggested_function != "待LLM决定" and function_name != suggested_function:
                 print(f"⚠️  [函数偏差] 规划建议 {suggested_function}，实际调用 {function_name}")
             print(f"🔧 [工具调用] {function_name}({function_args})")
@@ -201,4 +194,110 @@ class LowLevelExecutor:
             "llm_message": response_content,
             "feedback": feedback,
             "result": result,
+        }
+
+
+# Backward compatibility alias
+LowLevelExecutor = TaskExecutor
+
+
+# ── Tool dispatch (from Interactive_Module/interactive.py) ──────────────
+
+
+def _normalize_tool_result(function_name: str, raw_result: Any) -> dict[str, Any]:
+    parsed = raw_result
+    if isinstance(raw_result, str):
+        try:
+            parsed = json.loads(raw_result)
+        except json.JSONDecodeError:
+            parsed = {"raw_result": raw_result}
+    if not isinstance(parsed, dict):
+        parsed = {"raw_result": parsed}
+
+    status = parsed.get("status", "success")
+    feedback = parsed.get("execution_feedback") or {
+        "signal": "SUCCESS" if status == "success" else "FAILURE",
+        "skill": function_name,
+        "message": f"{function_name} 执行{'成功' if status == 'success' else '失败'}",
+    }
+    return {
+        "success": status == "success" and feedback.get("signal") == "SUCCESS",
+        "result": parsed,
+        "feedback": feedback,
+    }
+
+
+def execute_tool(function_name: str, function_args: dict[str, Any], event_callback=None) -> dict[str, Any]:
+    """工具分发：robot_act → run_robot_act_pipeline，其他 → get_skill_function。"""
+    if function_name == "robot_act":
+        from Robot_Module.agent_tools import run_robot_act_pipeline
+
+        try:
+            observation_context = None
+            if function_args.get("observation_context"):
+                try:
+                    observation_context = json.loads(function_args.get("observation_context") or "null")
+                except json.JSONDecodeError:
+                    observation_context = {"text": function_args.get("observation_context")}
+
+            scene_facts = None
+            if function_args.get("scene_facts_json"):
+                try:
+                    scene_facts = json.loads(function_args.get("scene_facts_json") or "null")
+                except json.JSONDecodeError:
+                    scene_facts = None
+
+            with redirect_stderr(io.StringIO()):
+                result = run_robot_act_pipeline(
+                    user_intent=function_args.get("user_intent", ""),
+                    agent_thought=function_args.get("agent_thought", ""),
+                    observation_context=observation_context,
+                    scene_facts=scene_facts,
+                    log_callback=event_callback,
+                )
+            return {
+                "success": result.get("status") == "success",
+                "result": result,
+                "tool_name": function_name,
+                "tool_args": function_args,
+                "feedback_summary": f"robot_act finished with {result.get('summary', {}).get('success_count', 0)} success steps",
+            }
+        except Exception as error:
+            return {
+                "success": False,
+                "error": str(error),
+                "tool_name": function_name,
+                "tool_args": function_args,
+                "feedback_summary": str(error),
+            }
+
+    from Robot_Module.agent_tools import get_skill_function
+
+    skill_func = get_skill_function(function_name)
+    if not skill_func:
+        return {
+            "success": False,
+            "error": f"Unknown tool: {function_name}",
+            "tool_name": function_name,
+            "tool_args": function_args,
+            "feedback_summary": f"{function_name} 未注册",
+        }
+
+    try:
+        normalized = _normalize_tool_result(function_name, asyncio.run(skill_func(**function_args)))
+        return {
+            "success": normalized["success"],
+            "result": normalized["result"],
+            "feedback": normalized["feedback"],
+            "tool_name": function_name,
+            "tool_args": function_args,
+            "feedback_summary": normalized["feedback"].get("message", ""),
+        }
+    except Exception as error:
+        return {
+            "success": False,
+            "error": str(error),
+            "tool_name": function_name,
+            "tool_args": function_args,
+            "feedback_summary": str(error),
         }

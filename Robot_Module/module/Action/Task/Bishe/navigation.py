@@ -1,72 +1,57 @@
-from __future__ import annotations
+"""navigation 技能 - 导航到目标坐标。
+
+设置 model_use=4 (navigation)，下发 goal 命令，轮询等待到达。
+"""
 
 import json
-from typing import Any
+import sys
 
-from Excu_Module.executor import execute_goal_navigation_skill
-from Excu_Module.runtime import DEFAULT_TARGET
 from Excu_Module.skill_base import SkillBase
-from Robot_Module.module.Action.Task.Bishe._bishe_helpers import (
-    MODEL_USE_NAVIGATION,
-    format_navigation_goal_command,
-    format_navigation_target,
-)
 
 
 class NavigationSkill(SkillBase):
+    MODEL_USE = 4
 
     @property
     def name(self) -> str:
         return "navigation"
 
-    async def execute(
-        self,
-        goal_command: list[float] | str = "",
-        target: str = DEFAULT_TARGET,
-        speech: str = "",
-        wait_feedback: bool = True,
-    ) -> dict[str, Any]:
+    async def execute(self, goal="", target="目标点", speech="", **kw):
+        from Excu_Module.executor import execute_goal_navigation_skill
+        from Excu_Module.runtime import parse_goal_value, speak
+
+        goal_command = parse_goal_value(goal)
+        if not isinstance(goal_command, list):
+            return {"status": "failure", "message": f"无法解析目标坐标: {goal}"}
+
+        speak(speech)
+        print(f"[navigation] 导航到 {goal_command}, 目标={target}", file=sys.stderr)
         return await execute_goal_navigation_skill(
-            skill_name="navigation",
-            model_use=MODEL_USE_NAVIGATION,
+            skill_name=self.name,
             goal_command=goal_command,
             target=target,
             speech_text=speech,
-            wait_feedback=wait_feedback,
-            log_label="导航",
+            model_use=self.MODEL_USE,
         )
 
-    # Navigation uses goal-based arrival check (handled by wait_for_navigation_completion in executor),
-    # not skill-specific polling. Keep defaults for check_completion and validate.
 
-    def calculate_parameters(
-        self,
-        task: dict[str, Any],
-        object_facts: dict[str, Any] | None,
-        context: dict[str, Any],
-    ) -> dict[str, Any] | None:
-        navigation_goal = context.get("navigation_goal")
-        if not navigation_goal:
-            return None
-        context["current_pose"] = list(navigation_goal)
-        return {
-            "goal_command": format_navigation_goal_command(navigation_goal),
-            "target": format_navigation_target(navigation_goal),
-        }
+def register_tools(mcp):
+    from Excu_Module.skill_registry import register_skill
 
-    def register_tool(self, mcp) -> dict[str, Any]:
-        @mcp.tool()
-        async def navigation(
-            goal_command: str,
-            target: str = DEFAULT_TARGET,
-            speech: str = "",
-        ) -> str:
-            return json.dumps(
-                await self.execute(goal_command=goal_command, target=target, speech=speech),
-                ensure_ascii=False,
-            )
+    skill = NavigationSkill()
+    register_skill(skill)
 
-        return {"navigation": navigation}
+    @mcp.tool()
+    async def navigation(goal: str, target: str = "目标点", speech: str = "") -> str:
+        """导航到指定的目标坐标。
 
+        Args:
+            goal: 目标坐标，格式为 "x,y,z"，如 "4.5,0.0,0.1"
+            target: 目标描述
+            speech: 语音播报内容
+        """
+        result = await skill.execute(goal=goal, target=target, speech=speech)
+        return json.dumps(result, ensure_ascii=False)
 
-_skill = NavigationSkill()
+    print("[Action/Task/Bishe] navigation 技能已注册", file=sys.stderr)
+    return {"navigation": navigation}

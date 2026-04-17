@@ -60,36 +60,17 @@ def extract_runtime_snapshot(state: dict[str, Any] | None) -> dict[str, Any]:
         for key in ("timestamp", "goal", "skill", "model_use", "start", "pose_command", "vel_command"):
             if key in runtime:
                 compact_snapshot[key] = runtime.get(key)
-        alignment = runtime.get("envtest_alignment")
-        if isinstance(alignment, dict):
-            compact_snapshot.update(
-                {
-                    "platform_1": alignment.get("platform_1"),
-                    "platform_2": alignment.get("platform_2"),
-                    "box": alignment.get("box"),
-                }
-            )
         if compact_snapshot:
             return compact_snapshot
     observation = state.get("observation") or {}
     environment = observation.get("environment") or {}
     action_result = observation.get("action_result") or {}
-    fallback_snapshot = {
+    return {
         "goal": environment.get("goal"),
         "skill": action_result.get("skill"),
         "model_use": action_result.get("model_use"),
         "start": action_result.get("start"),
     }
-    alignment = environment.get("envtest_alignment")
-    if isinstance(alignment, dict):
-        fallback_snapshot.update(
-            {
-                "platform_1": alignment.get("platform_1"),
-                "platform_2": alignment.get("platform_2"),
-                "box": alignment.get("box"),
-            }
-        )
-    return fallback_snapshot
 
 
 def extract_status_timestamp(state: dict[str, Any] | None) -> float | None:
@@ -134,51 +115,6 @@ def round_pose(values: Sequence[float] | None, keep_dims: int = 3) -> list[float
         return [round(float(value), 3) for value in values[:keep_dims]]
     except (TypeError, ValueError):
         return None
-
-
-def extract_box_pose(state: dict[str, Any] | None) -> list[float] | None:
-    """Extract box center position [x, y, z] from state snapshot or runtime_objects."""
-    if not isinstance(state, dict):
-        return None
-
-    # Priority 1: runtime.snapshot.box.position (live position from status file)
-    snapshot = extract_runtime_snapshot(state)
-    box_asset = snapshot.get("box")
-    if isinstance(box_asset, dict):
-        position = box_asset.get("position")
-        if isinstance(position, (list, tuple)) and len(position) >= 3:
-            return round_pose(position)
-
-    # Priority 2: runtime_objects with type=box / movable=True
-    runtime = state.get("runtime") or {}
-    runtime_objects = runtime.get("scene_objects")
-    if isinstance(runtime_objects, list):
-        for obj in runtime_objects:
-            if not isinstance(obj, dict):
-                continue
-            obj_type = str(obj.get("type", "")).lower()
-            movable = obj.get("movable")
-            if obj_type == "box" or movable is True:
-                center = obj.get("center")
-                if isinstance(center, (list, tuple)) and len(center) >= 3:
-                    return round_pose(center)
-
-    # Priority 3: observation.environment.obstacles
-    observation = state.get("observation") or {}
-    environment = observation.get("environment") or {}
-    obstacles = environment.get("obstacles")
-    if isinstance(obstacles, list):
-        for obj in obstacles:
-            if not isinstance(obj, dict):
-                continue
-            obj_type = str(obj.get("type", "")).lower()
-            movable = obj.get("movable")
-            if obj_type == "box" or movable is True:
-                center = obj.get("center") or obj.get("position")
-                if isinstance(center, (list, tuple)) and len(center) >= 3:
-                    return round_pose(center)
-
-    return None
 
 
 def summarize_state(state: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -264,10 +200,8 @@ async def wait_for_navigation_completion(
         if not state.get("connected"):
             if time.time() >= ready_deadline:
                 return {
-                    "ok": False,
-                    "reason": "未获取到实时状态",
-                    "state": latest_state,
-                    "dist_xy": latest_dist_xy,
+                    "ok": False, "reason": "未获取到实时状态",
+                    "state": latest_state, "dist_xy": latest_dist_xy,
                     "pose_delta_xy": latest_pose_delta,
                     "elapsed_sec": round(time.time() - start_time, 3),
                 }
@@ -278,10 +212,8 @@ async def wait_for_navigation_completion(
         if timestamp is not None and (time.time() - timestamp) > stale_sec:
             if time.time() >= ready_deadline:
                 return {
-                    "ok": False,
-                    "reason": f"实时状态超过 {stale_sec:.1f}s 未更新",
-                    "state": latest_state,
-                    "dist_xy": latest_dist_xy,
+                    "ok": False, "reason": f"实时状态超过 {stale_sec:.1f}s 未更新",
+                    "state": latest_state, "dist_xy": latest_dist_xy,
                     "pose_delta_xy": latest_pose_delta,
                     "elapsed_sec": round(time.time() - start_time, 3),
                 }
@@ -308,10 +240,8 @@ async def wait_for_navigation_completion(
                 return {
                     "ok": True,
                     "reason": f"导航已到达目标附近 (dist_xy={latest_dist_xy:.3f}m)",
-                    "state": latest_state,
-                    "dist_xy": latest_dist_xy,
-                    "pose_delta_xy": latest_pose_delta,
-                    "stable_hits": stable_hits,
+                    "state": latest_state, "dist_xy": latest_dist_xy,
+                    "pose_delta_xy": latest_pose_delta, "stable_hits": stable_hits,
                     "elapsed_sec": round(time.time() - start_time, 3),
                 }
         else:
@@ -322,177 +252,19 @@ async def wait_for_navigation_completion(
             if latest_dist_xy is None or latest_dist_xy > arrival_tol_m:
                 return {
                     "ok": False,
-                    "reason": (
-                        "导航在到达目标前已停止"
-                        if latest_dist_xy is None
-                        else f"导航在到达目标前已停止 (dist_xy={latest_dist_xy:.3f}m)"
-                    ),
-                    "state": latest_state,
-                    "dist_xy": latest_dist_xy,
-                    "pose_delta_xy": latest_pose_delta,
-                    "stable_hits": stable_hits,
+                    "reason": "导航在到达目标前已停止" if latest_dist_xy is None else f"导航在到达目标前已停止 (dist_xy={latest_dist_xy:.3f}m)",
+                    "state": latest_state, "dist_xy": latest_dist_xy,
+                    "pose_delta_xy": latest_pose_delta, "stable_hits": stable_hits,
                     "elapsed_sec": round(time.time() - start_time, 3),
                 }
 
     return {
         "ok": False,
-        "reason": (
-            f"导航超时，{timeout_sec:.1f}s 内未到达目标"
-            if latest_dist_xy is None
-            else f"导航超时，{timeout_sec:.1f}s 内未到达目标 (dist_xy={latest_dist_xy:.3f}m)"
-        ),
-        "state": latest_state,
-        "dist_xy": latest_dist_xy,
-        "pose_delta_xy": latest_pose_delta,
-        "stable_hits": stable_hits,
+        "reason": f"导航超时，{timeout_sec:.1f}s 内未到达目标" if latest_dist_xy is None else f"导航超时，{timeout_sec:.1f}s 内未到达目标 (dist_xy={latest_dist_xy:.3f}m)",
+        "state": latest_state, "dist_xy": latest_dist_xy,
+        "pose_delta_xy": latest_pose_delta, "stable_hits": stable_hits,
         "elapsed_sec": round(time.time() - start_time, 3),
     }
-
-
-async def wait_for_skill_completion(
-    *,
-    skill_name: str,
-    parameters: dict[str, Any],
-    before_state: dict[str, Any],
-    task_type: str | None,
-    timeout_sec: float,
-) -> dict[str, Any]:
-    """Poll every 0.5s until the skill's completion condition is met or timeout.
-
-    Returns a dict with ok/reason/state/elapsed_sec plus skill-specific metrics.
-    """
-    poll_sec = max(0.1, read_env_float("FINALPROJECT_STATUS_POLL_SEC", DEFAULT_STATUS_POLL_SEC))
-    stale_sec = abs(read_env_float("FINALPROJECT_STATUS_STALE_SEC", DEFAULT_STATE_STALE_SEC))
-    ready_timeout_sec = max(
-        poll_sec,
-        read_env_float("FINALPROJECT_STATUS_READY_TIMEOUT_SEC", DEFAULT_STATUS_READY_TIMEOUT_SEC),
-    )
-
-    start_time = time.time()
-    deadline = start_time + timeout_sec
-    ready_deadline = start_time + ready_timeout_sec
-    latest_state: dict[str, Any] | None = None
-
-    before_pose = extract_robot_pose(before_state)
-    before_box = extract_box_pose(before_state)
-
-    while time.time() < deadline:
-        await asyncio.sleep(poll_sec)
-        state = load_live_state(task_type=task_type)
-
-        if not state.get("connected"):
-            if time.time() >= ready_deadline:
-                return {
-                    "ok": False,
-                    "reason": "未获取到实时状态",
-                    "state": latest_state,
-                    "elapsed_sec": round(time.time() - start_time, 3),
-                }
-            continue
-
-        latest_state = state
-        timestamp = extract_status_timestamp(state)
-        if timestamp is not None and (time.time() - timestamp) > stale_sec:
-            if time.time() >= ready_deadline:
-                return {
-                    "ok": False,
-                    "reason": f"实时状态超过 {stale_sec:.1f}s 未更新",
-                    "state": latest_state,
-                    "elapsed_sec": round(time.time() - start_time, 3),
-                }
-            continue
-
-        # Skill-specific completion check via registry
-        from .skill_registry import get_skill
-        skill = get_skill(skill_name)
-        if skill is not None:
-            result = skill.check_completion(state, before_state, parameters)
-        else:
-            continue
-
-        if result.get("done"):
-            return {
-                "ok": True,
-                "reason": f"{skill_name} 执行完成",
-                "state": latest_state,
-                "elapsed_sec": round(time.time() - start_time, 3),
-                **result,
-            }
-
-    # Timeout
-    return {
-        "ok": False,
-        "reason": f"{skill_name} 超时，{timeout_sec:.1f}s 内未完成",
-        "state": latest_state,
-        "elapsed_sec": round(time.time() - start_time, 3),
-    }
-
-
-def minimum_verified_motion(
-    requested_distance: float,
-    *,
-    ratio_env: str,
-    ratio_default: float,
-    abs_tol_env: str,
-    abs_tol_default: float,
-) -> float:
-    requested_distance = max(0.0, float(requested_distance))
-    if requested_distance <= 0:
-        return 0.05
-    ratio = min(1.0, max(0.1, read_env_float(ratio_env, ratio_default)))
-    abs_tol = abs(read_env_float(abs_tol_env, abs_tol_default))
-    return min(requested_distance, max(0.05, max(requested_distance * ratio, requested_distance - abs_tol)))
-
-
-def build_missing_validation(
-    skill_name: str,
-    reason: str,
-    *,
-    before_state: dict[str, Any] | None = None,
-    after_state: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    return {
-        "verified": False,
-        "meets_requirements": False,
-        "source": "comm_state",
-        "summary": f"{skill_name} 无法完成真实状态校验: {reason}",
-        "before_state": summarize_state(before_state),
-        "after_state": summarize_state(after_state),
-    }
-
-
-def build_motion_validation_base(
-    skill_name: str,
-    before_state: dict[str, Any] | None,
-    after_state: dict[str, Any] | None,
-) -> tuple[dict[str, Any], list[float], list[float]] | tuple[dict[str, Any], None, None]:
-    if before_state is None:
-        return build_missing_validation(skill_name, "缺少执行前实时状态", after_state=after_state), None, None
-    if after_state is None:
-        return build_missing_validation(skill_name, "缺少执行后实时状态", before_state=before_state), None, None
-
-    before_pose = extract_robot_pose(before_state)
-    after_pose = extract_robot_pose(after_state)
-    if before_pose is None or after_pose is None:
-        return (
-            build_missing_validation(
-                skill_name,
-                "实时状态中缺少 robot_pose",
-                before_state=before_state,
-                after_state=after_state,
-            ),
-            None,
-            None,
-        )
-
-    return {
-        "verified": True,
-        "source": "comm_state",
-        "before_state": summarize_state(before_state),
-        "after_state": summarize_state(after_state),
-        "before_robot_pose": before_pose,
-        "after_robot_pose": after_pose,
-    }, before_pose, after_pose
 
 
 def build_navigation_validation(skill_name: str, goal_command: list[float], arrival_result: dict[str, Any]) -> dict[str, Any]:
@@ -511,23 +283,3 @@ def build_navigation_validation(skill_name: str, goal_command: list[float], arri
         "state": summarize_state(state if isinstance(state, dict) else None),
         "elapsed_sec": arrival_result.get("elapsed_sec"),
     }
-
-
-def validate_live_execution(
-    skill_name: str,
-    parameters: dict[str, Any],
-    before_state: dict[str, Any] | None,
-    after_state: dict[str, Any] | None,
-) -> dict[str, Any]:
-    from .skill_registry import get_skill
-    skill = get_skill(skill_name)
-    if skill is not None:
-        result = skill.validate(parameters, before_state, after_state)
-        if result is not None:
-            return result
-    return build_missing_validation(
-        skill_name,
-        "当前技能未定义通用状态校验规则",
-        before_state=before_state,
-        after_state=after_state,
-    )

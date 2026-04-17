@@ -1,18 +1,18 @@
 from __future__ import annotations
 
 import asyncio
-import io
 import json
 import os
 import threading
-from contextlib import redirect_stdout
 from pathlib import Path
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
-from LLM_Module.llm_core import LLMAgent
-from LLM_Module.object_facts_loader import load_object_facts
+from Agent_Module.planner import Planner
+from Agent_Module.executor import TaskExecutor
+from Agent_Module.replanner import PipelineRunner
+from Agent_Module.parameter import load_object_facts
 from VLM_Module.vlm_core import VLMCore
 from Comm_Module.Task import (
     sync_object_facts_from_live_data,
@@ -40,43 +40,10 @@ _tool_definitions: list[dict[str, Any]] = []
 _modules_registered = False
 
 
-class _StreamingBuffer(io.StringIO):
-    def __init__(self, log_callback=None):
-        super().__init__()
-        self._log_callback = log_callback
-        self._partial = ""
-
-    def write(self, text: str) -> int:
-        count = super().write(text)
-        if not self._log_callback or not text:
-            return count
-
-        self._partial += text
-        while "\n" in self._partial:
-            line, self._partial = self._partial.split("\n", 1)
-            if line.strip():
-                self._log_callback(line)
-        return count
-
-    def flush_pending(self) -> None:
-        if self._log_callback and self._partial.strip():
-            self._log_callback(self._partial)
-        self._partial = ""
-
-
-def _format_available_skills(tools: list[dict[str, Any]]) -> str:
-    lines = []
-    for tool in tools:
-        func = tool.get("function", {})
-        params = func.get("parameters", {}).get("properties", {})
-        lines.append(f"  - {func.get('name', '')}({', '.join(params.keys())})")
-    return "\n".join(lines)
-
-
 def _load_robot_prompt(tools: list[dict[str, Any]]) -> str:
     import yaml
 
-    prompt_path = Path(__file__).resolve().parents[1] / "LLM_Module" / "prompts" / "highlevel_prompt.yaml"
+    prompt_path = Path(__file__).resolve().parents[1] / "Agent_Module" / "prompts" / "highlevel_prompt.yaml"
     data = yaml.safe_load(prompt_path.read_text(encoding="utf-8")) or {}
     return str(data.get("prompt", "")).strip()
 
@@ -194,14 +161,6 @@ def get_action_tool_definitions():
     return get_tool_definitions(ACTION_TOOL_NAMES)
 
 
-def _build_planner_alignment(runtime_state: dict[str, Any]) -> dict[str, Any]:
-    alignment = {}
-    for key in ("platform_1", "platform_2", "box"):
-        asset = runtime_state.get(key)
-        alignment[key] = asset if isinstance(asset, dict) else None
-    return alignment
-
-
 def _build_planner_context(
     scene_facts: dict[str, Any] | None,
     object_facts: dict[str, Any] | None,
@@ -217,7 +176,6 @@ def _build_planner_context(
             "model_use": runtime_state.get("model_use"),
             "start": runtime_state.get("start"),
         },
-        "envtest_alignment": _build_planner_alignment(runtime_state),
         "constraints": (object_facts or {}).get("constraints") or {},
         "objects": (object_facts or {}).get("objects") or [],
         "scene_facts": scene_facts or {},
@@ -248,25 +206,28 @@ def run_robot_act_pipeline(
     planner_context = _build_planner_context(merged_scene_facts, object_facts, synced_payload)
 
     api_key = os.getenv("Test_API_KEY")
-    llm_agent = LLMAgent(
-        api_key=api_key,
-        prompt_path=str(Path(__file__).resolve().parents[1] / "LLM_Module" / "prompts" / "highlevel_prompt.yaml"),
-    )
-    action_tools = get_action_tool_definitions()
-    llm_agent.planning_prompt_template = _load_robot_prompt(action_tools)
+    from openai import OpenAI
 
-    pipeline_stdout = _StreamingBuffer(log_callback=log_callback)
-    with redirect_stdout(pipeline_stdout):
-        results = llm_agent.run_pipeline(
-            user_input=user_intent,
-            agent_thought=agent_thought,
-            tools=action_tools,
-            execute_tool_fn=_execute_registered_tool,
-            visual_context=visual_context_text,
-            scene_facts=planner_context,
-            object_facts=object_facts,
-        )
-    pipeline_stdout.flush_pending()
+    client = OpenAI(
+        api_key=api_key,
+        base_url=os.getenv("FINALPROJECT_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
+    )
+    prompt_path = str(Path(__file__).resolve().parents[1] / "Agent_Module" / "prompts" / "highlevel_prompt.yaml")
+    planner = Planner(client=client, prompt_path=prompt_path)
+    task_executor = TaskExecutor(client=client)
+    pipeline = PipelineRunner(planner=planner, task_executor=task_executor)
+    action_tools = get_action_tool_definitions()
+    planner.planning_prompt_template = _load_robot_prompt(action_tools)
+
+    results = pipeline.run_pipeline(
+        user_input=user_intent,
+        agent_thought=agent_thought,
+        tools=action_tools,
+        execute_tool_fn=_execute_registered_tool,
+        visual_context=visual_context_text,
+        scene_facts=planner_context,
+        object_facts=object_facts,
+    )
 
     success_count = sum(1 for item in results if item.get("success"))
     runtime_state = (synced_payload or {}).get("runtime_state") or {}
@@ -278,7 +239,6 @@ def run_robot_act_pipeline(
             "failure_count": len(results) - success_count,
         },
         "results": results,
-        "log": pipeline_stdout.getvalue().strip(),
         "session_snapshot": {
             "sync": {
                 "scene_id": runtime_state.get("scene_id"),

@@ -1,21 +1,17 @@
+"""Action 技能注册入口。
+
+根据 FINALPROJECT_ACTION_TASK 环境变量加载对应任务目录下的技能模块。
+每个技能模块只需实现 register_tools(mcp) 函数。
+"""
+
 from __future__ import annotations
 
 import importlib
 import os
-from pathlib import Path
-
 
 DEFAULT_ACTION_TASK = os.getenv("FINALPROJECT_ACTION_TASK", os.getenv("FINALPROJECT_TASK", "bishe")).strip().lower() or "bishe"
 
-ACTION_TOOL_NAMES = {
-    "walk",
-    "navigation",
-    "nav_climb",
-    "climb_align",
-    "climb",
-    "push_box",
-    "way_select",
-}
+ACTION_TOOL_NAMES: set[str] = set()
 
 _TASK_SKILL_MODULES = {
     "bishe": [
@@ -38,50 +34,19 @@ def get_current_task(task: str | None = None) -> str:
     return selected
 
 
-def _register_bishe_hooks() -> None:
-    """Register Bishe-specific hooks (context, rule planner, nav codes, prompts)."""
-    from Excu_Module.skill_registry import (
-        register_context_hook,
-        register_rule_planner,
-        register_lowlevel_prompt,
-        register_highlevel_prompt,
-        register_navigation_model_uses,
-    )
-    from Robot_Module.module.Action.Task.Bishe._bishe_helpers import (
-        build_bishe_context,
-        NAVIGATION_MODEL_USES,
-    )
-    from Robot_Module.module.Action.Task.Bishe.bishe_planner import plan_box_assist_navigation
-
-    bishe_dir = Path(__file__).parent / "Task" / "Bishe"
-
-    register_context_hook(build_bishe_context)
-    register_rule_planner(plan_box_assist_navigation)
-    register_navigation_model_uses(NAVIGATION_MODEL_USES)
-    register_lowlevel_prompt(bishe_dir / "lowlevel_prompt.yaml")
-    register_highlevel_prompt(bishe_dir / "highlevel_prompt.yaml")
-
-
 def register_tools(mcp, *, task: str | None = None):
-    from Excu_Module.skill_registry import register_skill
+    """加载技能模块并注册到 MCP。每个模块暴露 register_tools(mcp) -> dict。"""
+    from Excu_Module.skill_registry import register_navigation_model_uses
+
+    # 注册导航 model_use 码：4=navigation, 5=nav_climb
+    register_navigation_model_uses({4, 5})
 
     selected = get_current_task(task)
-
-    # Register Bishe-specific hooks before loading skill modules
-    if selected == "bishe":
-        _register_bishe_hooks()
-
     registry = {}
     for module_path in _TASK_SKILL_MODULES[selected]:
         module = importlib.import_module(module_path)
+        register_fn = getattr(module, "register_tools")
+        registry.update(register_fn(mcp))
 
-        # Prefer SkillBase-based registration
-        skill_instance = getattr(module, "_skill", None)
-        if skill_instance is not None:
-            register_skill(skill_instance)
-            registry.update(skill_instance.register_tool(mcp))
-        else:
-            # Legacy fallback
-            register_fn = getattr(module, "register_tool")
-            registry.update(register_fn(mcp))
+    ACTION_TOOL_NAMES.update(registry.keys())
     return registry

@@ -37,18 +37,16 @@ FinalProject 不是单一的"LLM 调工具"项目，而是 6 层协作：
 
 换项目只改 `Robot_Module` + `Comm_Module`，**零修改** `Excu_Module`、`LLM_Module`、`VLM_Module`。
 
-`Excu_Module` 不再包含任何 Bishe 特定代码。Bishe 相关的逻辑（上下文构建、规则规划、参数修正、lowlevel prompt）全部通过可插拔注册接口注入：
+`Excu_Module` 不包含任何项目特定代码。项目特定逻辑通过以下方式注入：
 
-- `register_context_hook(hook)` — 参数计算用的共享上下文
-- `register_rule_planner(planner_fn)` — 规则规划器（替代高层硬编码）
-- `register_lowlevel_prompt(prompt_path)` — 低层 prompt 路径
-- `register_highlevel_prompt(prompt_path)` — 高层 prompt 路径
-- `register_navigation_model_uses(codes)` — 导航 model_use 集合
-- `SkillBase.normalize_tool_arguments()` — 技能级参数修正
+- `register_navigation_model_uses(codes)` — 注册导航技能的 model_use 码（当前 `{4, 5}`）
+- `register_skill(skill)` — 每个技能文件注册 SkillBase 实例到全局注册表
 
-注册时机在 `Robot_Module/module/Action/skills.py` 的 `register_tools()` 中，**先注册钩子，再加载技能模块**。
+注册时机在 `Robot_Module/module/Action/skills.py` 的 `register_tools()` 中：
+1. 先调用 `register_navigation_model_uses({4, 5})`
+2. 再逐个加载技能模块，每个模块在 `register_tools(mcp)` 内部调用 `register_skill(skill)`
 
-`LLM_Module` 不再导入任何 Bishe 模块，所有项目特定逻辑通过 `Excu_Module.skill_registry` 的通用接口获取。
+`LLM_Module` 不导入任何项目特定模块。
 
 ## 3. 当前端到端流程
 
@@ -62,28 +60,25 @@ robot_act
    -> Comm_Module 同步 live data
    -> load_object_facts()
    -> merge_scene_facts()
-   -> HighLevelPlanner.plan_tasks()
-      -> try_rule_planners()  (可插拔规则规划)
+   -> LLMAgent.plan_tasks()
+      -> LLM 生成任务序列
    -> ParameterCalculator.annotate_tasks()
-      -> build_planning_context()  (可插拔上下文钩子)
    -> LowLevelExecutor.execute_single_task()
-      -> skill.normalize_tool_arguments()  (技能级参数修正)
-      -> load_prompts()  (优先用注册的低层 prompt)
+      -> load_prompts()
    -> Robot_Module/module/Action/Task/Bishe/*.py
    -> Excu_Module/executor.py
+      -> 导航技能: wait_for_navigation_completion() (0.5s 轮询)
+      -> 非导航技能: sleep(execution_time_sec) + before/after 状态对比
    -> Comm_Module.get_state()
-   -> validation
 ```
 
 必须守住的原则：
 
 - 先同步，再规划。
 - 高层负责任务序列，不负责底层执行协议。
-- 参数计算负责把抽象任务补成具体参数。
 - 技能文件只负责具体技能实现，不负责通用执行编排。
 - 通用执行统一进 `Excu_Module`。
 - 通用状态统一走 `Comm_Module`。
-- 动作成功不能靠本地写死文案，必须尽量基于真实状态。
 - `Excu_Module` 和 `LLM_Module` 不能导入任何项目特定模块（如 Bishe）。
 
 ## 4. 当前目录职责
@@ -113,47 +108,39 @@ robot_act
 - `runtime.py`
   执行后端、命令下发、通用常量（`MODEL_USE_IDLE=0`）。
 - `state.py`
-  从 `Comm_Module` 读取统一状态，提供通用校验方法和轮询完成判定。
+  从 `Comm_Module` 读取统一状态，提供导航到达轮询判定。
 - `executor.py`
-  串联"发命令 -> 轮询等待(0.5s/次) -> 提前停止或超时 -> 验收"。
+  串联"发命令 -> 等待 -> 停止 -> 校验"。导航技能用轮询检测到达，非导航技能用超时等待。
 - `skill_registry.py`
-  全局技能注册 + 可插拔钩子注册（上下文、规则规划、prompt、导航码）。
+  全局技能注册（`register_skill` / `get_skill` / `all_skills`）+ 导航 model_use 码注册。
 - `skill_base.py`
-  技能基类，定义 `execute / check_completion / validate / calculate_parameters / normalize_tool_arguments`。
+  技能基类。每个技能继承 `SkillBase`，实现 `name` + `execute()`。基类提供 `build_result()` 公共方法。
 
 这里是当前动作执行的公共层，后续新增任务时优先复用这里，而不是回到 `Robot_Module` 再堆公共逻辑。
 
 ### `LLM_Module`
 
 - `llm_core.py`
-  高层规划和主执行流水线。规则规划通过 `try_rule_planners()` 委托。
+  高层规划和主执行流水线（`LLMAgent`，别名 `HighLevelPlanner`）。
 - `parameter_calculator.py`
-  参数计算。上下文通过 `build_planning_context()` 委托。
+  参数计算（当前为 pass-through，保留扩展口）。
 - `llm_lowlevel.py`
-  低层工具调用。参数修正委托给 `skill.normalize_tool_arguments()`，prompt 优先从注册表获取。
+  低层工具调用，直接读取 `prompts/lowlevel_prompt.yaml`。
 - `object_facts_loader.py`
-  规范化 `object_facts.json`。约束通用化，不再硬编码项目特定字段。
+  规范化 `object_facts.json`。约束通用化，不硬编码项目特定字段。
 
 ### `Robot_Module`
 
 - `agent_tools.py`
   顶层注册中心，注册 `vlm_observe` 和 `robot_act`。
 - `module/Action/skills.py`
-  动作任务开关和注册。在加载技能模块之前先注册项目特定钩子。
+  动作任务开关和注册。加载前注册 `navigation_model_uses`，然后逐个加载技能模块。
 - `module/Action/Task/Bishe/*.py`
-  7 个具体动作技能文件 + 辅助文件。
-- `module/Action/Task/Bishe/_bishe_helpers.py`
-  Bishe 几何辅助函数和 `build_bishe_context()` 上下文钩子。
-- `module/Action/Task/Bishe/bishe_planner.py`
-  Bishe 规则规划器（box-assist 导航）。
-- `module/Action/Task/Bishe/lowlevel_prompt.yaml`
-  Bishe 特定的低层 prompt。
-- `module/Action/Task/Bishe/highlevel_prompt.yaml`
-  Bishe 特定的高层 prompt。
+  7 个具体动作技能文件。每个文件包含一个 `SkillBase` 子类 + `register_tools(mcp)` 函数。
 - `module/Vision/skills.py`
   视觉任务开关和注册。
 - `module/Vision/Task/Bishe/vlm_observe.py`
-  当前 Vision 下层技能实现文件，注册的 skill 名字是 `vlm`。
+  当前 Vision 下层技能实现文件，注册的 skill 名字是 `vlm`。直接调 VLM_Module API，不硬编码项目特定逻辑。
 
 这里要注意：
 
@@ -174,7 +161,7 @@ robot_act
 
 - `VLM` 只负责"大概看起来是什么"
 - 真值状态、具体数值、槽位对象统一来自 `Comm_Module`
-- `vlm_observe` 当前会额外返回 `env_state`，它是 `VLM + Comm_Module` 合并后的环境理解
+- `vlm_observe` 会额外返回 `env_state`，它是 `VLM + Comm_Module` 合并后的环境理解
 
 ## 5. Action 目录的硬约束
 
@@ -183,16 +170,38 @@ robot_act
 - `__init__.py`
 - `Bishe/`
 
-`Bishe/` 下面保留：
+`Bishe/` 下面只有 7 个技能文件：
 
-- 7 个技能实现文件：`walk.py / navigation.py / nav_climb.py / climb_align.py / climb.py / push_box.py / way_select.py`
-- `_bishe_helpers.py` — 常量和几何辅助函数
-- `bishe_planner.py` — 规则规划器
-- `lowlevel_prompt.yaml` — 低层 prompt
-- `highlevel_prompt.yaml` — 高层 prompt
+- `walk.py` / `navigation.py` / `nav_climb.py` / `climb_align.py` / `climb.py` / `push_box.py` / `way_select.py`
+
+每个技能文件结构统一：
+
+```python
+from Excu_Module.skill_base import SkillBase
+
+class XxxSkill(SkillBase):
+    MODEL_USE = ...
+
+    @property
+    def name(self) -> str: return "xxx"
+
+    async def execute(self, ..., **kw):
+        # 参数校验 → 调 wait_skill_feedback 或 execute_goal_navigation_skill
+        return self.build_result(feedback, ...)
+
+def register_tools(mcp):
+    from Excu_Module.skill_registry import register_skill
+    skill = XxxSkill()
+    register_skill(skill)
+
+    @mcp.tool()
+    async def xxx(...) -> str:
+        result = await skill.execute(...)
+        return json.dumps(result, ensure_ascii=False)
+    return {"xxx": xxx}
+```
 
 不要再把公共执行逻辑放回 `Action/Task`。
-原来那类 `runtime.py / executor.py / status.py / scene.py / demo.py` 现在都应该视为 `Excu_Module` 或任务内局部逻辑的职责。
 
 ## 6. 状态契约
 
@@ -257,14 +266,6 @@ state = get_state()
 - 说明原因
 - 决定任务先后顺序
 
-参数计算负责：
-
-- 补齐坐标
-- 补齐方向
-- 补齐距离或高度
-- 补齐技能所需具体参数
-- `push_box` 的 `target_position` 会算出具体 `[x, y, z]` 坐标，不再是 `"auto"`
-
 技能文件负责：
 
 - 接收参数
@@ -275,68 +276,64 @@ state = get_state()
 
 ## 9. 成功判定规则
 
-当前成功判定不是只看：
-
-- `status == success`
-- `signal == SUCCESS`
-
-真正关键的是：
+当前成功判定看：
 
 - `execution_feedback.validation.verified`
 - `execution_feedback.validation.meets_requirements`
 
-`LLM_Module/llm_core.py` 已经按这两个字段决定是否继续下一步。
+`LLM_Module/llm_core.py` 按这两个字段决定是否继续下一步。
 
 ### 执行策略
 
-当前所有技能统一采用 **0.5 秒轮询**：
+**导航技能**（model_use=4, 5）：0.5 秒轮询检测到达
 
 ```text
-下发命令
+下发 goal + start=1
   ↓
 while 0.5s 轮询:
-  取状态 → 检查该技能的完成条件
-  满足 → 提前停止，返回 SUCCESS
-  超时 → 返回 FAILURE
+  取状态 → 计算距目标距离
+  距离 <= 0.15m 且位置稳定 3 次 → SUCCESS
+  start=False 或 model_use 变化 → FAILURE
+  超时 → FAILURE
+  ↓
+stop 命令
+```
+
+**非导航技能**（model_use=1, 2, 3）：超时等待 + 事后状态对比
+
+```text
+下发 velocity/goal + start=1
+  ↓
+sleep(execution_time_sec)
   ↓
 stop 命令
   ↓
-最终 before/after 校验（双保险）
+取 after_state → 和 before_state 对比 → 构建校验结果
 ```
 
 轮询频率可通过 `FINALPROJECT_STATUS_POLL_SEC` 环境变量调整（默认 0.5 秒）。
 
-### 各技能完成条件
+### 各技能执行参数
 
-| 技能 | 完成条件 |
-|---|---|
-| `walk` | 机器人平面位移 >= 要求距离，方向正确 |
-| `climb` | 机器人 z 抬升 >= 要求高度 |
-| `push_box` | 箱子距目标坐标 <= 0.1m（到达容许误差） |
-| `way_select` | 机器人横向位移 >= 要求距离，方向正确 |
-| `navigation` | 机器人距目标 <= 到达容许误差，位置稳定 |
-| `nav_climb` | 同 navigation |
-| `climb_align` | 同 climb |
-
-### push_box 校验规则
-
-- **主校验**：箱子距目标坐标 <= 0.1m（`FINALPROJECT_PUSH_BOX_ARRIVAL_TOL_M`）
-- **后备**（取不到箱子位置时）：机器人平面位移 >= 0.3m
-- 目标坐标由 `_bishe_helpers.build_adjacent_ground_position()` 计算，只改变 x 方向，y 保持箱子当前位置
-- 不再用最小位移 0.1m 作为成功门槛（0.1m 是测量噪声级别）
+| 技能 | model_use | 命令类型 | 等待方式 |
+|---|---|---|---|
+| `walk` | 1 | velocity `[vx, 0, 0]` | 超时等待 |
+| `climb` | 2 | velocity `[vx, 0, 0]` | 超时等待 |
+| `push_box` | 3 | goal `[x, y, z]` | 超时等待 |
+| `navigation` | 4 | goal `[x, y, z]` | 轮询检测到达 |
+| `nav_climb` | 5 | goal `[x, y, z]` | 轮询检测到达 |
+| `climb_align` | 4 | goal `[x, y, z]` | 轮询检测到达 |
+| `way_select` | 1 或 4 | velocity 或 goal | 看模式 |
 
 ## 10. 当前最容易踩坑的点
 
 - 没开仿真时，VLM 可能退回默认图片，这不代表真实场景。
 - 没有实时状态时，规划可以继续，但执行必须失败。
-- 不要再文档或代码里引用已删除的 `Robot_Module/skill.py`。
-- 不要再文档或代码里引用已删除的 `Robot_Module/module/Action/navigation.py`。
 - 若新增动作任务，不要把公共执行逻辑重新塞进 `Robot_Module/module/Action/Task/<TaskName>`。
-- `push_box` 的 `target_position` 必须是具体坐标，不要退回 `"auto"`。
-- `push_box` 校验基于箱子位置（不是机器人位置），0.1m 是到达容许误差（不是最小位移要求）。
-- 位置测量误差约 0.1m，所以最小位移阈值不能低于噪声级别。
-- `Excu_Module` 和 `LLM_Module` 不能导入任何项目特定模块（如 `_bishe_helpers`）。
-- `NAVIGATION_MODEL_USES` 不能硬编码在 `Excu_Module`，必须通过 `register_navigation_model_uses()` 注册。
+- `Excu_Module` 和 `LLM_Module` 不能导入任何项目特定模块。
+- `NAVIGATION_MODEL_USES` 必须通过 `register_navigation_model_uses()` 在 `skills.py` 中注册。
+- 每个技能的 `register_tools()` 必须调用 `register_skill(skill)` 把实例注册到全局注册表。
+- 不要在 `Excu_Module` 或 `LLM_Module` 中硬编码导航 model_use 码。
 
 ## 11. 推荐扩展方式
 
@@ -380,88 +377,31 @@ Robot_Module/module/Action/Task/Rescue/
   ...
 ```
 
-每个技能文件继承 `Excu_Module.skill_base.SkillBase`，实现：
+每个技能文件继承 `Excu_Module.skill_base.SkillBase`：
 
-- `name` — 技能名
-- `execute()` — 执行入口
-- `check_completion()` — 轮询完成判定
-- `validate()` — 事后校验
-- `calculate_parameters()` — 参数计算（可选）
-- `normalize_tool_arguments()` — 参数修正（可选）
-- `register_tool()` — MCP 工具注册
+- `name` — 技能名（必须）
+- `execute()` — 执行入口（必须）
+- `check_completion()` — 轮询完成判定（可选，默认超时等待）
+- `validate()` — 事后校验（可选，默认 None）
 
-### 第 2 步：创建辅助文件（可选）
+技能文件提供 `register_tools(mcp)` 函数，内部创建实例、注册到全局、定义 MCP tool。
 
-如果技能之间有共享的常量或几何函数，创建辅助文件：
-
-```text
-Rescue/
-  _rescue_helpers.py    # 常量和辅助函数
-```
-
-如果需要规则规划（替代 LLM 规划），创建：
-
-```text
-Rescue/
-  rescue_planner.py     # 规则规划器函数
-```
-
-如果需要项目特定的低层 prompt，创建：
-
-```text
-Rescue/
-  lowlevel_prompt.yaml  # 项目特定的低层 prompt
-```
-
-如果需要项目特定的高层 prompt，创建：
-
-```text
-Rescue/
-  highlevel_prompt.yaml  # 项目特定的高层 prompt
-```
-
-### 第 3 步：注册钩子
+### 第 2 步：注册到 skills.py
 
 在 `Robot_Module/module/Action/skills.py` 中：
 
-1. 添加 `_TASK_SKILL_MODULES["rescue"] = [...]`
-2. 添加 `_register_rescue_hooks()` 函数：
+1. 添加模块列表：
 
 ```python
-def _register_rescue_hooks() -> None:
-    from Excu_Module.skill_registry import (
-        register_context_hook,
-        register_rule_planner,
-        register_lowlevel_prompt,
-        register_highlevel_prompt,
-        register_navigation_model_uses,
-    )
-
-    # 上下文钩子（给 ParameterCalculator 用）
-    register_context_hook(build_rescue_context)
-
-    # 规则规划器（给 HighLevelPlanner 用）
-    register_rule_planner(plan_rescue_task)
-
-    # 导航 model_use 码（给 Excu_Module 用）
-    register_navigation_model_uses(RESCUE_NAV_CODES)
-
-    # 低层 prompt 路径
-    rescue_dir = Path(__file__).parent / "Task" / "Rescue"
-    register_lowlevel_prompt(rescue_dir / "lowlevel_prompt.yaml")
-
-    # 高层 prompt 路径
-    register_highlevel_prompt(rescue_dir / "highlevel_prompt.yaml")
+_TASK_SKILL_MODULES["rescue"] = [
+    "Robot_Module.module.Action.Task.Rescue.search",
+    "Robot_Module.module.Action.Task.Rescue.grab",
+]
 ```
 
-3. 在 `register_tools()` 中调用钩子注册：
+2. 如果有导航类技能，在 `register_tools()` 中调用 `register_navigation_model_uses({...})`。
 
-```python
-if selected == "rescue":
-    _register_rescue_hooks()
-```
-
-### 第 4 步：更新 Comm_Module（如需新后端）
+### 第 3 步：更新 Comm_Module（如需新后端）
 
 如果新项目用不同的状态源：
 
@@ -478,11 +418,7 @@ Comm_Module/Task/Rescue/
 | 文件 | 操作 |
 |-----|------|
 | `Robot_Module/module/Action/Task/<Project>/*.py` | 新建技能文件 |
-| `Robot_Module/module/Action/Task/<Project>/_helpers.py` | 新建（可选） |
-| `Robot_Module/module/Action/Task/<Project>/planner.py` | 新建（可选） |
-| `Robot_Module/module/Action/Task/<Project>/lowlevel_prompt.yaml` | 新建（可选） |
-| `Robot_Module/module/Action/Task/<Project>/highlevel_prompt.yaml` | 新建（可选） |
-| `Robot_Module/module/Action/skills.py` | 添加 task 模块列表 + 钩子注册 |
+| `Robot_Module/module/Action/skills.py` | 添加 task 模块列表 + 导航码 |
 | `Comm_Module/Task/<Type>/` | 新建（如需新后端） |
 | `Excu_Module/*` | **不改** |
 | `LLM_Module/*` | **不改** |
