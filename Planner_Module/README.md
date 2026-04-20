@@ -1,13 +1,12 @@
 # Planner_Module
 
-LLM 规划层。负责将用户意图分解为任务序列，并通过低层 LLM 选择工具执行。
+LLM 规划层。负责将用户意图分解为任务序列，并在必要时用规则覆盖修正已知场景。
 
 ## 核心接口
 
 ```python
-from Planner_Module import Planner, TaskExecutor
+from Planner_Module import Planner
 
-# 高层规划
 planner = Planner(client=openai_client, parameter_calculator=calculator)
 tasks, meta = planner.plan_tasks(
     user_input="导航到6,0,0",
@@ -17,27 +16,19 @@ tasks, meta = planner.plan_tasks(
     scene_facts={...},
     object_facts={...},
 )
-
-# 低层执行
-executor = TaskExecutor(client=openai_client)
-result = executor.execute_single_task(
-    task_info=tasks[0],
-    tools=action_tool_definitions,
-    execute_tool_fn=tool_callback,
-)
 ```
 
 ## 目录结构
 
 ```text
 Planner_Module/
-  __init__.py       对外暴露 Planner, TaskExecutor, TaskIntent
-  planner.py        高层任务规划（CoT 推理 + 规则覆盖）
-  executor.py       低层任务执行（LLM 工具选择）
+  __init__.py       对外暴露 Planner, TaskIntent
+  planner.py        高层任务规划入口（LLM 调用 + on_event 回调）
+  parsing.py        规划 JSON 解析和任务标准化
+  rule_overrides.py 规则覆盖与规则回退
   schema.py         TaskIntent dataclass
   prompts/
     highlevel_prompt.yaml  高层规划提示词
-    lowlevel_prompt.yaml   低层执行提示词
 ```
 
 ## 各文件职责
@@ -79,28 +70,13 @@ planner = Planner(
 
 Planner 不直接导入 `Data_Module`，而是通过构造函数接收 `parameter_calculator`。
 
-### `executor.py` — TaskExecutor
+### `parsing.py`
 
-低层任务执行器，根据单个任务描述选择并调用工具。
+规划响应解析工具。负责去除 Markdown code fence、解析 JSON、标准化 task 字段。
 
-**主要方法：**
+### `rule_overrides.py`
 
-- `execute_single_task(task_info, tools, execute_tool_fn, ...)` — 执行单个任务
-  - 如果任务已有 `calculated_parameters`，直接调用工具（跳过 LLM）
-  - 否则调用 LLM + function calling 选择工具
-  - 通过 `execute_tool_fn` 回调实际执行工具（不直接导入 Robot_Module）
-
-**回调模式：**
-
-```python
-def my_tool_executor(function_name: str, function_args: dict) -> dict:
-    # 实际执行工具逻辑
-    ...
-
-result = executor.execute_single_task(task, tools, my_tool_executor)
-```
-
-TaskExecutor 不导入任何上层模块，完全通过回调工作。
+规则覆盖和规则回退。当前包含 box-assisted 与 climbable-obstacle 两类场景。
 
 ### `schema.py` — TaskIntent
 
@@ -120,12 +96,10 @@ class TaskIntent:
 
 - `highlevel_prompt.yaml` — 高层规划 prompt，包含 `system_prompt` 和 `prompt` 模板
   - 模板变量：`{available_skills}`, `{user_input}`, `{agent_thought}`, `{visual_context}`, `{scene_facts}`, `{object_facts}`
-- `lowlevel_prompt.yaml` — 低层执行 prompt，包含 `system_prompt` 和 `user_prompt` 模板
-  - 模板变量：`{task_description}`, `{task_type}`, `{suggested_function}`, `{parameter_context}` 等
 
 ## 与其他模块的关系
 
-- 被 `Robot_Module/tools.py` 调用（创建 Planner/TaskExecutor 实例）
+- 被 `Robot_Module/pipeline_factory.py` 调用（创建 Planner 实例）
 - 被 `Excu_Module/pipeline.py` 调用（`run_pipeline()` 编排规划 + 执行循环）
 - 通过依赖注入使用 `Data_Module/params.py`（ParameterCalculator）
 - 不导入 `Excu_Module`、`Robot_Module`、`Hardware_Module`

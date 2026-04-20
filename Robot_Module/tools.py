@@ -2,33 +2,16 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
-import os
-import threading
 from pathlib import Path
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
-from Data_Module.facts import load_object_facts
-from Data_Module.vlm import VLMCore
-from Data_Module.params import ParameterCalculator
-from Data_Module.context import build_planner_context
-from Hardware_Module.registry import (
-    sync_object_facts_from_live_data,
-    sync_runtime_overrides_from_user_input,
-)
-from Hardware_Module import get_state
-from Planner_Module.planner import Planner
-from Excu_Module.pipeline import run_pipeline
-
+from .pipeline_factory import run_robot_act_pipeline
 from .tasks import register_tools as register_task_tools
+from .tool_runtime import execute_registered_tool, snapshot_tool_definitions
 from .vision.vlm_observe import register_tools as register_vision_tools
-
-DEFAULT_OBJECT_FACTS_PATH = Path(
-    os.getenv("FINALPROJECT_OBJECT_FACTS_PATH", str(Path(__file__).resolve().parents[1] / "config" / "object_facts.json"))
-)
 
 mcp = FastMCP("robot")
 
@@ -39,95 +22,8 @@ _tool_definitions: list[dict[str, Any]] = []
 _modules_registered = False
 
 
-def _normalize_tool_result(function_name: str, raw_result: Any) -> dict[str, Any]:
-    parsed = raw_result
-    if isinstance(raw_result, str):
-        try:
-            parsed = json.loads(raw_result)
-        except json.JSONDecodeError:
-            parsed = {"raw_result": raw_result}
-    if not isinstance(parsed, dict):
-        parsed = {"raw_result": parsed}
-
-    status = parsed.get("status", "success")
-    feedback = parsed.get("execution_feedback") or {
-        "signal": "SUCCESS" if status == "success" else "FAILURE",
-        "skill": function_name,
-        "message": f"{function_name} 执行{'成功' if status == 'success' else '失败'}",
-    }
-    validation = feedback.get("validation") if isinstance(feedback, dict) else None
-    validation_success = True
-    if isinstance(validation, dict) and validation:
-        verified = validation.get("verified")
-        meets_requirements = validation.get("meets_requirements")
-        if verified is False or meets_requirements is False:
-            validation_success = False
-        elif verified is True and meets_requirements is True:
-            validation_success = True
-
-    return {
-        "success": status == "success" and feedback.get("signal") == "SUCCESS" and validation_success,
-        "feedback": feedback,
-        "result": parsed,
-    }
-
-
 def _execute_registered_tool(function_name: str, function_args: dict[str, Any]) -> dict[str, Any]:
-    skill_func = get_skill_function(function_name)
-    if not skill_func:
-        return {"success": False, "error": f"Unknown tool: {function_name}"}
-    raw_result = _run_async_blocking(skill_func(**function_args))
-    normalized = _normalize_tool_result(function_name, raw_result)
-    return {
-        "success": normalized["success"],
-        "feedback": normalized["feedback"],
-        "result": normalized["result"],
-    }
-
-
-def _run_async_blocking(coro):
-    try:
-        asyncio.get_running_loop()
-    except RuntimeError:
-        return asyncio.run(coro)
-
-    result: dict[str, Any] = {}
-    error: dict[str, BaseException] = {}
-
-    def _runner():
-        try:
-            result["value"] = asyncio.run(coro)
-        except BaseException as exc:
-            error["value"] = exc
-
-    thread = threading.Thread(target=_runner, daemon=True)
-    thread.start()
-    thread.join()
-    if "value" in error:
-        raise error["value"]
-    return result.get("value")
-
-
-def _snapshot_tool_definitions() -> list[dict[str, Any]]:
-    async def _get_tools():
-        tools_list = await mcp.list_tools()
-        tools = []
-        for tool in tools_list:
-            tools.append(
-                {
-                    "type": "function",
-                    "function": {
-                        "name": tool.name,
-                        "description": tool.description if hasattr(tool, "description") else "",
-                        "parameters": tool.inputSchema
-                        if hasattr(tool, "inputSchema")
-                        else {"type": "object", "properties": {}, "required": []},
-                    },
-                }
-            )
-        return tools
-
-    return asyncio.run(_get_tools())
+    return execute_registered_tool(function_name, function_args, _tool_registry)
 
 
 def get_skill_function(name: str):
@@ -206,82 +102,17 @@ def _run_robot_act_pipeline(
     object_facts_path: str | Path | None = None,
     on_event=None,
 ) -> dict[str, Any]:
-    register_all()
-    path = Path(object_facts_path or DEFAULT_OBJECT_FACTS_PATH)
-    try:
-        synced_payload = sync_object_facts_from_live_data(path, user_input=user_intent)
-    except Exception:
-        synced_payload = None
-        try:
-            sync_runtime_overrides_from_user_input(path, user_input=user_intent)
-        except Exception:
-            pass
-
-    object_facts = load_object_facts(path)
-    merged_scene_facts = scene_facts
-    visual_context_text = json.dumps(observation_context, ensure_ascii=False) if observation_context else None
-    if object_facts is not None:
-        merged_scene_facts = VLMCore.merge_scene_facts(scene_facts, object_facts)
-    planner_context = build_planner_context(merged_scene_facts, object_facts, synced_payload)
-
-    api_key = os.getenv("Test_API_KEY")
-    from openai import OpenAI
-
-    client = OpenAI(
-        api_key=api_key,
-        base_url=os.getenv("FINALPROJECT_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
-    )
-
-    parameter_calculator = ParameterCalculator()
-    prompt_path = str(Path(__file__).resolve().parents[1] / "Planner_Module" / "prompts" / "highlevel_prompt.yaml")
-    planner = Planner(client=client, prompt_path=prompt_path, parameter_calculator=parameter_calculator)
-    action_tools = get_action_tool_definitions()
-
-    # 获取 robot_state 给规划 LLM 参考
-    robot_state = {}
-    try:
-        raw_state = get_state()
-        if raw_state and raw_state.get("connected"):
-            robot_state = raw_state
-    except Exception:
-        pass
-
-    import yaml
-    data = yaml.safe_load(Path(prompt_path).read_text(encoding="utf-8")) or {}
-    planner.planning_prompt_template = str(data.get("prompt", "")).strip()
-
-    results = run_pipeline(
-        user_input=user_intent,
-        planner=planner,
-        execute_tool_fn=_execute_registered_tool,
-        tools=action_tools,
-        visual_context=visual_context_text,
-        scene_facts=planner_context,
-        object_facts=object_facts,
+    return run_robot_act_pipeline(
+        user_intent=user_intent,
         agent_thought=agent_thought,
-        robot_state=robot_state,
-        max_replans=0,
+        observation_context=observation_context,
+        scene_facts=scene_facts,
+        object_facts_path=object_facts_path,
         on_event=on_event,
+        ensure_registered=register_all,
+        get_action_tool_definitions=get_action_tool_definitions,
+        execute_tool_fn=_execute_registered_tool,
     )
-
-    success_count = sum(1 for item in results if item.get("success"))
-    runtime_state = (synced_payload or {}).get("runtime_state") or {}
-    return {
-        "status": "success" if results else "warning",
-        "summary": {
-            "total_tasks": len(results),
-            "success_count": success_count,
-            "failure_count": len(results) - success_count,
-        },
-        "results": results,
-        "session_snapshot": {
-            "sync": {
-                "scene_id": runtime_state.get("scene_id"),
-                "model_use": runtime_state.get("model_use"),
-                "objects_count": len((synced_payload or {}).get("objects") or []),
-            }
-        },
-    }
 
 
 def register_all():
@@ -296,5 +127,5 @@ def register_all():
     _tool_registry["vlm_observe"] = vlm_observe
     mcp.tool()(robot_act)
     _tool_registry["robot_act"] = robot_act
-    _tool_definitions = _snapshot_tool_definitions()
+    _tool_definitions = snapshot_tool_definitions(mcp)
     _modules_registered = True

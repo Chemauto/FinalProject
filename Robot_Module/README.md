@@ -21,6 +21,8 @@ action_tools = get_tool_definitions({"walk", "navigation", ...})
 Robot_Module/
   __init__.py       对外暴露 register_all, mcp, get_tool_definitions 等
   tools.py          轻量 MCP 工具注册中心
+  tool_runtime.py   注册工具执行、异步兼容、返回值标准化
+  pipeline_factory.py robot_act pipeline 装配
   tasks/
     __init__.py     任务分发注册表
     bishe/
@@ -51,7 +53,23 @@ Robot_Module/
 - `get_action_tool_definitions()` — 获取动作技能工具
 - `vlm_observe` — 顶层 Vision tool（MCP 注册）
 - `robot_act` — 顶层 Action tool（MCP 注册）
-- `_run_robot_act_pipeline(..., on_event=None)` — robot_act 内部实现，`on_event` 透传到 `run_pipeline()`
+- `_run_robot_act_pipeline(..., on_event=None)` — 兼容入口，实际装配逻辑在 `pipeline_factory.py`
+
+### `tool_runtime.py` — 工具运行时
+
+- 标准化技能返回值
+- 兼容同步上下文和异步上下文
+- 从 MCP 实例生成 OpenAI function calling 工具定义
+
+### `pipeline_factory.py` — robot_act 装配
+
+负责 `robot_act` 的胶水逻辑：
+
+- 同步 live data 到 `object_facts`
+- 合并 VLM / object facts
+- 构建 planner context
+- 创建 `Planner`
+- 调用 `Excu_Module/pipeline.py::run_pipeline()`
 
 ### `tasks/__init__.py` — 任务分发注册表
 
@@ -111,12 +129,13 @@ _TASK_REGISTRY = {
 - `robot_act` — 执行动作链
 
 `robot_act` 内部：
-1. 同步 live data 到 object_facts（`Hardware_Module/registry.py`）
-2. 组装 planner_context（`Data_Module/context.py`）
-3. 高层规划（`Planner_Module/planner.py`）
-4. 参数计算（`Data_Module/params.py`）
-5. 低层执行（`Planner_Module/executor.py`）
-6. 逐技能执行和验收（`Excu_Module`）
+1. `Robot_Module/pipeline_factory.py` 装配 pipeline 依赖
+2. 同步 live data 到 object_facts（`Hardware_Module/registry.py`）
+3. 组装 planner_context（`Data_Module/context.py`）
+4. 高层规划（`Planner_Module/planner.py`）
+5. 规则覆盖（`Planner_Module/rule_overrides.py`）
+6. 参数计算（`Data_Module/params.py`）
+7. 逐技能执行和验收（`Robot_Module/tasks/bishe/*.py` + `Excu_Module`）
 
 ## 注册链路
 
@@ -153,17 +172,17 @@ Robot_Module/tools.py
 
 ### 与 Data_Module
 
-- `tools.py` 调用 `Data_Module` 加载 facts、参数计算、构建上下文
+- `pipeline_factory.py` 调用 `Data_Module` 加载 facts、参数计算、构建上下文
 - `vision/vlm_observe.py` 调用 `Data_Module/vlm.py`（VLMCore）
 
 ### 与 Hardware_Module
 
 - `vision/vlm_observe.py` 调用 `Hardware_Module.get_state()` 获取实时状态
-- `tools.py` 调用 `Hardware_Module/registry.py` 同步数据
+- `pipeline_factory.py` 调用 `Hardware_Module/registry.py` 同步数据
 
 ### 与 Planner_Module
 
-- `tools.py` 创建 Planner 和 TaskExecutor 实例
+- `pipeline_factory.py` 创建 Planner 实例
 - 调用 `Excu_Module/pipeline.py` 的 `run_pipeline()` 编排整个流程
 
 ## 本地运行

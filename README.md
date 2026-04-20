@@ -49,10 +49,12 @@ vlm_observe
 
 robot_act
 -> Robot_Module/tools.py
+   -> Robot_Module/pipeline_factory.py 装配 planner + pipeline
    -> Hardware_Module/registry.py 同步 live data 到 object_facts
    -> Data_Module/context.py 组装 planner_context
    -> Excu_Module/pipeline.py (on_event 回调驱动 Rich 渲染)
-      -> Planner_Module/planner.py 高层规划（含规则覆盖）
+      -> Planner_Module/planner.py 高层规划
+      -> Planner_Module/rule_overrides.py 规则覆盖
       -> Data_Module/params.py 参数计算
       -> Robot_Module/tasks/bishe/*.py 具体技能实现（后台线程执行）
       -> Excu_Module 统一执行和验收（主线程实时轮询坐标）
@@ -61,7 +63,7 @@ robot_act
 
 ## TUI 界面
 
-`cli.py` 基于 Rich 构建，提供：
+`cli.py` 只保留启动和主循环，Rich TUI 的具体逻辑位于 `TUI_Module/`：
 
 - **欢迎面板** — 紧凑表格显示 Model、API、VLM 状态、Skills 数量
 - **状态行** — 每次输入前显示 `Model │ Conn:ON │ Scene:1 │ Pos:(x, y, z) │ VLM:on`
@@ -72,7 +74,7 @@ robot_act
 ### on_event 回调链
 
 ```text
-cli.py _make_pipeline_event_handler()
+TUI_Module/renderers.py make_pipeline_event_handler()
 -> execute_tool(event_callback=handler)
    -> _run_robot_act_pipeline(on_event=handler)
       -> run_pipeline(on_event=handler)
@@ -111,8 +113,9 @@ Data_Module/
 
 Planner_Module/
   __init__.py       对外暴露 Planner, TaskIntent
-  planner.py        高层任务规划（CoT + 规则覆盖 + on_event 回调）
-  executor.py       低层任务执行（LLM 工具选择）
+  planner.py        高层任务规划入口（LLM 调用 + on_event 回调）
+  parsing.py        规划 JSON 解析和任务标准化
+  rule_overrides.py 规则覆盖与规则回退
   schema.py         TaskIntent dataclass
   prompts/          高层 prompt YAML
 
@@ -129,6 +132,8 @@ Excu_Module/
 Robot_Module/
   __init__.py       对外暴露 register_all, mcp, get_tool_definitions
   tools.py          轻量 MCP 工具注册中心（vlm_observe + robot_act + on_event 透传）
+  tool_runtime.py   注册工具执行、异步兼容、返回值标准化
+  pipeline_factory.py robot_act pipeline 装配
   tasks/
     __init__.py     任务分发注册表
     bishe/          Bishe 任务技能
@@ -143,11 +148,33 @@ Robot_Module/
     __init__.py
     vlm_observe.py  视觉观察技能
 
-cli.py              Rich TUI 交互界面（事件回调驱动渲染）
+TUI_Module/
+  session.py        会话状态、系统提示词
+  commands.py       /help /model /status 等命令
+  renderers.py      Rich Panel/Table 和 pipeline 事件渲染
+  agent_turn.py     顶层 LLM 对话和工具调用分发
+
+cli.py              Rich TUI 入口（加载环境、构建 client、主循环）
 run.py              项目入口（调用 cli.main）
 config/
   object_facts.json 物体事实配置
 ```
+
+## 修改指南
+
+| 你要改什么 | 优先看哪里 |
+|------------|------------|
+| TUI 显示样式、状态行、表格 | `TUI_Module/renderers.py` |
+| `/help`、`/model`、`/status` 等命令 | `TUI_Module/commands.py` |
+| 顶层 LLM 如何决定调用 `vlm_observe` / `robot_act` | `TUI_Module/session.py` 的 `AGENT_SYSTEM_PROMPT` |
+| 工具调用消息如何进入 pipeline | `TUI_Module/agent_turn.py` |
+| `robot_act` 如何装配 planner、object_facts、pipeline | `Robot_Module/pipeline_factory.py` |
+| MCP 工具注册和工具列表 | `Robot_Module/tools.py` |
+| 高层 LLM prompt 与规划入口 | `Planner_Module/planner.py` 和 `Planner_Module/prompts/highlevel_prompt.yaml` |
+| 规则覆盖（箱子辅助登台、可攀爬高台） | `Planner_Module/rule_overrides.py` |
+| 参数自动补全 | `Data_Module/params.py` |
+| 执行、停止、验收逻辑 | `Excu_Module/executor.py`、`Excu_Module/state.py`、`Excu_Module/runtime.py` |
+| 新增/修改动作技能 | `Robot_Module/tasks/bishe/*.py` |
 
 ## 动作技能
 
@@ -167,7 +194,7 @@ config/
 
 ## 规则覆盖
 
-`Planner_Module/planner.py` 内置两种自动规划规则，当 LLM 规划不合理时强制覆盖：
+`Planner_Module/rule_overrides.py` 内置两种自动规划规则，当 LLM 规划不合理时强制覆盖：
 
 | 场景 | 触发条件 | 任务链 |
 |------|---------|--------|
@@ -242,7 +269,7 @@ python run.py
 
 ```bash
 export FINALPROJECT_ROBOT_TYPE=go2
-export FINALPROJECT_EXECUTION_BACKEND=ros
+export FINALPROJECT_NAV_BACKEND=ros
 ```
 
 3. 启动交互入口
