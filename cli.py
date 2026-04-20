@@ -520,6 +520,10 @@ def _make_pipeline_event_handler(console: Console):
             console.print(f"  [yellow]Replan: {data['message']}[/yellow]")
         elif event_type == "rule_override":
             console.print(f"  [yellow]{data['message']}[/yellow]")
+        elif event_type == "step_progress":
+            pose = data.get("pose")
+            if pose and isinstance(pose, list) and len(pose) >= 2:
+                console.print(f"  [dim]→ ({pose[0]:.2f}, {pose[1]:.2f}, {pose[2]:.2f})[/dim]")
     return on_event
 
 

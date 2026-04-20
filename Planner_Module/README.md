@@ -48,11 +48,12 @@ Planner_Module/
 
 **主要方法：**
 
-- `plan_tasks(user_input, agent_thought, tools, ...)` — 核心规划入口
+- `plan_tasks(user_input, agent_thought, tools, ..., on_event=None)` — 核心规划入口
   - 使用 YAML prompt 模板格式化输入
   - 调用 LLM 生成任务序列 JSON
   - 应用规则覆盖（box-assisted / climbable-obstacle）
   - 失败时回退到规则链或默认任务
+  - `on_event` 回调输出规划事件（`llm_planning`、`plan_done`、`plan_error`、`rule_override`）
 
 - `annotate_tasks(tasks, object_facts)` — 参数标注
   - 通过依赖注入的 `parameter_calculator`（`Data_Module/params.py`）完成
@@ -65,7 +66,7 @@ Planner_Module/
 | box-assisted | 两侧被阻挡 + 有可移动箱子 + 箱子可做台阶 | `push_box -> climb_align -> climb -> nav_climb` |
 | climbable-obstacle | 两侧有平台 + 一侧可攀爬 + 无箱子 | `way_select -> nav_climb` |
 
-当 LLM 规划结果不符合场景几何时，规则覆盖会强制修正。
+当 LLM 规划结果不符合场景几何时，规则覆盖会强制修正。规则覆盖事件通过 `on_event("rule_override", ...)` 回调输出（`on_event=None` 时回退为 `print()`）。
 
 **依赖注入：**
 

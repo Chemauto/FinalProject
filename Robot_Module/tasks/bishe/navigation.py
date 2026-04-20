@@ -42,7 +42,7 @@ def register_tools(mcp):
     register_skill(skill)
 
     @mcp.tool()
-    async def navigation(goal: str, target: str = "目标点", speech: str = "") -> str:
+    async def navigation(goal: str = "", target: str = "目标点", speech: str = "") -> str:
         """导航到指定的目标坐标。
 
         Args:

@@ -12,10 +12,10 @@
 ```text
 Excu_Module/
   __init__.py       对外暴露公共接口
-  pipeline.py       执行流水线编排（plan -> execute -> assess 循环）
+  pipeline.py       执行流水线编排（plan -> execute -> assess + on_event 回调 + 实时坐标轮询）
   executor.py       串联执行前状态、命令下发、执行后状态、validation
   runtime.py        执行协议（file/udp/ros）、命令下发
-  state.py          统一读取硬件状态，提供校验方法
+  state.py          统一读取硬件状态，提供校验方法（含方向宽限期）
   skill_base.py     技能基类（SkillBase）
   skill_registry.py 全局技能注册 + 可插拔钩子注册
   schema.py         ExecutionFeedback dataclass
@@ -27,16 +27,38 @@ Excu_Module/
 
 编排 plan -> parameter -> execute 的完整流水线。
 
-- `run_pipeline(user_input, planner, task_executor, execute_tool_fn, ...)` — 核心编排入口
-  - 调用 `planner.plan_tasks()` 规划任务序列
+- `run_pipeline(user_input, planner, execute_tool_fn, ..., on_event=None)` — 核心编排入口
+  - 调用 `planner.plan_tasks(on_event=on_event)` 规划任务序列
   - 调用 `planner.annotate_tasks()` 填充参数
-  - 逐任务调用 `task_executor.execute_single_task()` 执行
+  - 逐任务调用 `execute_tool_fn` 执行
   - 支持重规划循环（`max_replans` 参数）
+  - `on_event` 回调驱动 TUI 渲染（`on_event=None` 时回退为 `print()`）
   - 返回执行结果列表
+
+- `_execute_with_progress(execute_tool_fn, function_name, params, on_event)` — 后台线程执行 + 实时坐标
+  - 技能在后台线程执行，主线程每 1 秒轮询 `Hardware_Module.get_state()`
+  - 通过 `on_event("step_progress", {"pose": [...]})` 回传实时坐标
+  - 技能完成后返回结果
 
 - `assess_result(result)` — 评估单步执行结果
   - 检查 `validation.verified` 和 `validation.meets_requirements`
   - 回退检查 `feedback.signal == SUCCESS`
+
+**on_event 事件类型：**
+
+| 事件 | 数据 | 说明 |
+|------|------|------|
+| `plan_start` | `{user_input}` | 开始规划 |
+| `plan_thinking` | `{thinking}` | LLM 推理过程 |
+| `plan_done` | `{tasks, summary}` | 规划完成 |
+| `plan_error` | `{error}` | 规划失败 |
+| `execute_start` | `{}` | 开始执行 |
+| `step_start` | `{idx, total, function, params, reason}` | 步骤开始 |
+| `step_progress` | `{pose}` | 实时坐标（每秒） |
+| `step_done` | `{idx, success, message}` | 步骤完成 |
+| `replan` | `{message}` | 重规划 |
+| `pipeline_done` | `{results}` | 流水线完成 |
+| `pipeline_error` | `{error}` | 流水线错误 |
 
 所有依赖通过参数注入，不导入 Robot_Module、Data_Module 等。
 
@@ -84,9 +106,17 @@ Excu_Module/
 
 - 通过 `Hardware_Module.get_state()` 读取统一状态
 - 提取 `robot_pose / goal / model_use / skill / timestamp / box_pose`
-- 0.5 秒轮询完成判定（`wait_for_skill_completion`）
-- 导航到达判定（`wait_for_navigation_completion`）— 导航码通过 `get_navigation_model_uses()` 获取
+- 导航到达判定（`wait_for_navigation_completion`）— 0.5 秒轮询，到达阈值 0.13m
+- 位移完成判定（`wait_for_displacement_completion`）— 含方向宽限期
 - 通用事后校验（通过 skill registry 委托）
+- 状态摘要（`summarize_state`）
+
+**方向宽限期：**
+
+`wait_for_displacement_completion` 内置 `direction_grace_sec`（默认 1.0s，可通过 `FINALPROJECT_DIRECTION_GRACE_SEC` 配置）：
+- 宽限期内：跳过方向检查，允许机器人完成上一步的减速过渡
+- 宽限期结束：用当前位置重新校准 `start_pose`，消除惯性漂移
+- 之后正常检测方向和位移
 
 ### `executor.py` — 执行编排
 
@@ -94,12 +124,11 @@ Excu_Module/
 
 - 执行前读取实时状态（含箱子位置）
 - 下发命令
-- 0.5 秒轮询等待，满足条件提前停止
+- 导航类：轮询到达判定（`wait_for_navigation_completion`）
+- 位移类：轮询位移判定（`wait_for_displacement_completion`），支持方向校验
+- 兜底：按固定时间等待
 - 超时后 stop 命令
-- 执行后再次读取状态
-- 轮询判定 + 事后校验双保险
-- 构造 `execution_feedback`
-- 写入 `validation`
+- 构造 `execution_feedback` + `validation`
 
 ### `schema.py` — ExecutionFeedback
 
@@ -122,12 +151,10 @@ Robot_Module/tasks/bishe/*.py
 -> Excu_Module/executor.wait_skill_feedback()
    -> Hardware_Module.get_state() 读取执行前状态
    -> runtime.apply_envtest_command() 下发命令
-   -> state.wait_for_skill_completion() 0.5s轮询等待
-      -> 每轮：取状态 -> 检查技能完成条件 -> 满足则提前停止
+   -> state.wait_for_navigation_completion() / wait_for_displacement_completion()
+      -> 每轮：取状态 -> 检查到达/位移条件 -> 方向宽限期检查
    -> runtime.stop_envtest_skill() 停止
-   -> Hardware_Module.get_state() 读取执行后状态
-   -> state.validate_*() 做验收
-   -> 返回 execution_feedback
+   -> 返回 execution_feedback + validation
 ```
 
 ## 成功判定
@@ -154,7 +181,7 @@ Robot_Module/tasks/bishe/*.py
 
 ### 与 Planner_Module
 
-- `pipeline.py` 编排 Planner 和 TaskExecutor 的调用
+- `pipeline.py` 编排 Planner 的调用，传递 `on_event` 回调
 - 不直接导入 Planner_Module，通过参数注入
 
 ### 与 Data_Module

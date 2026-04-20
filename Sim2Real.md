@@ -236,7 +236,7 @@ export FINALPROJECT_VLM_ROS2_IMAGE_TOPIC=/你的实际topic
 
 ```
 velocity[0]  →  twist.linear.x   (前进速度，m/s)
-velocity[1]  →  twist.linear.y   (侧移速度，m/s，当前所有技能都为 0)
+velocity[1]  →  twist.linear.y   (侧移速度，m/s，walk 左右移动时非零)
 velocity[2]  →  twist.linear.z   (垂直速度，m/s，当前所有技能都为 0)
 ```
 
@@ -286,11 +286,13 @@ goal = [1.05, 0.0, 0.0, 0.0]  →  爬对齐到 (1.05, 0, 0)，朝向 0
 | model_use | 技能名 | 命令类型 | 执行策略 |
 |-----------|--------|---------|---------|
 | 0 | idle | — | 空闲状态，不发运动命令 |
-| 1 | walk | velocity `[vx, 0, 0]` | 超时等待 + 事后校验 |
+| 1 | walk | velocity `[vx, vy, 0]` | 超时等待 + 位移校验（含方向宽限期） |
 | 2 | climb | velocity `[vx, 0, 0]` | 超时等待 + 事后校验 |
 | 3 | push_box | goal `[x, y, z]` | 0.5s 轮询检测箱子到位 (阈值 0.08m) |
 | 4 | navigation | goal `[x, y, z]` | 0.5s 轮询检测到达 (阈值 0.13m) |
 | 5 | nav_climb | goal `[x, y, z]` | 0.5s 轮询检测到达 (阈值 0.13m) |
+
+注意：walk 技能支持前后左右四方向移动。`route_side="前"/"后"` 对应 `[±vx, 0, 0]`，`route_side="左"/"右"` 对应 `[0, ±vy, 0]`。真机端需要同时支持 `cmd_vel.linear.x`（前进）和 `cmd_vel.linear.y`（侧移）。
 
 注意：`climb_align` 也使用 model_use=4（navigation 编码），因为它本质是导航到对齐点。
 
@@ -346,6 +348,10 @@ export FINALPROJECT_VLM_ROS2_IMAGE_TOPIC=/你的实际摄像头topic
 
 # （可选）调整轮询频率和到达阈值
 export FINALPROJECT_STATUS_POLL_SEC=0.5
+
+# （可选）调整位移方向宽限期（秒），默认 1.0s
+# 技能切换时跳过方向检查，避免惯性漂移误判
+export FINALPROJECT_DIRECTION_GRACE_SEC=1.0
 ```
 
 ---

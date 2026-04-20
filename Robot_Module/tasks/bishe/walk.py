@@ -25,8 +25,15 @@ class WalkSkill(SkillBase):
             return {"status": "failure", "message": "distance 必须大于 0"}
 
         speed = abs(read_env_float("FINALPROJECT_WALK_SPEED_MPS", self.DEFAULT_SPEED))
-        vx = -speed if ("后" in route_side or "back" in route_side.lower()) else speed
-        velocity = [vx, 0.0, 0.0]
+        is_backward = "后" in route_side or "back" in route_side.lower()
+        is_left = "左" in route_side or "left" in route_side.lower()
+        is_right = "右" in route_side or "right" in route_side.lower()
+        if is_left or is_right:
+            vy = -speed if is_left else speed
+            velocity = [0.0, vy, 0.0]
+        else:
+            vx = -speed if is_backward else speed
+            velocity = [vx, 0.0, 0.0]
         timeout = estimate_linear_duration(distance, speed)
         speak(speech)
         print(f"[walk] 沿{route_side}行走 {distance:.2f}m, 目标={target}", file=sys.stderr)

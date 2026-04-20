@@ -52,7 +52,7 @@ def register_tools(mcp):
     register_skill(skill)
 
     @mcp.tool()
-    async def climb(height: float, stage: str = "高台", target: str = "目标点", speech: str = "") -> str:
+    async def climb(height: float = 0.15, stage: str = "高台", target: str = "目标点", speech: str = "") -> str:
         """攀爬指定高度的台阶或物体。
 
         Args:

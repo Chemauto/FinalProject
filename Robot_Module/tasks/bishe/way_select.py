@@ -70,7 +70,7 @@ def register_tools(mcp):
     register_skill(skill)
 
     @mcp.tool()
-    async def way_select(direction: str, lateral_distance: float = 0.5, target: str = "目标点", speech: str = "") -> str:
+    async def way_select(direction: str = "left", lateral_distance: float = 0.5, target: str = "目标点", speech: str = "") -> str:
         """选择行进路线方向（左或右）。
 
         Args:

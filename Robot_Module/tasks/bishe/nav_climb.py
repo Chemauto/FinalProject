@@ -42,7 +42,7 @@ def register_tools(mcp):
     register_skill(skill)
 
     @mcp.tool()
-    async def nav_climb(goal: str, target: str = "目标点", speech: str = "") -> str:
+    async def nav_climb(goal: str = "", target: str = "目标点", speech: str = "") -> str:
         """导航到目标位置并攀爬。
 
         Args:

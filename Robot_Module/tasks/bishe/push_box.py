@@ -221,7 +221,7 @@ def register_tools(mcp):
     register_skill(skill)
 
     @mcp.tool()
-    async def push_box(box_height: float, target_position: str = "auto", speech: str = "") -> str:
+    async def push_box(box_height: float = 0.15, target_position: str = "auto", speech: str = "") -> str:
         """推动箱子到指定位置。
 
         Args:

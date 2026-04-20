@@ -4,9 +4,49 @@
 
 from __future__ import annotations
 
+import threading
 from typing import Any, Callable
 
 PipelineEventCallback = Callable[[str, dict[str, Any]], None]
+
+_PROGRESS_POLL_SEC = 1.0
+
+
+def _execute_with_progress(
+    execute_tool_fn: Callable,
+    function_name: str,
+    params: dict,
+    on_event: PipelineEventCallback,
+) -> dict[str, Any]:
+    """在后台线程执行技能，主线程每 2s 轮询机器人坐标并通过 on_event 回传。"""
+    result_box: dict[str, Any] = {}
+    error_box: dict[str, BaseException] = {}
+
+    def _worker():
+        try:
+            result_box["value"] = execute_tool_fn(function_name, params)
+        except BaseException as exc:
+            error_box["value"] = exc
+
+    thread = threading.Thread(target=_worker, daemon=True)
+    thread.start()
+
+    while thread.is_alive():
+        thread.join(timeout=_PROGRESS_POLL_SEC)
+        if thread.is_alive():
+            try:
+                from Hardware_Module import get_state
+                from Excu_Module.state import summarize_state
+                state = get_state()
+                if state and isinstance(state, dict):
+                    summary = summarize_state(state) or {}
+                    on_event("step_progress", {"pose": summary.get("robot_pose")})
+            except Exception:
+                pass
+
+    if "value" in error_box:
+        raise error_box["value"]
+    return result_box.get("value", {})
 
 
 def assess_result(result: dict[str, Any]) -> tuple[bool, str]:
@@ -158,8 +198,11 @@ def run_pipeline(
                     print(f"📝 [参数] {params}")
                     print(f"📋 [依据] {task.get('reason', '')}")
 
-                # 直接调用技能函数
-                result = execute_tool_fn(function_name, params)
+                # 直接调用技能函数（有 on_event 时在后台线程执行，主线程轮询坐标）
+                if on_event:
+                    result = _execute_with_progress(execute_tool_fn, function_name, params, on_event)
+                else:
+                    result = execute_tool_fn(function_name, params)
 
                 task_success, assessment_message = assess_result(result)
                 result["success"] = task_success

@@ -51,7 +51,7 @@ Robot_Module/
 - `get_action_tool_definitions()` — 获取动作技能工具
 - `vlm_observe` — 顶层 Vision tool（MCP 注册）
 - `robot_act` — 顶层 Action tool（MCP 注册）
-- `_run_robot_act_pipeline()` — robot_act 内部实现（调用 Data_Module + Planner_Module + Excu_Module）
+- `_run_robot_act_pipeline(..., on_event=None)` — robot_act 内部实现，`on_event` 透传到 `run_pipeline()`
 
 ### `tasks/__init__.py` — 任务分发注册表
 
@@ -76,13 +76,17 @@ _TASK_REGISTRY = {
 
 | 技能 | 功能 | 命令类型 | model_use |
 |------|------|---------|-----------|
-| `walk` | 直行 | velocity `[vx, 0, 0]` | 1 |
+| `walk` | 行走（前后左右四方向） | velocity `[vx,vy,0]` | 1 |
 | `navigation` | 导航到目标点 | goal `[x, y, z]` | 4 |
 | `nav_climb` | 导航并攀爬 | goal `[x, y, z]` | 5 |
 | `climb_align` | 攀爬对正 | goal `[x, y, z, yaw]` | 4 |
 | `climb` | 攀爬 | velocity `[vx, 0, 0]` | 2 |
 | `push_box` | 推箱子 | goal `[x, y, z]` | 3 |
-| `way_select` | 路线选择 | velocity `[vx, 0, 0]` | 1 |
+| `way_select` | 路线选择 | velocity `[0, vy, 0]` | 1 |
+
+`walk` 支持 `route_side` = 前/后/左/右，对应 `[vx,0,0]` / `[-vx,0,0]` / `[0,-vy,0]` / `[0,vy,0]`。
+
+所有技能的 MCP 注册参数均有默认值，规划器漏传参数不会导致 TypeError。
 
 每个技能文件职责：
 - 定义技能函数（参数接收 + 请求组装）
