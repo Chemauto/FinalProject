@@ -4,9 +4,8 @@
 
 用法:
     python run.py
-    python -m Agent_Module
 """
-from Agent_Module.replanner import main
+from cli import main
 
 if __name__ == "__main__":
     main()

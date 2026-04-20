@@ -5,7 +5,7 @@ import math
 import time
 from typing import Any, Sequence
 
-from Comm_Module import get_state
+from Hardware_Module import get_state
 
 from .runtime import (
     DEFAULT_STATUS_POLL_SEC,
@@ -25,17 +25,12 @@ def load_live_state(task_type: str | None = None) -> dict[str, Any]:
     return state if isinstance(state, dict) else {}
 
 
-def extract_robot_pose(state: dict[str, Any] | None) -> list[float] | None:
-    if not isinstance(state, dict):
-        return None
-    observation = state.get("observation") or {}
-    pose = observation.get("agent_position")
+def extract_robot_pose(state: dict[str, Any]) -> list[float] | None:
+    pose = (state.get("observation") or {}).get("agent_position")
     return round_pose(pose)
 
 
-def extract_scene_objects(state: dict[str, Any] | None) -> list[dict[str, Any]]:
-    if not isinstance(state, dict):
-        return []
+def extract_scene_objects(state: dict[str, Any]) -> list[dict[str, Any]]:
     observation = state.get("observation") or {}
     environment = observation.get("environment") or {}
     obstacles = environment.get("obstacles")
@@ -48,9 +43,7 @@ def extract_scene_objects(state: dict[str, Any] | None) -> list[dict[str, Any]]:
     return []
 
 
-def extract_runtime_snapshot(state: dict[str, Any] | None) -> dict[str, Any]:
-    if not isinstance(state, dict):
-        return {}
+def extract_runtime_snapshot(state: dict[str, Any]) -> dict[str, Any]:
     runtime = state.get("runtime")
     if isinstance(runtime, dict):
         snapshot = runtime.get("snapshot")
@@ -73,7 +66,7 @@ def extract_runtime_snapshot(state: dict[str, Any] | None) -> dict[str, Any]:
     }
 
 
-def extract_status_timestamp(state: dict[str, Any] | None) -> float | None:
+def extract_status_timestamp(state: dict[str, Any]) -> float | None:
     snapshot = extract_runtime_snapshot(state)
     try:
         return float(snapshot.get("timestamp"))
@@ -81,30 +74,26 @@ def extract_status_timestamp(state: dict[str, Any] | None) -> float | None:
         return None
 
 
-def extract_goal(state: dict[str, Any] | None) -> list[float] | None:
+def extract_goal(state: dict[str, Any]) -> list[float] | None:
     snapshot = extract_runtime_snapshot(state)
-    goal = snapshot.get("goal")
-    return round_pose(goal)
+    return round_pose(snapshot.get("goal"))
 
 
-def extract_skill_name(state: dict[str, Any] | None) -> str | None:
-    snapshot = extract_runtime_snapshot(state)
-    skill = snapshot.get("skill")
+def extract_skill_name(state: dict[str, Any]) -> str | None:
+    skill = extract_runtime_snapshot(state).get("skill")
     return str(skill) if isinstance(skill, str) and skill else None
 
 
-def extract_model_use(state: dict[str, Any] | None) -> int | None:
-    snapshot = extract_runtime_snapshot(state)
-    value = snapshot.get("model_use")
+def extract_model_use(state: dict[str, Any]) -> int | None:
+    value = extract_runtime_snapshot(state).get("model_use")
     try:
         return int(value) if value is not None else None
     except (TypeError, ValueError):
         return None
 
 
-def extract_start_flag(state: dict[str, Any] | None) -> bool | None:
-    snapshot = extract_runtime_snapshot(state)
-    value = snapshot.get("start")
+def extract_start_flag(state: dict[str, Any]) -> bool | None:
+    value = extract_runtime_snapshot(state).get("start")
     return value if isinstance(value, bool) else None
 
 
@@ -280,6 +269,152 @@ def build_navigation_validation(skill_name: str, goal_command: list[float], arri
         "dist_xy": arrival_result.get("dist_xy"),
         "pose_delta_xy": arrival_result.get("pose_delta_xy"),
         "stable_hits": arrival_result.get("stable_hits"),
-        "state": summarize_state(state if isinstance(state, dict) else None),
+        "state": summarize_state(state),
+        "elapsed_sec": arrival_result.get("elapsed_sec"),
+    }
+
+
+DEFAULT_DISPLACEMENT_TOL_M = 0.05
+DEFAULT_DISPLACEMENT_STABLE_POLLS = 2
+DEFAULT_DIRECTION_GRACE_SEC = 1.0
+
+
+async def wait_for_displacement_completion(
+    *,
+    task_type: str | None,
+    start_pose: list[float],
+    distance: float,
+    timeout_sec: float,
+    direction: str | None = None,
+) -> dict[str, Any]:
+    """轮询等待位移完成。每 0.5s 读一次状态，检查从 start_pose 起的位移是否达到 distance。
+
+    Args:
+        task_type: 后端类型
+        start_pose: 起始位姿 [x, y, z]
+        distance: 目标位移距离（米）
+        timeout_sec: 超时（秒）
+        direction: 期望方向 "forward"/"backward"/"left"/"right"，用于方向校验
+    """
+    poll_sec = max(0.1, read_env_float("FINALPROJECT_STATUS_POLL_SEC", DEFAULT_STATUS_POLL_SEC))
+    arrival_tol = abs(read_env_float("FINALPROJECT_DISPLACEMENT_TOL_M", DEFAULT_DISPLACEMENT_TOL_M))
+    required_stable = max(1, read_env_int("FINALPROJECT_DISPLACEMENT_STABLE_POLLS", DEFAULT_DISPLACEMENT_STABLE_POLLS))
+    stale_sec = abs(read_env_float("FINALPROJECT_STATUS_STALE_SEC", DEFAULT_STATE_STALE_SEC))
+    ready_timeout_sec = max(poll_sec, read_env_float("FINALPROJECT_STATUS_READY_TIMEOUT_SEC", DEFAULT_STATUS_READY_TIMEOUT_SEC))
+    grace_sec = abs(read_env_float("FINALPROJECT_DIRECTION_GRACE_SEC", DEFAULT_DIRECTION_GRACE_SEC))
+
+    start_time = time.time()
+    deadline = start_time + timeout_sec
+    ready_deadline = start_time + ready_timeout_sec
+    grace_deadline = start_time + grace_sec
+    latest_state: dict[str, Any] | None = None
+    latest_disp: float | None = None
+    stable_hits = 0
+    effective_start_pose = list(start_pose)
+
+    while time.time() < deadline:
+        await asyncio.sleep(poll_sec)
+        state = load_live_state(task_type=task_type)
+        if not state.get("connected"):
+            if time.time() >= ready_deadline:
+                return {
+                    "ok": False, "reason": "未获取到实时状态",
+                    "state": latest_state, "displacement": latest_disp,
+                    "elapsed_sec": round(time.time() - start_time, 3),
+                }
+            continue
+
+        latest_state = state
+        timestamp = extract_status_timestamp(state)
+        if timestamp is not None and (time.time() - timestamp) > stale_sec:
+            if time.time() >= ready_deadline:
+                return {
+                    "ok": False, "reason": f"实时状态超过 {stale_sec:.1f}s 未更新",
+                    "state": latest_state, "displacement": latest_disp,
+                    "elapsed_sec": round(time.time() - start_time, 3),
+                }
+            continue
+
+        robot_pose = extract_robot_pose(state)
+        if robot_pose is None:
+            continue
+
+        in_grace = time.time() < grace_deadline
+
+        # 宽限期结束：用当前位置重新校准起点，消除上一步惯性漂移
+        if not in_grace and effective_start_pose == list(start_pose):
+            effective_start_pose = list(robot_pose)
+
+        dx = robot_pose[0] - effective_start_pose[0]
+        dy = robot_pose[1] - effective_start_pose[1]
+        displacement = math.hypot(dx, dy)
+        latest_disp = displacement
+
+        # 方向校验：仅宽限期结束后检查
+        if not in_grace:
+            if direction == "forward" and dx <= -arrival_tol:
+                return {
+                    "ok": False, "reason": f"位移方向错误：期望前进，实际后退 (dx={dx:.3f})",
+                    "state": latest_state, "displacement": round(displacement, 3),
+                    "elapsed_sec": round(time.time() - start_time, 3),
+                }
+            if direction == "backward" and dx >= arrival_tol:
+                return {
+                    "ok": False, "reason": f"位移方向错误：期望后退，实际前进 (dx={dx:.3f})",
+                    "state": latest_state, "displacement": round(displacement, 3),
+                    "elapsed_sec": round(time.time() - start_time, 3),
+                }
+
+        # 位移达标判定
+        remaining = max(0.0, distance - displacement)
+        if remaining <= arrival_tol:
+            stable_hits += 1
+            if stable_hits >= required_stable:
+                return {
+                    "ok": True,
+                    "reason": f"位移完成 (displacement={displacement:.3f}m, target={distance:.3f}m)",
+                    "state": latest_state,
+                    "displacement": round(displacement, 3),
+                    "dx": round(dx, 3), "dy": round(dy, 3),
+                    "stable_hits": stable_hits,
+                    "elapsed_sec": round(time.time() - start_time, 3),
+                }
+        else:
+            stable_hits = 0
+
+        # 检查是否被提前停止（宽限期内也检查）
+        start_flag = extract_start_flag(state)
+        if start_flag is False:
+            return {
+                "ok": False,
+                "reason": f"技能在位移完成前已停止 (displacement={displacement:.3f}m, target={distance:.3f}m)",
+                "state": latest_state, "displacement": round(displacement, 3),
+                "elapsed_sec": round(time.time() - start_time, 3),
+            }
+
+    return {
+        "ok": False,
+        "reason": f"位移超时，{timeout_sec:.1f}s 内未达到目标 (displacement={latest_disp:.3f}m, target={distance:.3f}m)",
+        "state": latest_state, "displacement": latest_disp,
+        "elapsed_sec": round(time.time() - start_time, 3),
+    }
+
+
+def build_displacement_validation(skill_name: str, distance: float, arrival_result: dict[str, Any]) -> dict[str, Any]:
+    """根据位移轮询结果构建 validation。"""
+    state = arrival_result.get("state")
+    verified = isinstance(state, dict) and arrival_result.get("displacement") is not None
+    summary = str(arrival_result.get("reason") or "").strip() or f"{skill_name} 未返回有效位移判定"
+    return {
+        "verified": verified,
+        "meets_requirements": bool(arrival_result.get("ok")),
+        "source": "displacement_poll",
+        "summary": summary,
+        "target_distance": round(distance, 3),
+        "actual_displacement": arrival_result.get("displacement"),
+        "dx": arrival_result.get("dx"),
+        "dy": arrival_result.get("dy"),
+        "stable_hits": arrival_result.get("stable_hits"),
+        "state": summarize_state(state),
         "elapsed_sec": arrival_result.get("elapsed_sec"),
     }

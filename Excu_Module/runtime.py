@@ -13,11 +13,27 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Sequence
 
+# ── ROS2 可选导入（Go2 真机后端） ──────────────────────────
+_rclpy_ok = False
+_ros2_publishers: dict[str, Any] = {}
+_ros2_node = None
+
 try:
-    from Comm_Module.execution_comm import publish_skill_command, wait_for_execution_feedback
-except Exception:  # pragma: no cover
-    publish_skill_command = None
-    wait_for_execution_feedback = None
+    import rclpy
+    from rclpy.node import Node
+    from std_msgs.msg import String, Int32, Bool as BoolMsg
+    from geometry_msgs.msg import Twist, PoseStamped
+    _rclpy_ok = True
+except ImportError:
+    pass
+
+
+# ── ROS2 topic 名字（TODO: 替换为实际 topic） ──────────────
+ROS2_TOPICS = {
+    "skill_command": "/go2/skill_command",       # JSON: {model_use, velocity, goal, start}
+    "velocity_command": "/go2/cmd_vel",          # geometry_msgs/Twist
+    "goal_command": "/go2/goal_pose",            # geometry_msgs/PoseStamped
+}
 
 
 DEFAULT_TARGET = "前方目标点"
@@ -147,23 +163,6 @@ def log_skill(skill_name: str, detail: str) -> None:
     print(f"[go2.skill] {skill_name}: {detail}", file=sys.stderr)
 
 
-def normalize_direction(direction: str) -> str:
-    normalized = direction.strip().lower()
-    mapping = {
-        "left": "left",
-        "right": "right",
-        "左": "left",
-        "右": "right",
-        "左边": "left",
-        "右边": "right",
-        "左侧": "left",
-        "右侧": "right",
-    }
-    if normalized not in mapping:
-        raise ValueError("direction 只能是 left/right 或 左/右")
-    return mapping[normalized]
-
-
 def ensure_parent_dir(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -240,26 +239,98 @@ def estimate_goal_skill_duration(goal_value: list[float] | str | None, fallback_
     return max(fallback_sec, planar_distance / 0.35 + 1.0)
 
 
-async def hold_idle_stability(
-    config: ExecutionRuntimeConfig,
-    *,
-    wait_sec: float,
-    reason: str,
+
+# ── ROS2 发布函数（Go2 真机） ────────────────────────────
+
+
+def _ensure_ros2_node():
+    """确保 ROS2 节点和 publisher 已创建。"""
+    global _ros2_node, _ros2_publishers
+
+    if not _rclpy_ok:
+        return False
+
+    if _ros2_node is not None:
+        return True
+
+    try:
+        if not rclpy.ok():
+            rclpy.init()
+        _ros2_node = rclpy.create_node("finalproject_command_publisher")
+
+        _ros2_publishers["skill_command"] = _ros2_node.create_publisher(
+            String, ROS2_TOPICS["skill_command"], 10,
+        )
+        _ros2_publishers["velocity_command"] = _ros2_node.create_publisher(
+            Twist, ROS2_TOPICS["velocity_command"], 10,
+        )
+        _ros2_publishers["goal_command"] = _ros2_node.create_publisher(
+            PoseStamped, ROS2_TOPICS["goal_command"], 10,
+        )
+        return True
+    except Exception as e:
+        print(f"[ROS2] 初始化失败: {e}", file=sys.stderr)
+        _ros2_node = None
+        return False
+
+
+def _ros2_publish_command(
+    model_use: int | None = None,
+    velocity: list[float] | None = None,
+    goal: list[float] | str | None = None,
+    start: bool | None = None,
+    reset: int | None = None,
 ) -> None:
-    wait_sec = max(0.0, float(wait_sec))
-    if wait_sec <= 0:
+    """通过 ROS2 topic 发布命令到 Go2。
+
+    发布两条消息：
+    1. /go2/skill_command (JSON) — 完整技能状态
+    2. /go2/cmd_vel 或 /go2/goal_pose — 具体运动命令
+    """
+    if not _ensure_ros2_node():
         return
 
-    log_skill("stabilize", f"{reason}，静止等待 {wait_sec:.2f} 秒")
-    if config.backend != "ros":
-        idle_fields: dict[str, Any] = {
-            "start": False,
-            "velocity": [0.0, 0.0, 0.0],
-        }
-        if config.auto_idle_after_skill:
-            idle_fields["model_use"] = MODEL_USE_IDLE
-        apply_envtest_command(config, **idle_fields)
-    await asyncio.sleep(wait_sec)
+    # 1. 发布 skill_command (JSON)
+    skill_msg: dict[str, Any] = {}
+    if model_use is not None:
+        skill_msg["model_use"] = int(model_use)
+    if start is not None:
+        skill_msg["start"] = start
+    if reset is not None:
+        skill_msg["reset"] = int(reset)
+    if goal is not None and goal != "auto":
+        skill_msg["goal"] = goal if isinstance(goal, list) else list(goal)
+    if velocity is not None:
+        skill_msg["velocity"] = velocity
+
+    if skill_msg:
+        msg = String()
+        msg.data = json.dumps(skill_msg)
+        _ros2_publishers["skill_command"].publish(msg)
+
+    # 2. 发布 velocity_command (Twist)
+    if velocity is not None:
+        twist = Twist()
+        twist.linear.x = float(velocity[0])
+        twist.linear.y = float(velocity[1] if len(velocity) > 1 else 0.0)
+        twist.linear.z = float(velocity[2] if len(velocity) > 2 else 0.0)
+        _ros2_publishers["velocity_command"].publish(twist)
+
+    # 3. 发布 goal_command (PoseStamped)
+    if goal is not None and goal != "auto":
+        pose = PoseStamped()
+        pose.header.frame_id = "map"
+        pose.header.stamp = _ros2_node.get_clock().now().to_msg()
+        if isinstance(goal, (list, tuple)):
+            pose.pose.position.x = float(goal[0])
+            pose.pose.position.y = float(goal[1]) if len(goal) > 1 else 0.0
+            pose.pose.position.z = float(goal[2]) if len(goal) > 2 else 0.0
+            if len(goal) > 3:
+                # yaw → quaternion
+                yaw = float(goal[3])
+                pose.pose.orientation.z = math.sin(yaw / 2.0)
+                pose.pose.orientation.w = math.cos(yaw / 2.0)
+        _ros2_publishers["goal_command"].publish(pose)
 
 
 def apply_envtest_command(
@@ -271,6 +342,16 @@ def apply_envtest_command(
     start: bool | None = None,
     reset: int | None = None,
 ) -> None:
+    if config.backend == "ros":
+        _ros2_publish_command(
+            model_use=model_use,
+            velocity=list(velocity) if velocity is not None else None,
+            goal=goal,
+            start=start,
+            reset=reset,
+        )
+        return
+
     if config.backend == "udp":
         fields: list[str] = []
         if model_use is not None:

@@ -1,2 +1,0 @@
-"""Bishe vision task package."""
-

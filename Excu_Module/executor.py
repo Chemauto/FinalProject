@@ -11,12 +11,10 @@ from .runtime import (
     log_skill,
     make_action_id,
     parse_goal_value,
-    publish_skill_command,
     read_env_float,
     resolve_feedback_backend,
     speak,
     stop_envtest_skill,
-    wait_for_execution_feedback,
     apply_envtest_command,
 )
 
@@ -25,10 +23,13 @@ DEFAULT_NAVIGATION_DURATION_SEC = 6.0
 DEFAULT_NAVIGATION_TIMEOUT_MARGIN_SEC = 5.0
 from .state import (
     build_navigation_validation,
+    build_displacement_validation,
+    extract_robot_pose,
     extract_status_timestamp,
     summarize_state,
     wait_for_live_state,
     wait_for_navigation_completion,
+    wait_for_displacement_completion,
 )
 
 
@@ -68,16 +69,6 @@ async def wait_skill_feedback(
             **build_feedback(skill_name, local_success_message),
             "result": planned_result,
         }
-
-    if config.backend == "ros":
-        if publish_skill_command is None or wait_for_execution_feedback is None:
-            raise RuntimeError("当前环境未安装 ROS2 依赖，无法使用 ros 执行后端")
-        action_id = publish_skill_command(skill_name, parameters, action_id=action_id)
-        feedback = await wait_for_execution_feedback(action_id, timeout_sec=timeout_sec)
-        feedback.setdefault("action_id", action_id)
-        feedback.setdefault("skill", skill_name)
-        feedback.setdefault("result", {})
-        return feedback
 
     if model_use is None:
         raise ValueError(f"{skill_name} 缺少执行所需的 model_use")
@@ -136,6 +127,47 @@ async def wait_skill_feedback(
             },
         }
 
+    # ── 位移轮询分支：有 velocity_command + distance → 实时检测位移 ──
+    displacement_distance = parameters.get("distance")
+    if velocity_command is not None and displacement_distance is not None:
+        start_pose = extract_robot_pose(before_state)
+        if start_pose is not None and float(displacement_distance) > 0:
+            direction = None
+            if len(velocity_command) >= 2:
+                vx, vy = float(velocity_command[0]), float(velocity_command[1])
+                if abs(vx) >= abs(vy):
+                    direction = "forward" if vx > 0 else "backward"
+                else:
+                    direction = "left" if vy > 0 else "right"
+
+            disp_result = await wait_for_displacement_completion(
+                task_type=config.task_type,
+                start_pose=start_pose,
+                distance=float(displacement_distance),
+                timeout_sec=timeout_sec,
+                direction=direction,
+            )
+            await stop_envtest_skill(config)
+            validation = build_displacement_validation(skill_name, float(displacement_distance), disp_result)
+            signal = "SUCCESS" if validation.get("verified") and validation.get("meets_requirements") else "FAILURE"
+            return {
+                "action_id": action_id,
+                **build_feedback(
+                    skill_name,
+                    str(validation.get("summary") or local_success_message),
+                    signal=signal,
+                    validation=validation,
+                ),
+                "result": {
+                    **planned_result,
+                    "mode": "displacement_poll",
+                    "wait_time_sec": disp_result.get("elapsed_sec"),
+                    "displacement_check": disp_result,
+                    "verification": validation,
+                },
+            }
+
+    # ── 兜底分支：无位移参数，按固定时间等待 ──
     actual_wait_sec = max(timeout_sec, execution_time_sec)
     await asyncio.sleep(actual_wait_sec)
     await stop_envtest_skill(config)
@@ -145,14 +177,21 @@ async def wait_skill_feedback(
         min_timestamp=before_timestamp,
     )
 
-    validation = {
-        "verified": after_state is not None,
-        "meets_requirements": after_state is not None,
-        "source": "comm_state",
-        "summary": f"{skill_name} 已完成执行" if after_state else f"{skill_name} 执行后无法获取状态",
-        "before_state": summarize_state(before_state),
-        "after_state": summarize_state(after_state),
-    }
+    if after_state is None:
+        validation = {
+            "verified": False,
+            "meets_requirements": False,
+            "source": "comm_state",
+            "summary": f"{skill_name} 执行后无法获取状态",
+            "before_state": summarize_state(before_state),
+            "after_state": None,
+        }
+    else:
+        validation = _build_displacement_validation(
+            skill_name, before_state, after_state,
+            velocity_command=velocity_command,
+            execution_time_sec=execution_time_sec,
+        )
 
     validation_ok = validation["verified"] and validation["meets_requirements"]
     signal = "SUCCESS" if validation_ok else "FAILURE"
@@ -171,6 +210,89 @@ async def wait_skill_feedback(
             "mode": "comm_state_timeout",
             "verification": validation,
         },
+    }
+
+
+def _build_displacement_validation(
+    skill_name: str,
+    before_state: dict[str, Any],
+    after_state: dict[str, Any],
+    *,
+    velocity_command: Sequence[float] | None = None,
+    execution_time_sec: float | None = None,
+) -> dict[str, Any]:
+    """根据执行前后位移校验 walk/climb 等非导航技能。"""
+    from .state import extract_robot_pose
+
+    before_pose = extract_robot_pose(before_state)
+    after_pose = extract_robot_pose(after_state)
+    before_summary = summarize_state(before_state)
+    after_summary = summarize_state(after_state)
+
+    if before_pose is None or after_pose is None:
+        return {
+            "verified": True,
+            "meets_requirements": True,
+            "source": "displacement",
+            "summary": f"{skill_name} 已完成执行（缺少位姿数据，无法校验位移）",
+            "before_state": before_summary,
+            "after_state": after_summary,
+        }
+
+    dx = after_pose[0] - before_pose[0]
+    dy = after_pose[1] - before_pose[1]
+    dz = after_pose[2] - before_pose[2]
+    displacement_xy = (dx ** 2 + dy ** 2) ** 0.5
+
+    direction_label = "静止"
+    expected_moved = False
+    if velocity_command is not None and len(velocity_command) >= 2:
+        vx, vy = velocity_command[0], velocity_command[1]
+        if abs(vx) > 0.01 or abs(vy) > 0.01:
+            expected_moved = True
+            if abs(vx) >= abs(vy):
+                direction_label = "前进" if vx > 0 else "后退"
+            else:
+                direction_label = "左移" if vy > 0 else "右移"
+
+    if expected_moved:
+        direction_ok = True
+        if direction_label == "前进" and dx <= 0:
+            direction_ok = False
+        elif direction_label == "后退" and dx >= 0:
+            direction_ok = False
+        elif direction_label == "左移" and dy <= 0:
+            direction_ok = False
+        elif direction_label == "右移" and dy >= 0:
+            direction_ok = False
+
+        if not direction_ok:
+            return {
+                "verified": True,
+                "meets_requirements": False,
+                "source": "displacement",
+                "summary": f"{skill_name} 方向错误：期望{direction_label}，实际位移 ({dx:.3f}, {dy:.3f}, {dz:.3f})",
+                "displacement": {"dx": round(dx, 3), "dy": round(dy, 3), "dz": round(dz, 3), "dist_xy": round(displacement_xy, 3)},
+                "direction": direction_label,
+                "before_state": before_summary,
+                "after_state": after_summary,
+            }
+
+    min_displacement_m = 0.02
+    meets = displacement_xy >= min_displacement_m or not expected_moved
+    summary = f"{skill_name} 已完成执行，位移 ({dx:.3f}, {dy:.3f}, {dz:.3f})m"
+    if direction_label != "静止":
+        summary = f"{skill_name} {direction_label}完成，位移 {displacement_xy:.3f}m"
+
+    return {
+        "verified": True,
+        "meets_requirements": meets,
+        "source": "displacement",
+        "summary": summary,
+        "displacement": {"dx": round(dx, 3), "dy": round(dy, 3), "dz": round(dz, 3), "dist_xy": round(displacement_xy, 3)},
+        "direction": direction_label,
+        "before_state": before_summary,
+        "after_state": after_summary,
     }
 
 

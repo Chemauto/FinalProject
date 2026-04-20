@@ -1,214 +1,170 @@
 # Robot_Module
 
-## 作用
+技能注册层和任务技能实现层。基于 FastMCP 注册工具，分任务类型分发技能。
 
-`Robot_Module` 是技能注册层和任务技能实现层。
-它负责：
+## 核心接口
 
-- 注册上层 agent 工具
-- 注册动作技能和视觉技能
-- 放置具体任务技能实现
+```python
+from Robot_Module import register_all, get_tool_definitions
 
-它不再承担通用执行管理；通用执行已经移到 `Excu_Module`。
+# 注册所有工具
+register_all()
 
-当前 `Action` 和 `Vision` 是平级模块，不存在额外的 `Perception` 包裹层。
+# 获取工具定义
+agent_tools = get_tool_definitions({"vlm_observe", "robot_act"})
+action_tools = get_tool_definitions({"walk", "navigation", ...})
+```
 
-## 当前结构
+## 目录结构
 
-- [agent_tools.py](agent_tools.py)
-  顶层注册中心，提供 `vlm_observe` 和 `robot_act`
-  使用 `_StreamingBuffer` 捕获 `LLM_Module` 的 stdout 日志
-- [module/Action/skills.py](module/Action/skills.py)
-  动作任务开关和注册入口
-- [module/Action/Task/Bishe](module/Action/Task/Bishe)
-  当前 `bishe` 动作任务实现，下面只保留 7 个技能文件
-- [module/Vision/skills.py](module/Vision/skills.py)
-  视觉任务开关和注册入口
-- [module/Vision/Task/Bishe](module/Vision/Task/Bishe)
-  当前 `bishe` 视觉任务实现
-- [module/Action/example.py](module/Action/example.py)
-  示例模块
+```text
+Robot_Module/
+  __init__.py       对外暴露 register_all, mcp, get_tool_definitions 等
+  tools.py          轻量 MCP 工具注册中心
+  tasks/
+    __init__.py     任务分发注册表
+    bishe/
+      __init__.py
+      walk.py       行走技能
+      navigation.py 导航技能
+      nav_climb.py  导航攀爬技能
+      climb_align.py 攀爬对正技能
+      climb.py      攀爬技能
+      push_box.py   推箱子技能
+      way_select.py 路线选择技能
+  vision/
+    __init__.py
+    vlm_observe.py  视觉观察技能
+```
+
+## 各文件职责
+
+### `tools.py` — 工具注册中心
+
+轻量 MCP 注册中心，替代原有的 `agent_tools.py`：
+
+- `mcp` — FastMCP 实例
+- `register_all()` — 注册所有技能模块（task tools + vision tools + vlm_observe + robot_act）
+- `get_skill_function(name)` — 按名获取已注册技能函数
+- `get_tool_definitions(allowed_names)` — 获取 MCP 工具定义列表
+- `get_agent_tool_definitions()` — 获取 agent 层工具（vlm_observe, robot_act）
+- `get_action_tool_definitions()` — 获取动作技能工具
+- `vlm_observe` — 顶层 Vision tool（MCP 注册）
+- `robot_act` — 顶层 Action tool（MCP 注册）
+- `_run_robot_act_pipeline()` — robot_act 内部实现（调用 Data_Module + Planner_Module + Excu_Module）
+
+### `tasks/__init__.py` — 任务分发注册表
+
+管理任务类型到技能模块的映射：
+
+```python
+_TASK_REGISTRY = {
+    "bishe": [
+        "Robot_Module.tasks.bishe.walk",
+        "Robot_Module.tasks.bishe.navigation",
+        ...
+    ],
+}
+```
+
+- `register_tools(mcp, task=None)` — 加载指定任务类型的所有技能模块并注册到 MCP
+- 注册可插拔钩子（如 `register_navigation_model_uses({4, 5})`）
+
+### `tasks/bishe/*.py` — Bishe 任务技能
+
+7 个动作技能实现文件：
+
+| 技能 | 功能 | 命令类型 | model_use |
+|------|------|---------|-----------|
+| `walk` | 直行 | velocity `[vx, 0, 0]` | 1 |
+| `navigation` | 导航到目标点 | goal `[x, y, z]` | 4 |
+| `nav_climb` | 导航并攀爬 | goal `[x, y, z]` | 5 |
+| `climb_align` | 攀爬对正 | goal `[x, y, z, yaw]` | 4 |
+| `climb` | 攀爬 | velocity `[vx, 0, 0]` | 2 |
+| `push_box` | 推箱子 | goal `[x, y, z]` | 3 |
+| `way_select` | 路线选择 | velocity `[vx, 0, 0]` | 1 |
+
+每个技能文件职责：
+- 定义技能函数（参数接收 + 请求组装）
+- 必要时做少量任务内目标计算
+- 调用 `Excu_Module` 的 `wait_skill_feedback()` 执行和验收
+- 通过 `register_tools(mcp)` 将自己注册为 MCP 工具
+
+### `vision/vlm_observe.py` — 视觉观察技能
+
+`vlm_observe` 的实现：
+
+- 调用 `Data_Module/vlm.py`（VLMCore）获取视觉描述
+- 调用 `Hardware_Module.get_state()` 获取实时状态
+- 合并视觉事实和物体事实
+- 返回 `visual_context` + `scene_facts` + `env_state`
 
 ## 对外暴露方式
 
-最外层智能体视角下，主要使用 2 个高层工具：
+最外层 agent 视角下，使用 2 个高层工具：
 
-- `vlm_observe`
-- `robot_act`
+- `vlm_observe` — 观察环境
+- `robot_act` — 执行动作链
 
-其中：
+`robot_act` 内部：
+1. 同步 live data 到 object_facts（`Hardware_Module/registry.py`）
+2. 组装 planner_context（`Data_Module/context.py`）
+3. 高层规划（`Planner_Module/planner.py`）
+4. 参数计算（`Data_Module/params.py`）
+5. 低层执行（`Planner_Module/executor.py`）
+6. 逐技能执行和验收（`Excu_Module`）
 
-- `robot_act` 是顶层 Action tool
-- `vlm_observe` 是顶层 Vision tool
-
-`robot_act` 内部继续复用动作技能链。`vlm_observe` 当前会调用 Vision 下层技能 `vlm`，并用 `Comm_Module` 补一份结构化 `env_state`。
-
-## 当前注册结构
-
-当前注册链路是：
-
-```text
-Robot_Module/agent_tools.py
--> register_tools(mcp)
-   -> register_action_tools(mcp)
-   -> Robot_Module/module/Action/skills.py
-   -> Robot_Module/module/Action/Task/Bishe/*.py
-   -> register_vision_tools(mcp)
-   -> Robot_Module/module/Vision/skills.py
-   -> Robot_Module/module/Vision/Task/Bishe/vlm_observe.py  (skill: vlm)
-   -> vlm_observe  (top-level Vision tool)
-   -> robot_act
-```
-
-也就是说：
-
-- `Action` 和 `Vision` 是并列注册
-- `agent_tools.py` 不再把 `Vision` 当成特殊嵌套层
-- `agent_tools.py` 通过一个统一的 `register_tools()` 一次性注册 `Action + Vision + robot_act`
-
-顶层 `agent_tools.py` 当前会注册：
-
-- `vlm_observe`
-- `robot_act`
-
-内部动作技能仍然会单独注册到工具表中，供 `robot_act` 内部调用。
-
-## 内部动作技能
-
-当前 `Action/Task/Bishe` 提供 7 个动作技能：
-
-- `walk`
-- `navigation`
-- `nav_climb`
-- `climb_align`
-- `climb`
-- `push_box`
-- `way_select`
-
-以及辅助文件：
-
-- `_bishe_helpers.py` — Bishe 常量、几何辅助函数、`build_bishe_context()` 上下文钩子
-- `bishe_planner.py` — 规则规划器（box-assist 导航）
-- `lowlevel_prompt.yaml` — Bishe 特定的低层 prompt
-- `highlevel_prompt.yaml` — Bishe 特定的高层 prompt
-
-## 内部视觉技能
-
-当前 `Vision/Task/Bishe` 的下层视觉技能是：
-
-- `vlm`
-
-也就是说当前结构是：
-
-- 顶层 Vision tool：`vlm_observe`
-- 下层 Vision skill：`vlm`
-- 顶层 Action tool：`robot_act`
-- 下层 Action skills：7 个动作技能
-
-`vlm_observe` 当前返回三层结果：
-
-- `visual_context`
-  纯视觉语义
-- `scene_facts`
-  纯视觉抽取出的粗粒度场景事实
-- `env_state`
-  `VLM + Comm_Module` 合并后的最终环境理解
-
-`robot_act` 在进入 `LLM_Module` 之前，还会进一步组装固定格式的 `planner_context`，其中至少包含：
-
-- `robot_state`
-- `envtest_alignment`
-- `constraints`
-- `objects`
-- `scene_facts`
-
-这些文件当前只负责：
-
-- 定义技能函数
-- 必要时做少量任务内目标计算
-- 调用 `Excu_Module`
-- 在文件内自己 `register_tool(mcp)`
-
-## 与 Excu_Module 的边界
-
-`Robot_Module` 不再负责：
-
-- 统一执行后端
-- 执行等待
-- 统一状态校验
-- 导航到达判定
-
-这些都已经放到 `Excu_Module`：
-
-- `Excu_Module/runtime.py`
-- `Excu_Module/state.py`
-- `Excu_Module/executor.py`
-
-## 当前工作流
-
-`robot_act` 内部的动作部分现在是：
+## 注册链路
 
 ```text
-LLM_Module 产出 function + parameters
--> agent_tools.py 调用已注册动作技能
--> Bishe/*.py 组装技能请求
--> Excu_Module 执行和验收
--> 返回 execution_feedback + validation
+Robot_Module/tools.py
+-> register_all()
+   -> tasks/__init__.py: register_tools(mcp)
+      -> tasks/bishe/*.py: 每个技能注册自己
+   -> vision/vlm_observe.py: register_tools(mcp) -> vlm skill
+   -> tools.py: vlm_observe (顶层 Vision tool)
+   -> tools.py: robot_act (顶层 Action tool)
 ```
-
-## 日志输出
-
-- `Excu_Module/runtime.py` 通过 `print(..., file=sys.stderr)` 输出 `[go2.skill]`、`[go2.speech]` 等日志
-- 交互模式下，`interactive.py` 会抑制这些 stderr 噪音
-- `agent_tools.py` 的 `_StreamingBuffer` 捕获 `llm_core.py` / `llm_lowlevel.py` 的 stdout 输出，通过 `log_callback` 转发
-
-## 当前执行方式
-
-- 通过 FastMCP 注册工具
-- 技能执行结果统一封装为结构化反馈
-- `Excu_Module` 默认直接写 IsaacLab EnvTest 控制文件
-- 可选执行后端：`file` / `udp` / `ros`
-- 无论后端是什么，最终动作成功都应尽量依赖真实状态校验，而不是本地写死 `SUCCESS`
-- `way_select` 默认按侧向 `walk` 控制；如需切到导航策略可设置：
-  - `export FINALPROJECT_WAY_SELECT_POLICY=navigation`
-- `push_box.target_position` 接收具体 `[x, y, z]` 坐标（由 `parameter_calculator` 计算），不再是 `"auto"`
-- `push_box` 校验基于箱子位置（不是机器人位置），到达容许误差 0.1m
 
 ## 返回结果约定
 
-动作技能当前会返回两层结果：
+动作技能返回两层结果：
 
 1. `execution_feedback`
-   - `signal`
-   - `message`
-   - `validation`
+   - `signal` — SUCCESS / FAILURE
+   - `message` — 执行描述
+   - `validation` — 校验详情
 2. `execution_result`
-   - 执行模式
-   - backend
-   - 参数
-   - 校验细节
+   - 执行模式、backend、参数、校验细节
 
-其中最关键的是：
-
+关键校验字段：
 - `execution_feedback.validation.verified`
 - `execution_feedback.validation.meets_requirements`
 
-上层 `LLM_Module` 现在会用这两个字段做最终成功判定。
+## 与其他模块的关系
+
+### 与 Excu_Module
+
+技能文件调用 `Excu_Module/executor.py` 的 `wait_skill_feedback()` 执行和验收。
+
+### 与 Data_Module
+
+- `tools.py` 调用 `Data_Module` 加载 facts、参数计算、构建上下文
+- `vision/vlm_observe.py` 调用 `Data_Module/vlm.py`（VLMCore）
+
+### 与 Hardware_Module
+
+- `vision/vlm_observe.py` 调用 `Hardware_Module.get_state()` 获取实时状态
+- `tools.py` 调用 `Hardware_Module/registry.py` 同步数据
+
+### 与 Planner_Module
+
+- `tools.py` 创建 Planner 和 TaskExecutor 实例
+- 调用 `Excu_Module/pipeline.py` 的 `run_pipeline()` 编排整个流程
 
 ## 本地运行
 
-直接启动交互入口：
-
 ```bash
-cd /home/robot/work/FinalProject/Interactive_Module
-python interactive.py
+cd /home/xcj/work/FinalProject
+python run.py
 ```
-
-## 与上层的关系
-
-通常由 [Interactive_Module/interactive.py](../Interactive_Module/interactive.py) 间接调用：
-
-- 顶层智能体决定直接回复、调用 `vlm_observe`，或调用 `robot_act`
-- `robot_act` 内部复用 `LLM_Module` 的规划、参数计算和低层执行
-- `Robot_Module` 负责注册视觉或动作技能
-- `Excu_Module` 负责产出真实状态校验结果

@@ -1,2 +1,0 @@
-"""Task-scoped vision modules."""
-

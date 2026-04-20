@@ -3,11 +3,6 @@
 每个技能继承 SkillBase，实现：
   - name              : 技能标识
   - execute()         : 执行入口
-  - register_tool()   : MCP 工具注册
-
-可选覆盖：
-  - check_completion(): 轮询完成检测（默认：超时等待）
-  - validate()        : 事后状态校验（默认：None）
 
 公共方法：
   - build_result()    : 统一返回结构
@@ -34,28 +29,6 @@ class SkillBase(ABC):
     async def execute(self, **kwargs) -> dict[str, Any]:
         """异步执行入口。"""
         ...
-
-    def register_tool(self, mcp) -> dict[str, Any]:
-        """注册 MCP 工具。子类可覆盖以自定义注册行为。默认 raise NotImplementedError。"""
-        raise NotImplementedError(f"{type(self).__name__} 未实现 register_tool()")
-
-    def check_completion(
-        self,
-        state: dict[str, Any],
-        before_state: dict[str, Any],
-        parameters: dict[str, Any],
-    ) -> dict[str, Any]:
-        """轮询完成检测。默认：超时等待（永远返回未完成）。"""
-        return {"done": False}
-
-    def validate(
-        self,
-        parameters: dict[str, Any],
-        before_state: dict[str, Any] | None,
-        after_state: dict[str, Any] | None,
-    ) -> dict[str, Any] | None:
-        """事后状态校验。默认：None（触发通用回退）。"""
-        return None
 
     # ── 公共方法 ────────────────────────────────────────────────────
 
