@@ -17,21 +17,20 @@ def add_command(text):
     chat_items.append({"type": "command", "content": text})
 #添加命令消息
 
-def add_plan(text):
-    chat_items.append({"type": "plan", "content": text})
-#添加任务计划消息
-
-def add_tool(text):
-    chat_items.append({"type": "tool", "content": text})
-#添加工具调用消息
-
-def add_status(text):
-    chat_items.append({"type": "status", "content": text})
-#添加机器人状态消息
-
 def add_error(text):
     chat_items.append({"type": "error", "content": text})
 #添加错误消息
+
+def emit(item_type, content):
+    chat_items.append({"type": item_type, "content": content})
+#执行层事件入口
+
+def update_last_status(content):
+    if chat_items and chat_items[-1]["type"] == "status":
+        chat_items[-1]["content"] = content
+    else:
+        emit("status", content)
+#更新最后一条状态，避免实时状态刷屏
 
 def reset():
     messages.clear()

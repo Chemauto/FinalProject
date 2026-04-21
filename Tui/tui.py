@@ -5,11 +5,12 @@ from prompt_toolkit.history import FileHistory
 from rich.console import Console
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
+from Executor.demo_executor import run_demo_task
 from Tui.commands import handle_command
 from Tui.gateway import LocalChatGateway
 from Tui.history import history_path, load_history, save_history
 from Tui.render import render_chat, show_help, show_status, show_welcome, start_assistant
-from Tui.session import add_command, add_error, add_plan, add_status, add_system, add_tool, add_user, chat_items, messages, reset
+from Tui.session import add_command, add_error, add_system, add_user, chat_items, emit, messages, reset, update_last_status
 from Tui.stream import StreamItem
 from Planner.llm_core import prompt
 
@@ -54,11 +55,16 @@ while True:
         render_chat(console, chat_items)
         continue
     if command["type"] == "demo":
-        add_plan("1. 观察当前环境\n2. 生成移动计划\n3. 执行并检查状态")
-        add_tool("vlm_observe")
-        add_status("机器人状态：等待执行")
+        def demo_emit(item_type, content):
+            if item_type == "status":
+                update_last_status(content)
+            else:
+                emit(item_type, content)
+            render_chat(console, chat_items)
+        #demo执行时覆盖刷新最后一条状态
+
+        run_demo_task(demo_emit)
         save_history(messages, chat_items)
-        render_chat(console, chat_items)
         continue
     if not user_input:
         continue

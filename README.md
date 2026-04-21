@@ -6,7 +6,7 @@ FinalProject 当前处于重构阶段。旧项目已迁移到：
 /home/robot/work/backup
 ```
 
-当前目录保留重构说明和最小可运行的 LLM 对话框架。
+当前目录保留重构说明、文件夹级说明文档和最小可运行的 LLM 对话框架。
 
 ## 当前功能
 
@@ -19,6 +19,12 @@ FinalProject 当前处于重构阶段。旧项目已迁移到：
 - `Tui/render.py`：负责 Rich UI 显示和完整聊天记录渲染。
 - `Tui/stream.py`：维护简版流式消息状态。
 - `Tui/history.py`：保存和恢复最近一次 TUI 会话。
+- `Executor/state.py`：保存手动技能使用的假机器人状态。
+- `Executor/skills.py`：手动实现 `Nav`、`walk`、`Push`、`climb`。
+- `Executor/demo_executor.py`：执行 demo 任务并向 TUI 发送事件。
+- `Planner/README.md`：Planner 文件夹说明。
+- `Tui/README.md`：Tui 文件夹说明。
+- `Executor/README.md`：Executor 文件夹说明。
 - `Codex.md`：旧项目完整分析和后续重构路线。
 
 ## 目录结构
@@ -28,10 +34,18 @@ FinalProject/
 ├── Codex.md
 ├── README.md
 ├── Planner/
+│   ├── README.md
 │   ├── llm_core.py
 │   └── prompts/
 │       └── planner_prompt.yaml
+├── Executor/
+│   ├── README.md
+│   ├── __init__.py
+│   ├── state.py
+│   ├── skills.py
+│   └── demo_executor.py
 └── Tui/
+    ├── README.md
     ├── commands.py
     ├── gateway.py
     ├── history.py
@@ -82,12 +96,37 @@ python tui.py
 Tui/tui.py
 -> Tui/commands.py
 -> Tui/session.py
+-> Executor/demo_executor.py
 -> Tui/gateway.py
 -> Planner/llm_core.py
 -> LLM API
 ```
 
 `Tui` 不直接创建模型客户端，只通过 `gateway.py` 调用 `llm_core.py`。
+
+## 机器人事件
+
+执行层通过 `emit(type, content)` 向 TUI 发送事件：
+
+```text
+plan    任务计划
+tool    工具调用，如 Nav / walk / Push / climb
+status  执行状态
+error   错误信息
+```
+
+`/demo` 会演示一个障碍场景：机器人从 `(0,0)` 去 `(0,8)`，中间有 0.5m 障碍，`climb` 最高 0.3m，因此先 `Push` 箱子辅助，再 `climb`，最后继续 `Nav`。
+
+当前 `/demo` 已经不是单纯打印文本，而是调用手动技能并更新假状态：
+
+```text
+Nav(x, y, z)       0.5m/s直线导航
+walk(direction, v) 按速度v移动，front增加x
+Push(x, y, z)      0.2m/s推动箱子
+climb(height)      0.1m/s攀爬，最高0.3m
+```
+
+执行状态约5Hz输出一次，即每0.2s一次。例如 `walk("front", 0.2)` 会在0.2s后到 `robot=(0.04, 0, 0)`，1.0s后到 `robot=(0.2, 0, 0)`。
 
 ## 设计原则
 
