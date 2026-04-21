@@ -2,9 +2,7 @@
 
 ## 作用
 
-`Executor` 目前负责手动技能模拟和 demo 执行。
-
-它现在不是真实机器人执行层，而是一个用于验证 TUI 事件链路的假执行层。
+`Executor` 负责技能注册、技能执行和状态管理。
 
 ## 文件
 
@@ -12,6 +10,8 @@
 __init__.py
 state.py
 skills.py
+tools.py
+executor.py
 demo_executor.py
 ```
 
@@ -46,33 +46,33 @@ climb(height)      0.1m/s 攀爬，最高 0.3m
 
 技能每 `0.2s` 更新一次状态，约等于 `5Hz`。
 
-`sleep=False` 可用于测试时跳过真实等待。
+所有技能支持 `emit` 参数，用于实时输出状态。
+
+## tools.py
+
+用 FastMCP 注册 4 个技能：
+
+- `@mcp.tool()` 装饰器注册技能到 MCP
+- `get_tool_definitions()` 返回 OpenAI function calling 格式的工具定义
+- `call_tool(name, args, emit)` 根据工具名调用对应技能
+
+## executor.py
+
+`run_plan(tool_calls, emit)` 接收 LLM 返回的 tool_calls 列表，逐个执行：
+
+- 每步 emit `tool` 事件显示当前步骤
+- 调用 `call_tool` 执行技能
+- 失败时 emit `error` 并停止
 
 ## demo_executor.py
 
-`/demo` 会调用：
-
-```python
-run_demo_task(emit)
-```
-
-当前 demo 步骤：
+`/demo` 命令使用，固定步骤执行：
 
 ```text
-Nav(0, 1, 0)
-Push(box, 0, 2, 0)
-climb(0.3)
-Nav(0, 8, 0)
+Nav(0, 1, 0) -> Push(0, 2, 0) -> climb(0.3) -> Nav(0, 8, 0)
 ```
 
-执行期间通过 `emit(type, content)` 向 TUI 发送：
-
-```text
-plan
-tool
-status
-error
-```
+不调用 LLM，用于本地测试。
 
 ## 当前边界
 

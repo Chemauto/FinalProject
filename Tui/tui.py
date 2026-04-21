@@ -6,13 +6,14 @@ from rich.console import Console
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 from Executor.demo_executor import run_demo_task
+from Executor.executor import run_plan
 from Tui.commands import handle_command
 from Tui.gateway import LocalChatGateway
 from Tui.history import history_path, load_history, save_history
 from Tui.render import render_chat, show_help, show_status, show_welcome, start_assistant
 from Tui.session import add_command, add_error, add_system, add_user, chat_items, emit, messages, reset, update_last_status
 from Tui.stream import StreamItem
-from Planner.llm_core import prompt
+from Planner.llm_core import prompt, make_plan
 
 gateway = LocalChatGateway()
 console = Console()
@@ -71,18 +72,34 @@ while True:
 
     add_user(user_input)
     render_chat(console, chat_items)
-    start_assistant(console)
+
+    def plan_emit(item_type, content):
+        if item_type == "status":
+            update_last_status(content)
+        else:
+            emit(item_type, content)
+        render_chat(console, chat_items)
+    #执行时覆盖刷新最后一条状态
+
     try:
-        stream_item = StreamItem()
-        chat_items.append(stream_item.data)
-        for text in gateway.stream_chat(messages):
-            console.print(text, end="")
-            stream_item.add(text)
-        stream_item.done()
-        console.print()
-        messages.append({"role": "assistant", "content": stream_item.data["content"]})
+        for _ in range(10):
+            #最多循环10轮，防止无限调用
+            result = make_plan(messages)
+            if result["type"] != "plan":
+                messages.append({"role": "assistant", "content": result["content"]})
+                emit("assistant", result["content"])
+                render_chat(console, chat_items)
+                break
+            #LLM返回文本则显示并结束循环
+
+            run_plan(result["tool_calls"], plan_emit)
+            steps = ", ".join(f"{tc['name']}({tc['args']})" for tc in result["tool_calls"])
+            from Executor.state import fmt_robot, fmt_box
+            tool_result = f"{fmt_robot()}, {fmt_box()}"
+            messages.append({"role": "assistant", "content": f"已执行: {steps}\n结果: {tool_result}"})
+            messages.append({"role": "user", "content": f"执行结果: {tool_result}，请决定下一步"})
+            #执行tool_calls，把结果发回messages让LLM决定下一步
         save_history(messages, chat_items)
-        #流式发送消息并把完整回复加入上下文
     except Exception as error:
         add_error(str(error))
         save_history(messages, chat_items)

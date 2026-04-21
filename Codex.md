@@ -1,8 +1,8 @@
 # FinalProject 重构说明书
 
 生成时间：2026-04-21  
-项目原路径：`/home/robot/work/FinalProject`  
-源码备份目标：`/home/robot/work/backup`  
+项目原路径：`/home/xcj/work/FinalProject`  
+
 
 本文档是重构前的项目全量分析记录。用户计划只保留本文件，然后基于本文件逐步重构项目；其余源码、配置、文档、缓存、Git 元数据和本地文件将迁移到备份目录。
 
