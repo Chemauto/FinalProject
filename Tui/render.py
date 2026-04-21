@@ -9,21 +9,31 @@ def show_status(console, messages):
     console.print(f"[dim]Context: {turns} turns[/dim]")
 #显示上下文轮数
 
-def show_user(console, text):
-    console.print(Panel(text, title="User", border_style="cyan"))
-#显示用户输入
+def render_item(console, item):
+    styles = {
+        "user": ("User", "cyan"),
+        "assistant": ("Assistant", "green"),
+        "system": ("System", "yellow"),
+        "error": ("Error", "red"),
+        "command": ("Command", "blue"),
+        "plan": ("Plan", "magenta"),
+        "tool": ("Tool", "white"),
+        "status": ("Status", "blue"),
+    }
+    title, style = styles.get(item["type"], ("Message", "white"))
+    console.print(Panel(item["content"], title=title, border_style=style))
+#显示一条聊天记录
 
-def show_command(console, text):
-    console.print(Panel(text, title="Command", border_style="blue"))
-#显示命令结果
+def render_chat(console, chat_items):
+    console.clear()
+    for item in chat_items:
+        render_item(console, item)
+#重绘完整聊天记录
 
-def show_system(console, text):
-    console.print(Panel(text, title="System", border_style="yellow"))
-#显示系统消息
-
-def show_error(console, text):
-    console.print(Panel(text, title="Error", border_style="red"))
-#显示错误
+def show_help(console):
+    text = "/help   查看帮助\n/demo   演示机器人事件\n/reset  清空上下文\n/quit   退出\n\n机器人事件会显示为 plan / tool / status / error"
+    console.print(Panel(text, title="Help", border_style="blue"))
+#显示帮助面板
 
 def start_assistant(console):
     console.print("[bold green]Assistant>[/bold green] ", end="")
