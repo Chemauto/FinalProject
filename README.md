@@ -15,9 +15,10 @@ FinalProject 当前处于重构阶段。旧项目已迁移到：
 - `Tui/tui.py`：终端对话 UI，支持上下文和流式输出。
 - `Tui/session.py`：保存 LLM `messages` 和 UI `chat_items`。
 - `Tui/gateway.py`：本地网关，隔离 TUI 和 LLM 调用。
-- `Tui/commands.py`：处理 `/help`、`/reset`、`/quit`。
+- `Tui/commands.py`：处理 `/help`、`/load`、`/history`、`/reset`、`/quit`。
 - `Tui/render.py`：负责 Rich UI 显示和完整聊天记录渲染。
 - `Tui/stream.py`：维护简版流式消息状态。
+- `Tui/history.py`：保存和恢复最近一次 TUI 会话。
 - `Codex.md`：旧项目完整分析和后续重构路线。
 
 ## 目录结构
@@ -33,6 +34,7 @@ FinalProject/
 └── Tui/
     ├── commands.py
     ├── gateway.py
+    ├── history.py
     ├── render.py
     ├── session.py
     ├── stream.py
@@ -66,9 +68,13 @@ python tui.py
 ```text
 /help   查看帮助
 /demo   演示机器人事件显示
+/load   恢复最近会话
+/history 显示历史文件路径
 /reset  清空当前上下文
 /quit   退出
 ```
+
+会话历史自动保存到 `.tui_history/latest.json`，该目录不会上传到 git。
 
 ## 当前架构
 

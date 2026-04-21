@@ -7,6 +7,7 @@ from rich.console import Console
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 from Tui.commands import handle_command
 from Tui.gateway import LocalChatGateway
+from Tui.history import history_path, load_history, save_history
 from Tui.render import render_chat, show_help, show_status, show_welcome, start_assistant
 from Tui.session import add_command, add_error, add_plan, add_status, add_system, add_tool, add_user, chat_items, messages, reset
 from Tui.stream import StreamItem
@@ -36,10 +37,27 @@ while True:
             add_command(command["message"])
             render_chat(console, chat_items)
         continue
+    if command["type"] == "load":
+        try:
+            loaded_messages, loaded_items = load_history()
+            messages[:] = loaded_messages
+            chat_items[:] = loaded_items
+            add_system("已恢复最近会话")
+        except FileNotFoundError:
+            add_error("还没有历史会话")
+        except Exception as error:
+            add_error(str(error))
+        render_chat(console, chat_items)
+        continue
+    if command["type"] == "history":
+        add_command(str(history_path()))
+        render_chat(console, chat_items)
+        continue
     if command["type"] == "demo":
         add_plan("1. 观察当前环境\n2. 生成移动计划\n3. 执行并检查状态")
         add_tool("vlm_observe")
         add_status("机器人状态：等待执行")
+        save_history(messages, chat_items)
         render_chat(console, chat_items)
         continue
     if not user_input:
@@ -57,7 +75,9 @@ while True:
         stream_item.done()
         console.print()
         messages.append({"role": "assistant", "content": stream_item.data["content"]})
+        save_history(messages, chat_items)
         #流式发送消息并把完整回复加入上下文
     except Exception as error:
         add_error(str(error))
+        save_history(messages, chat_items)
         render_chat(console, chat_items)
