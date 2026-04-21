@@ -2,106 +2,13 @@
 # 敏感信息
 # ========================================
 .env
-.env.local
-*.key
-*.pem
-credentials.json
 config.json
 
 # ========================================
-# Python
+# Python 缓存
 # ========================================
 __pycache__/
 *.py[cod]
-*$py.class
-*.so
-*.o
-*.egg
-*.egg-info/
-dist/
-build/
-.Python
-venv/
-env/
-ENV/
-out/
-*.log
-
-# ========================================
-# Jupyter Notebook
-# ========================================
-.ipynb_checkpoints
-*.ipynb
-
-# ========================================
-# IDE
-# ========================================
-.vscode/
-.idea/
-*.swp
-*.swo
-*~
-.DS_Store
-
-# ========================================
-# 项目特定
-# ========================================
-
-# WebUI - 后端 Python 虚拟环境
-WebUI/backend/venv/
-WebUI/backend/__pycache__/
-WebUI/backend/*.log
-
-# WebUI - 前端 Node.js 依赖和构建产物
-WebUI/frontend/node_modules/
-WebUI/frontend/dist/
-WebUI/frontend/.vite/
-WebUI/frontend/npm-debug.log*
-WebUI/frontend/yarn-debug.log*
-WebUI/frontend/yarn-error.log*
-
-# 临时通信队列文件
-/tmp/robot_finalproject/
-
-# Dora 会话文件（已弃用，但保留以兼容）
-*.dora-session.yaml
-dora-interactive-v2.dora-session.yaml
-
-# ROS2 build artifacts (已弃用，但保留)
-**/build/
-**/install/
-**/log/
-**/.colcon_install_layout/
-
-# 项目根目录的编译和日志目录
-install/
-log/
-logs/
-tmp/
-temp/
-
-# 运行时生成文件
-Interactive_Module/audio_cache/
-VLM_Module/assets/camera_capture.jpg
-
-# Gazebo 临时文件
-*.gazebo
-/gazebo_models/
-
-# ========================================
-# 测试和覆盖率
-# ========================================
-.pytest_cache/
-.coverage
-htmlcov/
-
-# ========================================
-# 临时文件
-# ========================================
-*.tmp
-*.bak
-*.swp
-.worktrees/
 
 # ========================================
 # 本地忽略目录（用户要求）
@@ -109,7 +16,3 @@ htmlcov/
 # ========================================
 docs/
 tests/
-Sim_Module/
-Robot_Module/module/base.py
-Robot_Module/module/chase.py
-Robot_Module/module/navigation_demo.py
