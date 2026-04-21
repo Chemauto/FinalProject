@@ -363,6 +363,7 @@ export FINALPROJECT_DIRECTION_GRACE_SEC=1.0
 | `Hardware_Module/backends/go2/schema.py` | 状态格式定义、topic 名字、`TASK_DATA` 注册 | 所有订阅 topic |
 | `Hardware_Module/backends/go2/data.py` | ROS2 订阅节点、数据缓存、`get_data()` 接口 | `/go2/odom`, `/go2/skill_status`, `/go2/scene_objects` |
 | `Excu_Module/runtime.py` | ROS2 命令发布、`_ros2_publish_command()` | `/go2/skill_command`, `/go2/cmd_vel`, `/go2/goal_pose` |
+| `deploy/go2_skill_bridge.py` | Sim2Sim 桥接器：ROS2 topic ↔ IsaacLab EnvTest UDP/status JSON | `/go2/skill_command`, `/go2/cmd_vel`, `/go2/goal_pose`, `/go2/odom`, `/go2/skill_status`, `/go2/scene_objects` |
 | `Data_Module/image_source.py` | ROS2 图像抓帧 | `/go2/wrist_camera/image_raw` |
 | `Excu_Module/state.py` | 轮询判定（读取 `Hardware_Module.get_state()` 统一状态） | 间接消费所有订阅 topic |
 | `Excu_Module/executor.py` | 执行编排（调用 runtime.py 下发命令） | 所有发布 topic |

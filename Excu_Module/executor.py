@@ -138,7 +138,7 @@ async def wait_skill_feedback(
                 if abs(vx) >= abs(vy):
                     direction = "forward" if vx > 0 else "backward"
                 else:
-                    direction = "left" if vy > 0 else "right"
+                    direction = "left" if vy < 0 else "right"
 
             disp_result = await wait_for_displacement_completion(
                 task_type=config.task_type,

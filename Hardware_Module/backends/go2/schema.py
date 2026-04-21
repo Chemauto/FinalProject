@@ -39,7 +39,7 @@ STATE_SCHEMA = {
         },
         "environment": {
             "scene_id": {
-                "source": "scene_id",
+                "source": "skill_status.scene_id",
                 "default": None,
             },
             "obstacles": {
@@ -49,6 +49,20 @@ STATE_SCHEMA = {
             "goal": {
                 "source": "skill_status.goal",
                 "default": None,
+            },
+            "envtest_alignment": {
+                "platform_1": {
+                    "source": "skill_status.envtest_alignment.platform_1",
+                    "default": None,
+                },
+                "platform_2": {
+                    "source": "skill_status.envtest_alignment.platform_2",
+                    "default": None,
+                },
+                "box": {
+                    "source": "skill_status.envtest_alignment.box",
+                    "default": None,
+                },
             },
         },
         "action_result": {
@@ -94,6 +108,20 @@ STATE_SCHEMA = {
         "scene_objects": {
             "source": "scene_objects",
             "default": [],
+        },
+        "envtest_alignment": {
+            "platform_1": {
+                "source": "skill_status.envtest_alignment.platform_1",
+                "default": None,
+            },
+            "platform_2": {
+                "source": "skill_status.envtest_alignment.platform_2",
+                "default": None,
+            },
+            "box": {
+                "source": "skill_status.envtest_alignment.box",
+                "default": None,
+            },
         },
     },
 }

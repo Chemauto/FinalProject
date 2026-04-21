@@ -106,6 +106,31 @@ def round_pose(values: Sequence[float] | None, keep_dims: int = 3) -> list[float
         return None
 
 
+def relative_target_pose(start_pose: Sequence[float], distance: float, direction: str | None) -> list[float]:
+    target = [float(value) for value in start_pose[:3]]
+    if direction == "forward":
+        target[0] += float(distance)
+    elif direction == "backward":
+        target[0] -= float(distance)
+    elif direction == "left":
+        target[1] -= float(distance)
+    elif direction == "right":
+        target[1] += float(distance)
+    return [round(value, 3) for value in target]
+
+
+def directional_progress(dx: float, dy: float, direction: str | None) -> float:
+    if direction == "forward":
+        return dx
+    if direction == "backward":
+        return -dx
+    if direction == "left":
+        return -dy
+    if direction == "right":
+        return dy
+    return math.hypot(dx, dy)
+
+
 def summarize_state(state: dict[str, Any] | None) -> dict[str, Any] | None:
     if not isinstance(state, dict):
         return None
@@ -275,7 +300,8 @@ def build_navigation_validation(skill_name: str, goal_command: list[float], arri
 
 
 DEFAULT_DISPLACEMENT_TOL_M = 0.05
-DEFAULT_DISPLACEMENT_STABLE_POLLS = 2
+DEFAULT_DISPLACEMENT_POLL_SEC = 0.1
+DEFAULT_DISPLACEMENT_STABLE_POLLS = 1
 DEFAULT_DIRECTION_GRACE_SEC = 1.0
 
 
@@ -296,7 +322,10 @@ async def wait_for_displacement_completion(
         timeout_sec: 超时（秒）
         direction: 期望方向 "forward"/"backward"/"left"/"right"，用于方向校验
     """
-    poll_sec = max(0.1, read_env_float("FINALPROJECT_STATUS_POLL_SEC", DEFAULT_STATUS_POLL_SEC))
+    poll_sec = max(
+        0.05,
+        read_env_float("FINALPROJECT_DISPLACEMENT_POLL_SEC", DEFAULT_DISPLACEMENT_POLL_SEC),
+    )
     arrival_tol = abs(read_env_float("FINALPROJECT_DISPLACEMENT_TOL_M", DEFAULT_DISPLACEMENT_TOL_M))
     required_stable = max(1, read_env_int("FINALPROJECT_DISPLACEMENT_STABLE_POLLS", DEFAULT_DISPLACEMENT_STABLE_POLLS))
     stale_sec = abs(read_env_float("FINALPROJECT_STATUS_STALE_SEC", DEFAULT_STATE_STALE_SEC))
@@ -310,7 +339,8 @@ async def wait_for_displacement_completion(
     latest_state: dict[str, Any] | None = None
     latest_disp: float | None = None
     stable_hits = 0
-    effective_start_pose = list(start_pose)
+    observed_start = False
+    target_pose = relative_target_pose(start_pose, distance, direction)
 
     while time.time() < deadline:
         await asyncio.sleep(poll_sec)
@@ -341,61 +371,58 @@ async def wait_for_displacement_completion(
 
         in_grace = time.time() < grace_deadline
 
-        # 宽限期结束：用当前位置重新校准起点，消除上一步惯性漂移
-        if not in_grace and effective_start_pose == list(start_pose):
-            effective_start_pose = list(robot_pose)
-
-        dx = robot_pose[0] - effective_start_pose[0]
-        dy = robot_pose[1] - effective_start_pose[1]
-        displacement = math.hypot(dx, dy)
-        latest_disp = displacement
+        dx = robot_pose[0] - start_pose[0]
+        dy = robot_pose[1] - start_pose[1]
+        progress = directional_progress(dx, dy, direction)
+        latest_disp = progress
 
         # 方向校验：仅宽限期结束后检查
-        if not in_grace:
-            if direction == "forward" and dx <= -arrival_tol:
-                return {
-                    "ok": False, "reason": f"位移方向错误：期望前进，实际后退 (dx={dx:.3f})",
-                    "state": latest_state, "displacement": round(displacement, 3),
-                    "elapsed_sec": round(time.time() - start_time, 3),
-                }
-            if direction == "backward" and dx >= arrival_tol:
-                return {
-                    "ok": False, "reason": f"位移方向错误：期望后退，实际前进 (dx={dx:.3f})",
-                    "state": latest_state, "displacement": round(displacement, 3),
-                    "elapsed_sec": round(time.time() - start_time, 3),
-                }
+        if not in_grace and progress <= -arrival_tol:
+            return {
+                "ok": False, "reason": f"位移方向错误：期望{direction or '目标方向'}，实际反向 (dx={dx:.3f}, dy={dy:.3f})",
+                "state": latest_state, "displacement": round(progress, 3),
+                "target_pose": target_pose,
+                "elapsed_sec": round(time.time() - start_time, 3),
+            }
 
         # 位移达标判定
-        remaining = max(0.0, distance - displacement)
+        remaining = max(0.0, distance - progress)
         if remaining <= arrival_tol:
             stable_hits += 1
             if stable_hits >= required_stable:
                 return {
                     "ok": True,
-                    "reason": f"位移完成 (displacement={displacement:.3f}m, target={distance:.3f}m)",
+                    "reason": f"位移完成 (displacement={progress:.3f}m, target={distance:.3f}m)",
                     "state": latest_state,
-                    "displacement": round(displacement, 3),
+                    "displacement": round(progress, 3),
                     "dx": round(dx, 3), "dy": round(dy, 3),
+                    "target_pose": target_pose,
                     "stable_hits": stable_hits,
                     "elapsed_sec": round(time.time() - start_time, 3),
                 }
         else:
             stable_hits = 0
 
-        # 检查是否被提前停止（宽限期内也检查）
+        # 只有确认技能曾经启动后，start=false 才表示提前停止。
+        # ROS2/EnvTest 链路中 model_use/velocity 和 start 分两帧生效，启动前可能短暂看到旧的 idle 状态。
         start_flag = extract_start_flag(state)
-        if start_flag is False:
+        if start_flag is True:
+            observed_start = True
+        elif start_flag is False and observed_start:
             return {
                 "ok": False,
-                "reason": f"技能在位移完成前已停止 (displacement={displacement:.3f}m, target={distance:.3f}m)",
-                "state": latest_state, "displacement": round(displacement, 3),
+                "reason": f"技能在位移完成前已停止 (displacement={progress:.3f}m, target={distance:.3f}m)",
+                "state": latest_state, "displacement": round(progress, 3),
+                "target_pose": target_pose,
                 "elapsed_sec": round(time.time() - start_time, 3),
             }
 
+    final_disp = latest_disp if latest_disp is not None else 0.0
     return {
         "ok": False,
-        "reason": f"位移超时，{timeout_sec:.1f}s 内未达到目标 (displacement={latest_disp:.3f}m, target={distance:.3f}m)",
+        "reason": f"位移超时，{timeout_sec:.1f}s 内未达到目标 (displacement={final_disp:.3f}m, target={distance:.3f}m)",
         "state": latest_state, "displacement": latest_disp,
+        "target_pose": target_pose,
         "elapsed_sec": round(time.time() - start_time, 3),
     }
 
@@ -414,6 +441,7 @@ def build_displacement_validation(skill_name: str, distance: float, arrival_resu
         "actual_displacement": arrival_result.get("displacement"),
         "dx": arrival_result.get("dx"),
         "dy": arrival_result.get("dy"),
+        "target_pose": arrival_result.get("target_pose"),
         "stable_hits": arrival_result.get("stable_hits"),
         "state": summarize_state(state),
         "elapsed_sec": arrival_result.get("elapsed_sec"),

@@ -16,7 +16,7 @@ _rclpy_ok = False
 try:
     import rclpy
     from rclpy.node import Node
-    from geometry_msgs.msg import Odometry
+    from nav_msgs.msg import Odometry
     from std_msgs.msg import String
     _rclpy_ok = True
 except ImportError:
@@ -191,6 +191,8 @@ def sync_object_facts_from_live_data(
 
     odom = raw.get("odom", {})
     robot_pose = odom.get("position")
+    if robot_pose is None and all(key in odom for key in ("x", "y", "z")):
+        robot_pose = [odom.get("x"), odom.get("y"), odom.get("z")]
     skill = raw.get("skill_status", {})
     scene_objects = raw.get("scene_objects", [])
 
