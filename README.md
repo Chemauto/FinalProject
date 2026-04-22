@@ -234,7 +234,7 @@ state = get_state()
 - 规划可以在缺少 live 数据时继续
 - 动作执行不能假成功
 - 没有实时状态时，动作直接失败
-- 导航技能统一 0.5 秒轮询，到达阈值 0.13m
+- 导航技能统一 0.5 秒轮询，到达阈值 0.13m，最小超时 40s（`FINALPROJECT_NAV_TIMEOUT_MIN_SEC`）
 - 位移方向检查有 1.0s 宽限期（`FINALPROJECT_DIRECTION_GRACE_SEC`），避免技能切换时惯性漂移误判
 - push_box 检测箱子与目标距离，到达阈值 0.08m
 - walk 超时公式 `max(timeout*3, timeout+8.0)` 确保真实速度下有足够执行时间

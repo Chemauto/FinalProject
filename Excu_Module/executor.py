@@ -21,6 +21,7 @@ from .runtime import (
 # ── Generic navigation timing defaults ────────────────────────────────
 DEFAULT_NAVIGATION_DURATION_SEC = 6.0
 DEFAULT_NAVIGATION_TIMEOUT_MARGIN_SEC = 5.0
+DEFAULT_NAVIGATION_MIN_TIMEOUT_SEC = 40.0
 from .state import (
     build_navigation_validation,
     build_displacement_validation,
@@ -312,7 +313,11 @@ async def execute_goal_navigation_skill(
         raise ValueError("goal_command 必须是显式目标点，支持 [x, y, z] / \"x,y,z\" / [x, y, z, yaw] 格式")
 
     execution_time_sec = estimate_goal_skill_duration(normalized_goal, DEFAULT_NAVIGATION_DURATION_SEC)
-    timeout_sec = max(20.0, execution_time_sec + DEFAULT_NAVIGATION_TIMEOUT_MARGIN_SEC)
+    min_timeout_sec = max(
+        1.0,
+        read_env_float("FINALPROJECT_NAV_TIMEOUT_MIN_SEC", DEFAULT_NAVIGATION_MIN_TIMEOUT_SEC),
+    )
+    timeout_sec = max(min_timeout_sec, execution_time_sec + DEFAULT_NAVIGATION_TIMEOUT_MARGIN_SEC)
     speak(speech_text)
     log_skill(skill_name, f"{log_label}到{target}，目标命令={normalized_goal}，预计执行 {execution_time_sec:.2f} 秒")
     feedback = await wait_skill_feedback(

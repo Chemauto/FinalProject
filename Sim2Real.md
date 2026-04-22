@@ -349,6 +349,9 @@ export FINALPROJECT_VLM_ROS2_IMAGE_TOPIC=/你的实际摄像头topic
 # （可选）调整轮询频率和到达阈值
 export FINALPROJECT_STATUS_POLL_SEC=0.5
 
+# （可选）调整导航 / nav_climb 最小超时（秒），默认 40.0s
+export FINALPROJECT_NAV_TIMEOUT_MIN_SEC=40.0
+
 # （可选）调整位移方向宽限期（秒），默认 1.0s
 # 技能切换时跳过方向检查，避免惯性漂移误判
 export FINALPROJECT_DIRECTION_GRACE_SEC=1.0

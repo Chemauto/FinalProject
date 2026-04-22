@@ -207,6 +207,10 @@ async def wait_for_navigation_completion(
     latest_dist_xy: float | None = None
     latest_pose_delta: float | None = None
     stable_hits = 0
+    observed_start = False
+
+    from .skill_registry import get_navigation_model_uses
+    navigation_model_uses = set(get_navigation_model_uses())
 
     while time.time() < deadline:
         await asyncio.sleep(poll_sec)
@@ -246,6 +250,9 @@ async def wait_for_navigation_completion(
 
         current_model_use = extract_model_use(state)
         start_flag = extract_start_flag(state)
+        is_navigation_model = current_model_use in navigation_model_uses if current_model_use is not None else False
+        if start_flag is True and is_navigation_model:
+            observed_start = True
         is_stable_pose = latest_pose_delta is not None and latest_pose_delta <= stable_delta_m
 
         if latest_dist_xy <= arrival_tol_m and is_stable_pose:
@@ -261,8 +268,7 @@ async def wait_for_navigation_completion(
         else:
             stable_hits = 0
 
-        from .skill_registry import get_navigation_model_uses
-        if start_flag is False or (current_model_use is not None and current_model_use not in get_navigation_model_uses()):
+        if observed_start and (start_flag is False or (current_model_use is not None and not is_navigation_model)):
             if latest_dist_xy is None or latest_dist_xy > arrival_tol_m:
                 return {
                     "ok": False,

@@ -115,7 +115,7 @@ Excu_Module/
 
 `wait_for_displacement_completion` 内置 `direction_grace_sec`（默认 1.0s，可通过 `FINALPROJECT_DIRECTION_GRACE_SEC` 配置）：
 - 宽限期内：跳过方向检查，允许机器人完成上一步的减速过渡
-- 宽限期结束：用当前位置重新校准 `start_pose`，消除惯性漂移
+- 宽限期结束：继续使用命令下发前的 `start_pose` 计算目标坐标
 - 之后正常检测方向和位移
 
 ### `executor.py` — 执行编排
@@ -125,6 +125,7 @@ Excu_Module/
 - 执行前读取实时状态（含箱子位置）
 - 下发命令
 - 导航类：轮询到达判定（`wait_for_navigation_completion`）
+- 导航类最小超时默认 40s，可通过 `FINALPROJECT_NAV_TIMEOUT_MIN_SEC` 覆盖
 - 位移类：轮询位移判定（`wait_for_displacement_completion`），支持方向校验
 - 兜底：按固定时间等待
 - 超时后 stop 命令
