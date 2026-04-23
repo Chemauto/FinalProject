@@ -5,7 +5,7 @@ from prompt_toolkit.history import FileHistory
 from rich.console import Console
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
-from Executor.demo_executor import run_demo_task
+
 from Executor.executor import run_plan
 from Tui.commands import handle_command
 from Tui.gateway import LocalChatGateway
@@ -55,26 +55,7 @@ while True:
         add_command(str(history_path()))
         render_chat(console, chat_items)
         continue
-    if command["type"] == "demo":
-        _sa = [False]
-        def demo_emit(item_type, content):
-            if item_type == "status":
-                update_last_status(content)
-                print(f"\r\033[K[Status] {content}", end="", flush=True)
-                _sa[0] = True
-            else:
-                if _sa[0]:
-                    print()
-                    _sa[0] = False
-                emit(item_type, content)
-                render_item(console, {"type": item_type, "content": content})
-        #demo执行时status覆盖当前行实时更新，其他事件正常打印
 
-        run_demo_task(demo_emit)
-        if _sa[0]:
-            print()
-        save_history(messages, chat_items)
-        continue
     if not user_input:
         continue
 

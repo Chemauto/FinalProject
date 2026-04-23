@@ -12,7 +12,6 @@ state.py
 skills.py
 tools.py
 executor.py
-demo_executor.py
 ```
 
 ## state.py
@@ -64,13 +63,6 @@ climb(height)      0.1m/s 攀爬，最高 0.3m
 - 调用 `call_tool` 执行技能
 - 失败时 emit `error` 并停止
 
-## demo_executor.py
-
-`/demo` 命令使用，固定步骤执行：
-
-```text
-Nav(0, 1, 0) -> Push(0, 2, 0) -> climb(0.3) -> Nav(0, 8, 0)
-```
 
 不调用 LLM，用于本地测试。
 

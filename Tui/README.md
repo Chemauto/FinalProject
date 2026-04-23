@@ -9,7 +9,6 @@
 - 读取用户输入
 - 处理命令
 - 调用 LLM 规划并执行技能
-- 调用 demo 执行层
 - 增量显示聊天和机器人事件
 - 保存/恢复最近会话
 
@@ -36,7 +35,6 @@ python tui.py
 
 ```text
 /help     查看帮助
-/demo     演示固定步骤执行（不调用LLM）
 /load     恢复最近会话
 /history  显示历史路径
 /reset    清空上下文
@@ -47,7 +45,7 @@ python tui.py
 
 ## 主要模块
 
-`tui.py` 是主循环。普通输入走 `make_plan -> run_plan`，`/demo` 走固定步骤。
+`tui.py` 是主循环。普通输入走 `make_plan -> run_plan`，
 
 `commands.py` 解析 slash commands。
 

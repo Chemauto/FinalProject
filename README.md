@@ -18,8 +18,7 @@ FinalProject 当前处于重构阶段。旧项目已迁移到：
 - `Executor/executor.py`：根据 LLM 返回的 tool_calls 逐个执行技能。
 - `Executor/skills.py`：手动实现 `Nav`、`walk`、`Push`、`climb`。
 - `Executor/state.py`：保存假机器人状态。
-- `Executor/demo_executor.py`：固定步骤 demo，用于不调用 LLM 的本地测试。
-- `Tui/tui.py`：终端交互主循环，普通输入走规划执行，`/demo` 走固定步骤。
+- `Tui/tui.py`：终端交互主循环，普通输入走规划执行，
 - `Tui/session.py`：保存 LLM `messages` 和 UI `chat_items`。
 - `Tui/render.py`：Rich 显示，增量渲染不重复打印。
 - `Tui/commands.py`：处理 slash commands。
@@ -44,7 +43,6 @@ FinalProject/
 │   ├── __init__.py
 │   ├── state.py
 │   ├── skills.py
-│   ├── demo_executor.py
 │   ├── executor.py
 │   └── tools.py
 └── Tui/
@@ -84,7 +82,6 @@ python tui.py
 
 ```text
 /help    查看帮助
-/demo    演示固定步骤执行（不调用LLM）
 /load    恢复最近会话
 /history 显示历史文件路径
 /reset   清空当前上下文
@@ -106,11 +103,7 @@ python tui.py
 -> 通过 emit 实时显示到 TUI
 ```
 
-```text
-/demo 命令
--> run_demo_task(emit) 固定步骤
--> 不调用 LLM
-```
+
 
 ## 机器人技能
 
