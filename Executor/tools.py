@@ -1,32 +1,55 @@
 from mcp.server.fastmcp import FastMCP
 from Executor.skills import Nav, walk, Push, climb as climb_skill
+from Vision import observe_environment
 
 mcp = FastMCP("robot")
 #创建MCP实例
 
 @mcp.tool()
-def nav(x: float, y: float, z: float) -> str:
+def nav(x: float, y: float, z: float) -> dict:
     """导航到目标坐标"""
     return Nav(x, y, z)
+#注册导航工具
 
 @mcp.tool()
-def push(x: float, y: float, z: float) -> str:
+def push(x: float, y: float, z: float) -> dict:
     """把箱子推到目标坐标"""
     return Push(x, y, z)
+#注册推箱子工具
 
 @mcp.tool()
-def climb(height: float) -> str:
+def climb(height: float) -> dict:
     """攀爬指定高度，最高0.3m"""
     return climb_skill(height)
+#注册攀爬工具
 
 @mcp.tool()
-def walk_skill(direction: str, v: float) -> str:
+def walk_skill(direction: str, v: float) -> dict:
     """按方向和速度移动，direction可选front/back/left/right"""
     return walk(direction, v)
-#注册4个技能到MCP，climb重命名为climb_skill避免和装饰器函数同名
+#注册行走工具
+
+@mcp.tool()
+def observe(image_path: str = "") -> dict:
+    """观察当前环境，返回结构化视觉事实"""
+    return observe_environment(image_path)
+#注册视觉观察工具
 
 def get_tool_definitions():
     return [
+        {
+            "type": "function",
+            "function": {
+                "name": "observe",
+                "description": "观察当前环境，返回结构化视觉事实",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "image_path": {"type": "string"},
+                    },
+                },
+            },
+        },
         {
             "type": "function",
             "function": {
@@ -93,6 +116,7 @@ def get_tool_definitions():
 
 def call_tool(name, args, emit=None):
     TOOLS = {
+        "observe": observe_environment,
         "nav": Nav,
         "walk_skill": walk,
         "push": Push,

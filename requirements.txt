@@ -1,0 +1,7 @@
+openai
+python-dotenv
+pyyaml
+rich
+prompt_toolkit
+mcp
+websockets

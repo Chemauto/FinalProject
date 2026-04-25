@@ -1,5 +1,6 @@
 from pathlib import Path
 import sys
+import json
 from prompt_toolkit import prompt as input_prompt
 from prompt_toolkit.history import FileHistory
 from rich.console import Console
@@ -7,6 +8,7 @@ from rich.console import Console
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from Executor.executor import run_plan
+from Executor.robot_ws import check_connection
 from Tui.commands import handle_command
 from Tui.gateway import LocalChatGateway
 from Tui.history import history_path, load_history, save_history
@@ -20,11 +22,39 @@ console = Console()
 history = FileHistory(str(Path.home() / ".finalproject_tui_history"))
 #创建本地网关
 
+def summarize_plan_results(plan_results, latest_state, latest_feedback):
+    payload = {
+        "steps": plan_results or [],
+        "latest_state": latest_state,
+        "latest_feedback": latest_feedback,
+    }
+    return json.dumps(payload, ensure_ascii=False)
+#把工具执行结果压缩成一条消息，交给LLM继续判断
+
+
+def format_connection_result(result):
+    signal = result.get("signal") or "UNKNOWN"
+    lines = [f"连接结果: {signal}", f"地址: {result.get('ws_url', 'unknown')}"]
+    message = result.get("message")
+    if message:
+        lines.append(f"消息: {message}")
+    lines.append(f"状态源就绪: {'yes' if result.get('status_json_ready') else 'no'}")
+    if result.get("current_skill"):
+        lines.append(f"当前技能: {result.get('current_skill')}")
+    if result.get("model_use") is not None:
+        lines.append(f"model_use: {result.get('model_use')}")
+    if result.get("start") is not None:
+        lines.append(f"start: {result.get('start')}")
+    return "\n".join(lines)
+#把健康检查结果整理成TUI里易读的文本
+
 show_welcome(console, prompt["model"])
 
 while True:
     show_status(console, messages)
+    #进入主循环，每轮显示状态信息
     user_input = input_prompt("You> ", history=history).strip()
+    #读取输入
     command = handle_command(user_input, reset)
     if command["type"] == "quit":
         add_system(command["message"])
@@ -37,7 +67,12 @@ while True:
             render_chat(console, chat_items)
         else:
             add_command(command["message"])
-            render_chat(console, chat_items)
+        render_chat(console, chat_items)
+        continue
+    if command["type"] == "connect":
+        result = check_connection()
+        add_system(format_connection_result(result))
+        render_chat(console, chat_items)
         continue
     if command["type"] == "load":
         try:
@@ -58,7 +93,7 @@ while True:
 
     if not user_input:
         continue
-
+    #把输入加载给LLM
     add_user(user_input)
     render_item(console, {"type": "user", "content": user_input})
 
@@ -87,14 +122,14 @@ while True:
                 break
             #LLM返回文本则显示并结束循环
 
-            run_plan(result["tool_calls"], plan_emit)
+            plan_results = run_plan(result["tool_calls"], plan_emit)
             if _sa[0]:
                 print()
                 _sa[0] = False
             #status行结束后换行
             steps = ", ".join(f"{tc['name']}({tc['args']})" for tc in result["tool_calls"])
-            from Executor.state import fmt_robot, fmt_box
-            tool_result = f"{fmt_robot()}, {fmt_box()}"
+            from Executor.state import format_feedback, format_latest_state
+            tool_result = summarize_plan_results(plan_results, format_latest_state(), format_feedback())
             messages.append({"role": "assistant", "content": f"已执行: {steps}\n结果: {tool_result}"})
             messages.append({"role": "user", "content": f"执行结果: {tool_result}，请决定下一步"})
             #执行tool_calls，把结果发回messages让LLM决定下一步
