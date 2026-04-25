@@ -6,7 +6,7 @@ try:
 except Exception:
     cv2 = None
 
-DEFAULT_IMAGE = Path(__file__).resolve().parent / "assets" / "2.png"
+DEFAULT_IMAGE = Path(__file__).resolve().parent / "assets" / "1.png"
 OLD_PROJECT_IMAGE = Path("/home/xcj/work/FinalProject/Data_Module/assets/2.png")
 
 

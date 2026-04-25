@@ -6,11 +6,11 @@ def Nav(x, y, z, emit=None):
 #发送导航启动信号，最终成功失败由服务器feedback决定
 
 
-def walk(direction, v, emit=None):
+def walk(direction, v=0.5, distance=0.0, emit=None):
     if direction not in {"front", "back", "left", "right"}:
         return {"signal": "FAILURE", "skill": "walk_skill", "message": f"unknown direction: {direction}"}
-    return send_skill_command("walk_skill", {"direction": direction, "v": v}, emit=emit)
-#发送行走启动信号，direction限定为front/back/left/right
+    return send_skill_command("walk_skill", {"direction": direction, "v": v, "distance": distance}, emit=emit)
+#发送行走启动信号，direction限定为front/back/left/right，v默认0.5，distance单位米
 
 
 def Push(x, y, z, emit=None):

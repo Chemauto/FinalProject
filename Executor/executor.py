@@ -1,8 +1,9 @@
 from Executor.tools import call_tool
 from Executor.state import format_latest_state
 
+ACTION_TOOLS = {"nav", "walk_skill", "push", "climb"}
+
 def run_plan(tool_calls, emit):
-    emit("plan", f"共{len(tool_calls)}个步骤")
     results = []
     for i, tc in enumerate(tool_calls):
         name = tc["name"]
@@ -14,7 +15,8 @@ def run_plan(tool_calls, emit):
             emit("error", results[-1]["message"])
             return results
         #执行失败则停止
-    emit("status", f"任务完成 {format_latest_state()}")
+    if any(tc["name"] in ACTION_TOOLS for tc in tool_calls):
+        emit("status", f"任务完成 {format_latest_state()}")
     return results
 #遍历tool_calls执行技能，每步通过emit输出事件
 

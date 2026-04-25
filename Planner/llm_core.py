@@ -32,7 +32,7 @@ def chat(messages, tools=None):
     completion = client.chat.completions.create(**kwargs)
     msg = completion.choices[0].message
     if msg.tool_calls:
-        return {"type": "tool_calls", "tool_calls": [
+        return {"type": "tool_calls", "content": msg.content or "", "tool_calls": [
             {"name": tc.function.name, "args": json.loads(tc.function.arguments)}
             for tc in msg.tool_calls
         ]}
@@ -63,7 +63,7 @@ def make_plan(messages):
     from Executor.tools import get_tool_definitions
     result = chat(messages, tools=get_tool_definitions())
     if isinstance(result, dict) and result["type"] == "tool_calls":
-        return {"type": "plan", "tool_calls": result["tool_calls"]}
+        return {"type": "plan", "content": result.get("content", ""), "tool_calls": result["tool_calls"]}
     return {"type": "text", "content": result}
 #带工具定义调LLM，有tool_calls返回计划，否则返回文本
 

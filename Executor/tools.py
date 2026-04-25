@@ -24,9 +24,9 @@ def climb(height: float) -> dict:
 #注册攀爬工具
 
 @mcp.tool()
-def walk_skill(direction: str, v: float) -> dict:
-    """按方向和速度移动，direction可选front/back/left/right"""
-    return walk(direction, v)
+def walk_skill(direction: str, v: float = 0.5, distance: float = 0.0) -> dict:
+    """按方向、速度和目标距离移动，direction可选front/back/left/right，v默认0.5，distance单位米"""
+    return walk(direction, v, distance)
 #注册行走工具
 
 @mcp.tool()
@@ -100,14 +100,15 @@ def get_tool_definitions():
             "type": "function",
             "function": {
                 "name": "walk_skill",
-                "description": "按方向和速度移动，direction可选front/back/left/right",
+                "description": "按方向、速度和目标距离移动，direction可选front/back/left/right，v是速度且默认0.5，distance是目标距离且单位米",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "direction": {"type": "string"},
-                        "v": {"type": "number"},
+                        "v": {"type": "number", "description": "速度，默认0.5", "default": 0.5},
+                        "distance": {"type": "number", "description": "目标距离，单位米"},
                     },
-                    "required": ["direction", "v"],
+                    "required": ["direction", "distance"],
                 },
             },
         },
