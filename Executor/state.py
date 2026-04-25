@@ -12,6 +12,7 @@ def reset_state():
         "start": None,
         "last_action": None,
         "latest_feedback": None,
+        "scene_objects": [],
         "raw": {},
     })
 #重置执行状态，启动时和/reset后使用
@@ -38,8 +39,10 @@ def update_latest_state(payload):
         state["model_use"] = body.get("model_use")
     if "start" in body:
         state["start"] = body.get("start")
+    if isinstance(body.get("scene_objects"), list):
+        state["scene_objects"] = body.get("scene_objects")
     return state
-#接收服务器state消息，更新机器人、箱子、技能和运行标记
+#接收服务器state消息，更新机器人、箱子、技能、物体和运行标记
 
 
 def update_latest_feedback(payload):

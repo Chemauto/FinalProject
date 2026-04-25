@@ -50,7 +50,7 @@ def format_connection_result(result):
     return "\n".join(lines)
 #把健康检查结果整理成TUI里易读的文本
 
-ACTION_TOOLS = {"nav", "walk_skill", "push", "climb"}
+ACTION_TOOLS = {"nav", "nav_climb", "walk_skill", "push", "climb"}
 
 def has_action_tool(tool_calls):
     return any(tc["name"] in ACTION_TOOLS for tc in tool_calls)

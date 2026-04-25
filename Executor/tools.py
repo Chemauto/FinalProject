@@ -1,5 +1,5 @@
 from mcp.server.fastmcp import FastMCP
-from Executor.skills import Nav, walk, Push, climb as climb_skill
+from Executor.skills import Nav, NavClimb, walk, Push, climb as climb_skill
 from Vision import observe_environment
 
 mcp = FastMCP("robot")
@@ -10,6 +10,12 @@ def nav(x: float, y: float, z: float) -> dict:
     """导航到目标坐标"""
     return Nav(x, y, z)
 #注册导航工具
+
+@mcp.tool()
+def nav_climb(x: float, y: float, z: float) -> dict:
+    """导航到目标坐标并攀爬无法绕开的可通过障碍物"""
+    return NavClimb(x, y, z)
+#注册导航攀爬工具
 
 @mcp.tool()
 def push(x: float, y: float, z: float) -> dict:
@@ -25,7 +31,7 @@ def climb(height: float) -> dict:
 
 @mcp.tool()
 def walk_skill(direction: str, v: float = 0.5, distance: float = 0.0) -> dict:
-    """按方向、速度和目标距离移动，direction可选front/back/left/right，v默认0.5，distance单位米"""
+    """按方向、速度和目标距离移动，可前后行走或左右侧移避让单侧障碍"""
     return walk(direction, v, distance)
 #注册行走工具
 
@@ -54,7 +60,23 @@ def get_tool_definitions():
             "type": "function",
             "function": {
                 "name": "nav",
-                "description": "导航到目标坐标",
+                "description": "导航到目标坐标；路径可通行或可通过普通绕行时使用",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "x": {"type": "number"},
+                        "y": {"type": "number"},
+                        "z": {"type": "number"},
+                    },
+                    "required": ["x", "y", "z"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "nav_climb",
+                "description": "导航到目标坐标并攀爬无法绕开的可通过障碍物；只有左右都受阻、普通导航或侧移绕行不可行，或用户明确要求攀爬时使用",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -100,7 +122,7 @@ def get_tool_definitions():
             "type": "function",
             "function": {
                 "name": "walk_skill",
-                "description": "按方向、速度和目标距离移动，direction可选front/back/left/right，v是速度且默认0.5，distance是目标距离且单位米",
+                "description": "按方向、速度和目标距离移动，direction可选front/back/left/right，v是速度且默认0.5，distance是目标距离且单位米；可用left/right侧移避让单侧障碍物",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -119,6 +141,7 @@ def call_tool(name, args, emit=None):
     TOOLS = {
         "observe": observe_environment,
         "nav": Nav,
+        "nav_climb": NavClimb,
         "walk_skill": walk,
         "push": Push,
         "climb": climb_skill,

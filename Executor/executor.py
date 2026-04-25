@@ -1,7 +1,7 @@
 from Executor.tools import call_tool
 from Executor.state import format_latest_state
 
-ACTION_TOOLS = {"nav", "walk_skill", "push", "climb"}
+ACTION_TOOLS = {"nav", "nav_climb", "walk_skill", "push", "climb"}
 
 def run_plan(tool_calls, emit):
     results = []
