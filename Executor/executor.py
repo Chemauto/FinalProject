@@ -16,13 +16,15 @@ def run_plan(tool_calls, emit):
             return results
         #执行失败则停止
     if any(tc["name"] in ACTION_TOOLS for tc in tool_calls):
-        emit("status", f"任务完成 {format_latest_state()}")
+        emit("status", f"动作完成 {format_latest_state()}")
     return results
 #遍历tool_calls执行技能，每步通过emit输出事件
 
 def _normalize_result(name, args, result):
     if isinstance(result, dict):
-        signal = result.get("signal") or ("FAILURE" if result.get("status") == "failure" else "SUCCESS")
+        signal = result.get("signal")
+        if signal is None:
+            signal = "SUCCESS" if result.get("status") == "success" else "FAILURE"
         return {
             "name": name,
             "args": args,

@@ -2,6 +2,7 @@ from pathlib import Path
 import sys
 import json
 import logging
+import re
 from prompt_toolkit import prompt as input_prompt
 from prompt_toolkit.history import FileHistory
 from rich.console import Console
@@ -55,6 +56,11 @@ ACTION_TOOLS = {"nav", "nav_climb", "walk_skill", "push", "climb"}
 def has_action_tool(tool_calls):
     return any(tc["name"] in ACTION_TOOLS for tc in tool_calls)
 #判断本轮是否包含动作工具
+
+def incomplete_tool_batch(content, tool_calls):
+    steps = re.findall(r"(?m)^\s*\d+[.、)]\s*", str(content or ""))
+    return len(steps) > len(tool_calls) and has_action_tool(tool_calls)
+#正文列了多步动作但tool_calls不足时，要求LLM补齐工具调用
 
 def short_status(content):
     text = str(content).replace("\n", " ")
@@ -144,6 +150,10 @@ while True:
             tool_calls = result["tool_calls"]
             if has_action_tool(tool_calls) and not observed:
                 tool_calls = [{"name": "observe", "args": {}}]
+            elif incomplete_tool_batch(result.get("content"), tool_calls):
+                messages.append({"role": "assistant", "content": result.get("content") or ""})
+                messages.append({"role": "user", "content": "你刚才列出了多步动作计划，但没有把每一步都放进tool_calls。请一次性返回完整tool_calls序列，不要只调用第一步。"})
+                continue
             plan_results = run_plan(tool_calls, plan_emit)
             if any(item["name"] == "observe" and item["signal"] != "FAILURE" for item in plan_results):
                 observed = True
