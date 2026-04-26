@@ -23,6 +23,8 @@ prompts/planner_prompt.yaml
 
 `make_plan` 接收 session 的 messages（含完整对话历史），从 `Executor/tools` 获取 tool definitions 传给 LLM。LLM 返回 tool_calls 时返回计划，否则返回文本。
 
+如果 LLM 返回 tool_calls，`make_plan` 会保留模型正文中的规划说明，TUI 将其显示为 `Plan`。
+
 ## prompts/planner_prompt.yaml
 
 保存：
@@ -36,6 +38,14 @@ prompts/planner_prompt.yaml
 ```text
 glm-5.1
 ```
+
+提示词只写通用规则：
+
+- 新动作任务先 `observe`
+- 坐标和物体位置优先参考 `observe` 返回的 `robot_state` 和 ROS2 结构化物体
+- 工具执行结果以 `feedback` 为准
+
+具体技能用途写在 `Executor/tools.py` 的 tool description 中，不在 prompt 里单独硬编码。
 
 ## 当前边界
 

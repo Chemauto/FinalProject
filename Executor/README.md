@@ -21,11 +21,16 @@ executor.py
 
 ```python
 state = {
-    "robot": {"x": 0, "y": 0, "z": 0},
-    "box": {"x": 0, "y": 1, "z": 0},
+    "robot": {"x": 0, "y": 0, "z": 0, "yaw": 0},
+    "box_world": {"x": 0, "y": 1, "z": 0},
+    "box_relative": {"x": 0, "y": 1, "z": 0},
     "current_skill": None,
+    "model_use": None,
+    "start": None,
     "last_action": None,
     "latest_feedback": None,
+    "scene_objects": [],
+    "raw": {},
 }
 ```
 
@@ -35,7 +40,8 @@ state = {
 - `update_latest_state(payload)`
 - `update_latest_feedback(payload)`
 - `fmt_robot()`
-- `fmt_box()`
+- `fmt_box_world()`
+- `fmt_box_relative()`
 - `format_latest_state()`
 - `format_feedback()`
 
@@ -44,6 +50,7 @@ state = {
 负责和机器人服务器通信：
 
 - `send_skill_command(skill, args, emit)` 发送技能启动信号
+- `get_robot_state()` 发送只读 `get_state` 请求，读取当前 ROS2/WebSocket 状态
 - 接收 `state` 消息并更新 `Executor.state`
 - 接收同一 `action_id` 的 `feedback` 后返回
 - `ROBOT_WS_URL` 默认 `ws://127.0.0.1:8765`
@@ -53,10 +60,11 @@ state = {
 技能函数只负责发送启动信号：
 
 ```text
-Nav(x, y, z)       发送 nav 命令
-walk(direction, v) 发送 walk_skill 命令
-Push(x, y, z)      发送 push 命令
-climb(height)      发送 climb 命令，客户端保留最高 0.3m 约束
+Nav(x, y, z)                  发送 nav 命令
+NavClimb(x, y, z)             发送 nav_climb 命令
+walk(direction, v, distance)  发送 walk_skill 命令，v默认0.5，distance单位米
+Push(x, y, z)                 发送 push 命令
+climb(height)                 发送 climb 命令，客户端保留最高 0.3m 约束
 ```
 
 动作是否成功由服务器 `feedback.signal` 决定。
@@ -85,4 +93,6 @@ climb(height)      发送 climb 命令，客户端保留最高 0.3m 约束
 
 `Executor` 不直接渲染 TUI，也不调用 LLM。
 
-真实机器人闭环在服务器端完成，Executor 只发命令、收状态、收反馈。
+真实机器人闭环在服务器端完成，Executor 只发命令、读状态、收反馈。
+
+FinalProject 不直接导入 ROS2；ROS2 topic 订阅和发布在 `/home/robot/work/IsaacLabBisShe/WebSocket/robot_service.py`。

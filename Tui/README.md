@@ -10,6 +10,7 @@
 - 处理命令
 - 调用 LLM 规划并执行技能
 - 增量显示聊天和机器人事件
+- 显示 WebSocket 机器人连接状态
 - 保存/恢复最近会话
 
 ## 文件
@@ -35,6 +36,7 @@ python tui.py
 
 ```text
 /help     查看帮助
+/connect  检查机器人 WebSocket 服务连接
 /load     恢复最近会话
 /history  显示历史路径
 /reset    清空上下文
@@ -42,6 +44,8 @@ python tui.py
 ```
 
 普通输入会调用 `make_plan(messages)`，LLM 通过 tool calling 选择技能，`run_plan()` 自动执行。
+
+新动作任务中，如果 LLM 直接返回动作工具，TUI 会先强制执行一次 `observe`，再把观察结果喂回 LLM 决定下一步。
 
 ## 主要模块
 
@@ -60,6 +64,7 @@ python tui.py
 ```text
 messages   给 LLM 用，含完整对话历史
 chat_items 给 TUI 显示用
+connection_status 给顶部 Robot 连接状态显示用
 ```
 
 `stream.py` 保存 LLM 流式输出状态。
@@ -80,6 +85,15 @@ error
 ```
 
 `status` 会覆盖最后一条状态，避免 5Hz 状态刷屏。
+
+顶部面板会显示：
+
+```text
+Robot: disconnected
+Robot: connected | ws://127.0.0.1:8765 | skill=idle
+```
+
+其中 connected/disconnected 由 `/connect` 的健康检查结果更新。
 
 ## 当前边界
 

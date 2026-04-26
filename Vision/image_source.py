@@ -6,7 +6,7 @@ try:
 except Exception:
     cv2 = None
 
-DEFAULT_IMAGE = Path(__file__).resolve().parent / "assets" / "1.png"
+DEFAULT_IMAGE = Path("/tmp/envtest_front_camera.png")
 OLD_PROJECT_IMAGE = Path("/home/xcj/work/FinalProject/Data_Module/assets/2.png")
 
 
@@ -31,7 +31,6 @@ def _candidate_paths(image_path, default_image):
         os.getenv("VISION_IMAGE_PATH"),
         os.getenv("FINALPROJECT_VLM_IMAGE_PATH"),
         default_image,
-        OLD_PROJECT_IMAGE,
     ]
     return [Path(item).expanduser().resolve() for item in values if item]
 #生成候选图片路径列表
