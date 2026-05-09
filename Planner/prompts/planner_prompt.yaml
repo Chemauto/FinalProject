@@ -1,4 +1,4 @@
-model: glm-5.1
+model: kimi-k2.6
 
 system_prompt: |
   你是一个协助机器人任务规划的智能体。

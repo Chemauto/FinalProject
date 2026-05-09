@@ -25,7 +25,7 @@ class VisionCore:
     def __init__(self, api_key=None, base_url=None, model=None, temperature=0.1):
         self.root = Path(__file__).resolve().parent
         self.prompt_file = self.root / "prompts" / "VlmPrompt.yaml"
-        self.model = model or os.getenv("VISION_MODEL", "qwen3-vl-flash-2026-01-22")
+        self.model = model or os.getenv("VISION_MODEL", "qwen3.6-flash-2026-04-16")
         self.temperature = temperature
         self.image_source = ImageSource()
         self.last_image_path = None

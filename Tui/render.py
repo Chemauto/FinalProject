@@ -23,7 +23,7 @@ def show_welcome(console, model, connection_status=None):
         f"Streaming: on\n"
         f"{connection_summary(connection_status or {})}"
     )
-    console.print(Panel(content, title="FinalProject TUI", border_style="cyan"))
+    console.print(Panel(content, title="Robot Planner", border_style="cyan"))
 #显示欢迎信息
 
 def show_status(console, messages, connection_status=None):
