@@ -1,7 +1,12 @@
 from Vision.vlm import VisionCore
 
+ROBOT_LENGTH_M = 1.2
+ROBOT_WIDTH_M = 0.4
+ROBOT_HEIGHT_M = 0.3
+ROBOT_HALF_LENGTH_M = ROBOT_LENGTH_M / 2
+ROBOT_HALF_WIDTH_M = ROBOT_WIDTH_M / 2
 REQUIRED_FRONT_CLEARANCE_Y_M = 0.55
-DEFAULT_BOX_STEP_GOAL = {"x": 1.7, "y": 0.0, "z": 0.1}
+DEFAULT_BOX_STEP_GOAL = {"x": 1.7, "y": 0.0, "yaw": 0.0}
 
 
 def observe_environment(image_path="", emit=None):
@@ -60,12 +65,27 @@ def merge_robot_scene_facts(scene_facts, robot_state):
         "route_options": build_route_options(objects, corridors),
         "corridors": corridors,
         "box_step_goal": build_box_step_goal(objects),
-        "constraints": dict(scene_facts.get("constraints") or {"max_climb_height_m": VisionCore.MAX_CLIMB_HEIGHT_M}),
+        "constraints": build_constraints(scene_facts.get("constraints")),
         "uncertainties": list(scene_facts.get("uncertainties") or []),
         "visual_summary": scene_facts.get("summary"),
     }
     return merged
 #ROS2结构化物体优先，VLM摘要作为视觉补充
+
+
+def build_constraints(base_constraints=None):
+    constraints = dict(base_constraints or {})
+    constraints.setdefault("max_climb_height_m", VisionCore.MAX_CLIMB_HEIGHT_M)
+    constraints.update({
+        "robot_size_m": {"length": ROBOT_LENGTH_M, "width": ROBOT_WIDTH_M, "height": ROBOT_HEIGHT_M},
+        "robot_half_length_m": ROBOT_HALF_LENGTH_M,
+        "robot_half_width_m": ROBOT_HALF_WIDTH_M,
+        "required_front_clearance_y_m": REQUIRED_FRONT_CLEARANCE_Y_M,
+        "navigation_coordinate_frame": "robot_center",
+        "nav_x_offset_rule": "robot_center_x = object_edge_x +/- robot_half_length_m",
+    })
+    return constraints
+#把FQPlanner中的机器人尺寸约束放进结构化事实，避免模型把机器人当点处理
 
 
 def build_terrain_features(objects):

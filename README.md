@@ -138,7 +138,7 @@ python Tui/tui.py
 ```text
 用户输入
 -> make_plan(messages) 带工具定义调 LLM
--> LLM 返回 observe/nav/nav_climb/walk_skill/push/climb 或文本
+-> LLM 返回 observe/nav/walk_skill/push/climb 或文本
 -> 如果 tool_calls: run_plan() 逐个执行工具
 -> observe 调用 Vision 获取 VLM 视觉语义，并通过 WebSocket 读取 ROS2 状态
 -> scene_objects 融合到 scene_facts，robot_state 一起返回给 LLM
@@ -190,10 +190,9 @@ python Tui/tui.py
 ```text
 observe(image_path="")       观察环境，返回视觉语义和scene_facts
 nav(x, y, z)                 导航到目标坐标
-nav_climb(x, y, z)           导航并攀爬无法绕开的可通过障碍物
 walk_skill(direction, v, distance) 按方向、速度和目标距离移动，v默认0.5，distance单位米
-push(x, y, z)                把箱子推到目标坐标
-climb(height)                攀爬指定高度，最高0.3m
+push(x, y, yaw)              把箱子推到目标坐标，yaw通常为0
+climb(height)                攀爬指定高度；普通最高0.3m，借助箱子可连续攀爬0.5m
 ```
 
 执行状态由 WebSocket 服务器推送，通过 `update_last_status` 覆盖最后一条状态，不刷屏。

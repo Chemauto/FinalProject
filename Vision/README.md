@@ -57,7 +57,8 @@ prompts/VlmPrompt.yaml
 - `platform` 进入 `terrain_features`
 - `box` 进入 `interactive_objects`
 - 前方中心通道净宽进入 `corridors` 和 `route_options`
-- 如果存在可移动箱子，临时固定输出 `box_step_goal={"x":1.7,"y":0.0,"z":0.1}`
+- 如果存在可移动箱子，临时固定输出 `box_step_goal={"x":1.7,"y":0.0,"yaw":0.0}`
+- `constraints` 包含机器人尺寸：长1.20m、宽0.40m、高0.30m、半长0.60m、半宽0.20m；导航坐标按机器人中心点计算
 - VLM 原始摘要保留为 `visual_summary`
 
 `corridors` 会根据物体 `center/size` 和机器人当前位置估计前方通道：

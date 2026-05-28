@@ -11,21 +11,21 @@ def nav(x: float, y: float, z: float) -> dict:
     return Nav(x, y, z)
 #注册导航工具
 
-@mcp.tool()
-def nav_climb(x: float, y: float, z: float) -> dict:
-    """导航到目标坐标并攀爬无法绕开的可通过障碍物"""
-    return NavClimb(x, y, z)
+# @mcp.tool()
+# def nav_climb(x: float, y: float, z: float) -> dict:
+#     """导航到目标坐标并攀爬无法绕开的可通过障碍物"""
+#     return NavClimb(x, y, z)
 #注册导航攀爬工具
 
 @mcp.tool()
-def push(x: float, y: float, z: float) -> dict:
-    """把箱子推到目标坐标"""
-    return Push(x, y, z)
+def push(x: float, y: float, yaw: float = 0.0) -> dict:
+    """把箱子推到目标坐标，yaw为箱子目标朝向"""
+    return Push(x, y, yaw)
 #注册推箱子工具
 
 @mcp.tool()
 def climb(height: float) -> dict:
-    """攀爬指定高度，最高0.3m"""
+    """攀爬指定高度；普通直接攀爬最高0.3m，借助箱子可连续攀爬0.5m"""
     return climb_skill(height)
 #注册攀爬工具
 
@@ -75,32 +75,16 @@ def get_tool_definitions():
         {
             "type": "function",
             "function": {
-                "name": "nav_climb",
-                "description": "导航到目标坐标并攀爬无法绕开的可通过障碍物；只有左右都受阻、普通导航或侧移绕行不可行，或用户明确要求攀爬时使用",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "x": {"type": "number"},
-                        "y": {"type": "number"},
-                        "z": {"type": "number"},
-                    },
-                    "required": ["x", "y", "z"],
-                },
-            },
-        },
-        {
-            "type": "function",
-            "function": {
                 "name": "push",
-                "description": "把箱子推到目标坐标",
+                "description": "把箱子推到目标坐标；第三个参数是yaw目标朝向，通常为0，不要传箱子高度z",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "x": {"type": "number"},
                         "y": {"type": "number"},
-                        "z": {"type": "number"},
+                        "yaw": {"type": "number", "description": "箱子目标朝向，通常为0", "default": 0.0},
                     },
-                    "required": ["x", "y", "z"],
+                    "required": ["x", "y", "yaw"],
                 },
             },
         },
@@ -108,7 +92,7 @@ def get_tool_definitions():
             "type": "function",
             "function": {
                 "name": "climb",
-                "description": "攀爬指定高度，最高0.3m",
+                "description": "攀爬指定高度；普通直接攀爬最高0.3m，借助箱子时可传height=0.5表示连续爬上0.5m高台",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -141,7 +125,7 @@ def call_tool(name, args, emit=None):
     TOOLS = {
         "observe": observe_environment,
         "nav": Nav,
-        "nav_climb": NavClimb,
+        # "nav_climb": NavClimb,
         "walk_skill": walk,
         "push": Push,
         "climb": climb_skill,

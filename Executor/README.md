@@ -61,10 +61,9 @@ state = {
 
 ```text
 Nav(x, y, z)                  发送 nav 命令
-NavClimb(x, y, z)             发送 nav_climb 命令
 walk(direction, v, distance)  发送 walk_skill 命令，v默认0.5，distance单位米
-Push(x, y, z)                 发送 push 命令
-climb(height)                 发送 climb 命令，客户端保留最高 0.3m 约束
+Push(x, y, yaw)               发送 push 命令，yaw通常为0
+climb(height)                 发送 climb 命令，普通最高0.3m，借助箱子可连续攀爬0.5m
 ```
 
 动作是否成功由服务器 `feedback.signal` 决定。

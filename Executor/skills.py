@@ -18,13 +18,13 @@ def walk(direction, v=0.5, distance=0.0, emit=None):
 #发送行走启动信号，direction限定为front/back/left/right，v默认0.5，distance单位米
 
 
-def Push(x, y, z, emit=None):
-    return send_skill_command("push", {"x": x, "y": y, "z": z}, emit=emit)
-#发送推箱子启动信号，服务器负责控制和验收
+def Push(x, y, yaw=0.0, z=None, emit=None):
+    return send_skill_command("push", {"x": x, "y": y, "yaw": yaw}, emit=emit)
+#发送推箱子启动信号，第三个参数按FQPlanner约定为yaw；旧z入参只为兼容，不下发
 
 
 def climb(height, emit=None):
-    if height > 0.3:
-        return {"signal": "FAILURE", "skill": "climb", "message": "climb height > 0.3"}
+    if height > 0.5:
+        return {"signal": "FAILURE", "skill": "climb", "message": "climb height > 0.5"}
     return send_skill_command("climb", {"height": height}, emit=emit)
-#发送攀爬启动信号，客户端只保留最高0.3m的基础约束
+#发送攀爬启动信号，0.5m表示借助箱子连续攀爬总高度
