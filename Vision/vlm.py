@@ -25,7 +25,7 @@ class VisionCore:
     def __init__(self, api_key=None, base_url=None, model=None, temperature=0.1):
         self.root = Path(__file__).resolve().parent
         self.prompt_file = self.root / "prompts" / "VlmPrompt.yaml"
-        self.model = model or os.getenv("VISION_MODEL", "mimo-v2-flash")
+        self.model = model or os.getenv("VISION_MODEL", "mimo-v2.5")
         self.temperature = temperature
         self.image_source = ImageSource()
         self.last_image_path = None

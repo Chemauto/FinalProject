@@ -2,7 +2,6 @@ from pathlib import Path
 import sys
 import json
 import logging
-import re
 from prompt_toolkit import prompt as input_prompt
 from prompt_toolkit.history import FileHistory
 from rich.console import Console
@@ -14,6 +13,7 @@ from Executor.robot_ws import check_connection
 from Tui.commands import handle_command
 from Tui.gateway import LocalChatGateway
 from Tui.history import history_path, load_history, save_history
+from Tui.planning import has_action_tool, incomplete_tool_batch, planning_messages, should_replan_after_batch
 from Tui.render import render_chat, render_item, show_help, show_status, show_welcome
 from Tui.session import add_command, add_error, add_system, add_user, chat_items, connection_status, emit, messages, reset, update_connection_status, update_last_status
 from Tui.stream import StreamItem
@@ -50,17 +50,6 @@ def format_connection_result(result):
         lines.append(f"start: {result.get('start')}")
     return "\n".join(lines)
 #把健康检查结果整理成TUI里易读的文本
-
-ACTION_TOOLS = {"nav", "nav_climb", "walk_skill", "push", "climb"}
-
-def has_action_tool(tool_calls):
-    return any(tc["name"] in ACTION_TOOLS for tc in tool_calls)
-#判断本轮是否包含动作工具
-
-def incomplete_tool_batch(content, tool_calls):
-    steps = re.findall(r"(?m)^\s*\d+[.、)]\s*", str(content or ""))
-    return len(steps) > len(tool_calls) and has_action_tool(tool_calls)
-#正文列了多步动作但tool_calls不足时，要求LLM补齐工具调用
 
 def short_status(content):
     text = str(content).replace("\n", " ")
@@ -136,7 +125,7 @@ while True:
         observed = False
         for _ in range(10):
             #最多循环10轮，防止无限调用
-            result = make_plan(messages)
+            result = make_plan(planning_messages(messages, observed))
             if result["type"] != "plan":
                 messages.append({"role": "assistant", "content": result["content"]})
                 emit("assistant", result["content"])
@@ -152,7 +141,7 @@ while True:
                 tool_calls = [{"name": "observe", "args": {}}]
             elif incomplete_tool_batch(result.get("content"), tool_calls):
                 messages.append({"role": "assistant", "content": result.get("content") or ""})
-                messages.append({"role": "user", "content": "你刚才列出了多步动作计划，但没有把每一步都放进tool_calls。请一次性返回完整tool_calls序列，不要只调用第一步。"})
+                messages.append({"role": "user", "content": "你刚才列出了多步动作计划，但没有把每一步都放进tool_calls。请一次性返回完整动作队列的tool_calls序列。执行器会按队列连续执行，只有失败或超时时才会重新规划。不要只调用第一步。"})
                 continue
             plan_results = run_plan(tool_calls, plan_emit)
             if any(item["name"] == "observe" and item["signal"] != "FAILURE" for item in plan_results):
@@ -165,6 +154,10 @@ while True:
             from Executor.state import format_feedback, format_latest_state
             tool_result = summarize_plan_results(plan_results, format_latest_state(), format_feedback())
             messages.append({"role": "assistant", "content": f"已执行: {steps}\n结果: {tool_result}"})
+            if not should_replan_after_batch(plan_results, tool_calls):
+                emit("system", "动作队列执行完成")
+                render_item(console, {"type": "system", "content": "动作队列执行完成"})
+                break
             messages.append({"role": "user", "content": f"执行结果: {tool_result}，请决定下一步"})
             #执行tool_calls，把结果发回messages让LLM决定下一步
         save_history(messages, chat_items)
