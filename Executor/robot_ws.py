@@ -125,6 +125,8 @@ async def _send_ws_command(skill, args, emit=None, timeout_sec=None):
             if emit:
                 emit("tool", f"sent {skill} action_id={command['action_id']}")
             return await _wait_feedback(ws, command, deadline, emit)
+    except asyncio.TimeoutError:
+        return _failure(skill, "等待服务器反馈超时", action_id=command["action_id"])
     except Exception as error:
         return _failure(skill, f"WebSocket通信失败: {error}", action_id=command["action_id"])
 #打开WebSocket，发送命令，然后持续接收状态直到拿到feedback
@@ -136,7 +138,10 @@ async def _wait_feedback(ws, command, deadline, emit):
         if remaining <= 0:
             return _failure(command["skill"], "等待服务器反馈超时", action_id=command["action_id"])
 
-        message = _parse_message(await asyncio.wait_for(ws.recv(), timeout=remaining))
+        try:
+            message = _parse_message(await asyncio.wait_for(ws.recv(), timeout=remaining))
+        except asyncio.TimeoutError:
+            return _failure(command["skill"], "等待服务器反馈超时", action_id=command["action_id"])
         if message.get("type") == "state":
             state.update_latest_state(message)
             if emit:

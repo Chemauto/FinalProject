@@ -16,5 +16,6 @@ __pycache__/
 # ========================================
 docs/
 tests/
+eval_results/
 .tui_history/
 .vscode/

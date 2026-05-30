@@ -1,7 +1,8 @@
-openai
-python-dotenv
-pyyaml
-rich
-prompt_toolkit
-mcp
-websockets
+openai>=1.59,<2.0
+python-dotenv>=1.0,<2.0
+PyYAML>=6.0,<7.0
+rich>=13.7,<15.0
+prompt-toolkit>=3.0,<4.0
+mcp>=1.9,<2.0
+websockets>=12.0,<17.0
+matplotlib>=3.8,<4.0
